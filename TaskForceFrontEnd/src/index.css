@@ -1,0 +1,36 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Prevent code blocks from breaking layout */
+code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+  display: inline-block;
+}
+
+pre {
+  max-width: 100%;
+  overflow-x: auto;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+/* Ensure SyntaxHighlighter respects container width */
+pre > div {
+  max-width: 100% !important;
+  overflow-x: auto !important;
+}
+
+/* Force all code blocks to respect container boundaries */
+pre code {
+  max-width: 100%;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+/* Prevent any content from expanding beyond container */
+* {
+  min-width: 0;
+}
+

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- 背景渐变 -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8B5CF6;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="iconGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FBBF24;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角矩形背景 -->
+  <rect width="64" height="64" rx="12" fill="url(#bgGradient)"/>
+
+  <!-- 闪电图标 - 代表力量和速度 -->
+  <path d="M32 12L24 36H32L28 52L40 28H32L36 12H32Z"
+        fill="url(#iconGradient)"
+        stroke="#FFF"
+        stroke-width="1.5"
+        stroke-linejoin="round"/>
+
+  <!-- Agent 节点 - 三个圆点代表多智能体 -->
+  <circle cx="20" cy="20" r="2.5" fill="#FFF" opacity="0.8"/>
+  <circle cx="44" cy="20" r="2.5" fill="#FFF" opacity="0.8"/>
+  <circle cx="32" cy="48" r="2.5" fill="#FFF" opacity="0.8"/>
+</svg>
+

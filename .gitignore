@@ -1,0 +1,29 @@
+# Docker 相关
+.env
+*.log
+logs/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 备份文件
+backup_*.sql
+*.backup
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# 临时文件
+*.tmp
+.tmp/
+temp/
+
+# 数据库文件
+*.db
+*.sqlite
+

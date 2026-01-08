@@ -1,0 +1,69 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: taskforce-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-TaskForce123456}
+      MYSQL_DATABASE: taskforce
+      TZ: Asia/Shanghai
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./TaskForceBackEnd/src/main/resources/db/migration/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    networks:
+      - taskforce-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-TaskForce123456}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./TaskForceBackEnd
+      dockerfile: Dockerfile
+    container_name: taskforce-backend
+    restart: always
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/taskforce?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-TaskForce123456}
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+      JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx1024m}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - ./mcp-config.json:/app/mcp-config.json
+      - ./mcp-tools:/app/mcp-tools:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - taskforce-network
+
+  frontend:
+    build:
+      context: TaskForceFrontEnd
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+    container_name: taskforce-frontend
+    restart: always
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - backend
+    networks:
+      - taskforce-network
+
+volumes:
+  mysql-data:
+
+networks:
+  taskforce-network:
+    driver: bridge
+

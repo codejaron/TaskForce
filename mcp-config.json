@@ -1,0 +1,16 @@
+{
+  "mcpServers" : {
+    "iterm-mcp" : {
+      "command" : "npx",
+      "args" : [ "-y", "iterm-mcp" ],
+      "description" : null,
+      "enabled" : true,
+      "env" : { }
+    }
+  },
+  "globalSettings" : {
+    "autoReload" : true,
+    "reloadInterval" : 5000,
+    "defaultScope" : "system"
+  }
+}

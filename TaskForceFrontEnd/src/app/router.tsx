@@ -1,0 +1,41 @@
+import { createBrowserRouter } from 'react-router-dom';
+import { DashboardPage } from '../pages/Dashboard/ui/DashboardPage';
+import { AgentWorkshopPage } from '../pages/AgentWorkshop/ui/AgentWorkshopPage';
+import { McpMarketplacePage } from '../pages/McpMarketplace/ui/McpMarketplacePage';
+import { A2AStudioPage } from '../pages/A2AStudio/ui/A2AStudioPage';
+import { LLMProvidersPage } from '../pages/LLMProviders/ui/LLMProvidersPage';
+import { SystemConfigPage } from '../pages/SystemConfig/ui/SystemConfigPage';
+import { Layout } from './Layout';
+
+export const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <Layout />,
+    children: [
+      {
+        index: true,
+        element: <DashboardPage />,
+      },
+      {
+        path: 'agents',
+        element: <AgentWorkshopPage />,
+      },
+      {
+        path: 'mcp',
+        element: <McpMarketplacePage />,
+      },
+      {
+        path: 'a2a',
+        element: <A2AStudioPage />,
+      },
+      {
+        path: 'providers',
+        element: <LLMProvidersPage />,
+      },
+      {
+        path: 'system-config',
+        element: <SystemConfigPage />,
+      },
+    ],
+  },
+]);
