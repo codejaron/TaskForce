@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../../../shared/api';
-import type { Session, A2AMessage, WorkflowStateResponse, SubmitResponse } from '../../../shared/api';
+import type { Session, A2AMessage } from '../../../shared/api';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 
 interface A2AState {
@@ -22,21 +22,6 @@ interface A2AState {
 
 // 存储当前的 AbortController，用于关闭 SSE 连接
 let currentAbortController: AbortController | null = null;
-
-/**
- * 简单剔除 artifact 标签（用于流式传输预览）
- * 移除开始和结束标签，保留内部内容
- *
- * 注意：只用于流式传输时的临时显示，不是完全删除
- */
-function stripArtifactTags(text: string): string {
-  if (!text) return text;
-  // 移除开始标签
-  let result = text.replace(/<artifact\s+key="[a-zA-Z0-9_-]+"\s*>/g, '');
-  // 移除结束标签
-  result = result.replace(/<\/artifact>/g, '');
-  return result;
-}
 
 /**
  * 解析 Moderator 消息中的特殊标记
@@ -97,7 +82,7 @@ function parseModeratorMessage(text: string): { cleanText: string; blackboard: a
 /**
  * 处理异步工作流事件
  */
-function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
+function handleAsyncEvent(ev: any, _sessionId: string, set: any, get: any) {
   const eventType = ev.event;
   let data: any;
 
@@ -306,7 +291,7 @@ function appendToLastMessage(delta: string, agentId: string | null, agentName: s
     });
   } else if (stepId) {
     // 如果有 stepId，尝试向前查找对应的消息
-    const targetIndex = messages.findLastIndex(msg => msg.stepId === stepId);
+    const targetIndex = messages.findLastIndex((msg: A2AMessage) => msg.stepId === stepId);
     if (targetIndex >= 0) {
       const targetMsg = messages[targetIndex];
       set({
