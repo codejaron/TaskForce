@@ -1,17 +1,17 @@
 package com.agent.application.orchestration;
 
+import com.agent.application.orchestration.dto.ReplanResponseDTO;
 import com.agent.domain.model.plan.*;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;
 import com.agent.infrastructure.prompt.PromptManager;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.converter.BeanOutputConverter;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -26,11 +26,14 @@ public class ReplannerAgent {
 
     private final LlmAdapter llmAdapter;
     private final EventBus eventBus;
-    private final ObjectMapper objectMapper;
     private final PromptManager promptManager;
 
+    // BeanOutputConverter for automatic JSON parsing
+    private final BeanOutputConverter<ReplanResponseDTO> replanOutputConverter =
+            new BeanOutputConverter<>(new ParameterizedTypeReference<>() {});
+
     /**
-     * 重规划
+     * 重规划（使用 BeanOutputConverter 和 Self-Correction 重试机制）
      */
     public ExecutionPlan replan(String sessionId, ExecutionPlan currentPlan, String blockedReason) {
         log.info("[ReplannerAgent] Replanning for session: {}, replanCount: {}",
@@ -38,105 +41,154 @@ public class ReplannerAgent {
 
         PlanStep blockedStep = currentPlan.getCurrentStep();
 
+        // 获取 BeanOutputConverter 的格式说明
+        String formatInstructions = replanOutputConverter.getFormat();
+
+        // 构建 Prompt（包含格式说明）
         String prompt = promptManager.buildReplannerPrompt(
                 currentPlan.getGoal(),
                 currentPlan.getCompletedStepCount(),
                 currentPlan.getSteps().size(),
                 blockedStep != null ? blockedStep.getStepIndex() : 0,
                 blockedStep != null ? blockedStep.getDescription() : "Unknown",
-                blockedReason
+                blockedReason,
+                formatInstructions
         );
         log.debug("[ReplannerAgent] 🔄 重规划 Prompt:\n{}", prompt);
 
-        StringBuilder response = new StringBuilder();
-
         try {
-            llmAdapter.streamChat(getPlannerAgentId(), sessionId, prompt, null)
-                    .doOnNext(token -> {
-                        response.append(token);
-                        eventBus.publish(sessionId, new ReplannerDeltaEvent(sessionId, token));
-                    })
-                    .blockLast();
-
-            String fullResponse = response.toString();
-            log.debug("[ReplannerAgent] 📥 LLM 完整响应:\n{}", fullResponse);
-
-            // 解析新计划
-            ExecutionPlan newPlan = parseNewPlan(sessionId, currentPlan, fullResponse);
-            return newPlan;
-
+            ReplanResponseDTO dto = replanWithRetry(sessionId, prompt, 3);
+            return convertDtoToExecutionPlan(sessionId, currentPlan, dto);
         } catch (Exception e) {
-            log.error("[ReplannerAgent] Replan failed", e);
-            // 返回原计划，标记为失败
-            currentPlan.markFailed("重规划失败: " + e.getMessage());
+            log.error("[ReplannerAgent] Replan failed after all retries", e);
+            currentPlan.markFailed("重规划失败（已重试 3 次）: " + e.getMessage());
             return currentPlan;
         }
     }
 
     /**
-     * 解析新计划
+     * 带 Self-Correction 重试的重规划
+     *
+     * @param sessionId      会话 ID
+     * @param initialPrompt  初始 Prompt
+     * @param maxRetries     最大重试次数（固定为 3）
+     * @return 成功解析的 ReplanResponseDTO
+     * @throws Exception 重试耗尽后抛出
      */
-    private ExecutionPlan parseNewPlan(String sessionId, ExecutionPlan currentPlan, String response) {
-        try {
-            String json = extractJson(response);
-            JsonNode node = objectMapper.readTree(json);
+    private ReplanResponseDTO replanWithRetry(String sessionId, String initialPrompt, int maxRetries)
+            throws Exception {
 
-            String goal = node.has("goal") ? node.path("goal").asText() : currentPlan.getGoal();
-            JsonNode stepsNode = node.path("steps");
+        String currentPrompt = initialPrompt;
+        Exception lastException = null;
 
-            List<PlanStep> newSteps = new ArrayList<>();
-            for (JsonNode stepNode : stepsNode) {
-                PlanStep step = PlanStep.builder()
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            log.info("[ReplannerAgent] Replan attempt {}/{}", attempt, maxRetries);
+
+            StringBuilder response = new StringBuilder();
+
+            try {
+                // 流式调用 LLM（累积响应，继续发送 delta 事件保持用户体验）
+                llmAdapter.streamChat(getPlannerAgentId(), sessionId, currentPrompt, null)
+                        .doOnNext(token -> {
+                            response.append(token);
+                            // 发送 delta 事件（保持现有行为）
+                            eventBus.publish(sessionId, new ReplannerDeltaEvent(sessionId, token));
+                        })
+                        .blockLast();
+
+                String fullResponse = response.toString();
+                log.debug("[ReplannerAgent] Raw response (attempt {}):\n{}", attempt, fullResponse);
+
+                // 使用 BeanOutputConverter 解析响应
+                ReplanResponseDTO dto = replanOutputConverter.convert(fullResponse);
+                log.info("[ReplannerAgent] ✅ Successfully parsed replan on attempt {}", attempt);
+                return dto;
+
+            } catch (Exception e) {
+                lastException = e;
+                log.warn("[ReplannerAgent] ❌ Parse failed on attempt {}: {}", attempt, e.getMessage());
+
+                if (attempt < maxRetries) {
+                    // 构造修正 Prompt
+                    String errorMsg = e.getMessage();
+                    String rawResponse = response.toString();
+                    currentPrompt = buildCorrectionPromptForReplan(errorMsg, rawResponse);
+
+                    log.info("[ReplannerAgent] 🔄 Sending correction prompt for attempt {}", attempt + 1);
+                }
+            }
+        }
+
+        // 重试耗尽，抛出最后一次异常
+        throw new RuntimeException("Failed to parse replan after " + maxRetries + " attempts", lastException);
+    }
+
+    /**
+     * 构造重规划修正 Prompt
+     */
+    private String buildCorrectionPromptForReplan(String errorMsg, String rawResponse) {
+        return String.format("""
+                重规划的 JSON 解析失败。
+
+                【错误信息】
+                %s
+
+                【原始响应】
+                %s
+
+                【要求】
+                请修正 JSON 格式，确保：
+                1. 包含 "type": "plan"
+                2. 包含 "goal" 字段
+                3. 包含 "steps" 数组，每个步骤包含 stepIndex, description, assignedAgentId, instruction, expectedOutput
+                4. stepIndex 是数字类型
+
+                只输出修正后的纯 JSON，不要有任何解释或 Markdown 代码块标记。
+                """,
+                errorMsg,
+                truncate(rawResponse, 1000));
+    }
+
+    /**
+     * 将 DTO 转换为 ExecutionPlan
+     */
+    private ExecutionPlan convertDtoToExecutionPlan(String sessionId, ExecutionPlan currentPlan, ReplanResponseDTO dto) {
+        if (dto.getSteps() == null || dto.getSteps().isEmpty()) {
+            throw new IllegalArgumentException("Replan steps cannot be empty");
+        }
+
+        List<PlanStep> newSteps = dto.getSteps().stream()
+                .map(stepDto -> PlanStep.builder()
                         .stepId(UUID.randomUUID().toString())
-                        .stepIndex(stepNode.path("stepIndex").asInt())
-                        .description(stepNode.path("description").asText())
-                        .assignedAgentId(stepNode.path("assignedAgentId").asText())
-                        .instruction(stepNode.path("instruction").asText())
-                        .expectedOutput(stepNode.path("expectedOutput").asText())
+                        .stepIndex(stepDto.getStepIndex())
+                        .description(stepDto.getDescription())
+                        .assignedAgentId(stepDto.getAssignedAgentId())
+                        .requiredCapability(stepDto.getRequiredCapability())
+                        .instruction(stepDto.getInstruction())
+                        .expectedOutput(stepDto.getExpectedOutput())
                         .status(StepStatus.PENDING)
-                        .build();
-                newSteps.add(step);
-            }
+                        .build())
+                .toList();
 
-            // 创建新计划
-            return ExecutionPlan.builder()
-                    .planId(UUID.randomUUID().toString())
-                    .sessionId(sessionId)
-                    .goal(goal)
-                    .steps(newSteps)
-                    .currentStepIndex(0)
-                    .status(PlanStatus.EXECUTING)
-                    .replanCount(currentPlan.getReplanCount() + 1)
-                    .build();
-
-        } catch (Exception e) {
-            log.error("[ReplannerAgent] Failed to parse new plan", e);
-            currentPlan.incrementReplanCount();
-            currentPlan.markFailed("解析新计划失败");
-            return currentPlan;
-        }
+        return ExecutionPlan.builder()
+                .planId(UUID.randomUUID().toString())
+                .sessionId(sessionId)
+                .goal(dto.getGoal() != null ? dto.getGoal() : currentPlan.getGoal())
+                .steps(newSteps)
+                .currentStepIndex(0)
+                .status(PlanStatus.EXECUTING)
+                .replanCount(currentPlan.getReplanCount() + 1)
+                .build();
     }
 
     /**
-     * 提取 JSON
+     * 截断字符串（避免 Token 过多）
      */
-    private String extractJson(String response) {
-        int start = response.indexOf("```json");
-        if (start >= 0) {
-            start += 7;
-            int end = response.indexOf("```", start);
-            if (end > start) {
-                return response.substring(start, end).trim();
-            }
+    private String truncate(String str, int maxLen) {
+        if (str == null || str.length() <= maxLen) {
+            return str;
         }
-
-        int braceStart = response.indexOf("{");
-        int braceEnd = response.lastIndexOf("}");
-        if (braceStart >= 0 && braceEnd > braceStart) {
-            return response.substring(braceStart, braceEnd + 1);
-        }
-
-        return response;
+        return str.substring(0, maxLen) + "\n...[省略 " + (str.length() - maxLen) + " 字符]";
     }
 
     private Long getPlannerAgentId() {

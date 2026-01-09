@@ -42,42 +42,8 @@ public class PromptManager {
         【用户目标】
         %s
 
-        【输出格式】
-        请输出 JSON，类型可以是：
-
-        1. 生成计划：
-        ```json
-        {
-          "type": "plan",
-          "goal": "用户目标的简洁描述",
-          "steps": [
-            {
-              "stepIndex": 1,
-              "description": "步骤描述",
-              "assignedAgentId": "agent_123",
-              "requiredCapability": "search",
-              "instruction": "详细的执行指令",
-              "expectedOutput": "期望的输出格式"
-            }
-          ]
-        }
-        ```
-
-        2. 需要澄清（目标不清晰时）：
-        ```json
-        {
-          "type": "question",
-          "content": "请问您希望分析哪只股票？"
-        }
-        ```
-
-        3. 无法完成：
-        ```json
-        {
-          "type": "cannot_plan",
-          "reason": "无法完成的原因"
-        }
-        ```
+        【输出格式要求】
+        %s
 
         【规则】
         1. 如果用户目标模糊，优先选择 type=question 询问用户
@@ -108,24 +74,11 @@ public class PromptManager {
         2. 决定是否需要修改后续步骤
         3. 输出调整后的计划（从当前步骤开始）
 
-        【输出格式】
-        ```json
-        {
-          "type": "plan",
-          "goal": "调整后的目标（如有变化）",
-          "steps": [
-            {
-              "stepIndex": 1,
-              "description": "步骤描述",
-              "assignedAgentId": "agent_123",
-              "instruction": "详细指令",
-              "expectedOutput": "期望输出"
-            }
-          ]
-        }
-        ```
+        【输出格式要求】
+        %s
 
-        注意：步骤编号从 1 开始重新计数。
+        【规则】
+        1. 步骤编号从 1 开始重新计数
         """;
 
     /**
@@ -155,11 +108,12 @@ public class PromptManager {
      * 构建 Planner Prompt
      * @param workers 可用的Worker列表
      * @param userGoal 用户目标
+     * @param formatInstructions BeanOutputParser 生成的格式说明
      * @return 完整的Planner Prompt
      */
-    public String buildPlannerPrompt(List<AgentProfile> workers, String userGoal) {
+    public String buildPlannerPrompt(List<AgentProfile> workers, String userGoal, String formatInstructions) {
         String rosterText = formatWorkerRoster(workers);
-        String fullPrompt = String.format(PLANNER_PROMPT, rosterText, userGoal);
+        String fullPrompt = String.format(PLANNER_PROMPT, rosterText, userGoal, formatInstructions);
 
         log.debug("[PromptManager] 构建 Planner Prompt, workers={}, goal={}",
                 workers.size(), userGoal);
@@ -175,6 +129,7 @@ public class PromptManager {
      * @param blockedStepIndex 阻塞步骤索引
      * @param blockedStepDesc 阻塞步骤描述
      * @param blockedReason 阻塞原因
+     * @param formatInstructions BeanOutputParser 生成的格式说明
      * @return 完整的Replanner Prompt
      */
     public String buildReplannerPrompt(
@@ -183,7 +138,8 @@ public class PromptManager {
             int totalSteps,
             int blockedStepIndex,
             String blockedStepDesc,
-            String blockedReason) {
+            String blockedReason,
+            String formatInstructions) {
 
         String fullPrompt = String.format(REPLANNER_PROMPT,
                 currentGoal,
@@ -191,7 +147,8 @@ public class PromptManager {
                 totalSteps,
                 blockedStepIndex,
                 blockedStepDesc,
-                blockedReason
+                blockedReason,
+                formatInstructions
         );
 
         log.debug("[PromptManager] 构建 Replanner Prompt, goal={}, blocked at step {}",
@@ -459,7 +416,8 @@ public class PromptManager {
     }
 
     /**
-     * 格式化 Worker 列表为文本
+     * 格式化 Worker 列表为文本（简化版）
+     * 只包含 ID, name, description，不包含 systemPrompt 和工具列表
      */
     private String formatWorkerRoster(List<AgentProfile> workers) {
         if (workers == null || workers.isEmpty()) {
@@ -468,15 +426,15 @@ public class PromptManager {
 
         StringBuilder sb = new StringBuilder();
         for (AgentProfile worker : workers) {
-            // 获取工具信息
-            List<ToolInfo> tools = getAgentTools(worker.getId());
-            String toolsText = formatToolsForPlanner(tools);
+            String description = worker.getDescription();
+            if (description == null || description.isBlank()) {
+                description = "通用任务执行";
+            }
 
-            sb.append(String.format("- ID: %s, 名称: %s, 角色: %s\n",
+            sb.append(String.format("- ID: %s, 名称: %s, 描述: %s\n",
                     worker.getId(),
                     worker.getName(),
-                    worker.getSystemPrompt()));
-            sb.append(String.format("  可用工具: %s\n", toolsText));
+                    description));
         }
         return sb.toString();
     }
