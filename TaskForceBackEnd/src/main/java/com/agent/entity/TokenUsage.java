@@ -39,6 +39,12 @@ public class TokenUsage {
     private Long providerId;
 
     /**
+     * Agent ID
+     */
+    @TableField("agent_id")
+    private Long agentId;
+
+    /**
      * 模型名称（如gpt-4o, claude-sonnet-3.5等）
      */
     @TableField("model_name")

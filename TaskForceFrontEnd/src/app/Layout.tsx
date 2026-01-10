@@ -29,7 +29,7 @@ export const Layout: React.FC = () => {
 
 
         {/* Page Content */}
-        <main className="flex-1 overflow-hidden relative">
+        <main className="flex-1 overflow-y-auto relative">
           <Outlet />
         </main>
       </div>

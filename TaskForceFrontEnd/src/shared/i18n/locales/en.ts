@@ -52,6 +52,13 @@ export default {
     backendApi: 'Backend API',
     connected: 'Connected',
     configured: 'configured',
+    tokenStatistics: 'Token Usage Statistics',
+    totalTokens: 'Total Tokens',
+    apiCalls: 'API Calls',
+    dailyTokenTrend: 'Daily Token Trend',
+    providerTokens: 'Provider Token Distribution',
+    topModels: 'Top Models by Usage',
+    topAgents: 'Top Agents by Usage',
   },
   providers: {
     title: 'LLM Providers',

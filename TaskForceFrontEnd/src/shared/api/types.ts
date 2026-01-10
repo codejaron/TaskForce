@@ -159,3 +159,55 @@ export interface A2AMessage {
   waitingUser?: boolean;
   isLoadingBlackboard?: boolean;
 }
+
+// ============= Token统计相关类型 =============
+
+export interface ProviderCostDTO {
+  providerId: number;
+  providerName: string;
+  totalCost: number;
+  totalTokens: number;
+  callCount: number;
+}
+
+export interface ModelUsageDTO {
+  modelName: string;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  callCount: number;
+}
+
+export interface DailyCostDTO {
+  date: string; // ISO date string
+  totalCost: number;
+  totalTokens: number;
+  callCount: number;
+}
+
+export interface SessionCostDTO {
+  sessionId: string;
+  sessionName: string;
+  totalCost: number;
+  totalTokens: number;
+  callCount: number;
+}
+
+export interface AgentUsageDTO {
+  agentId: number;
+  agentName: string;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  callCount: number;
+}
+
+export interface AgentCostDTO {
+  agentId: number;
+  agentName: string;
+  totalCost: number;
+  totalTokens: number;
+  callCount: number;
+}

@@ -52,6 +52,13 @@ export default {
     backendApi: '后端 API',
     connected: '已连接',
     configured: '已配置',
+    tokenStatistics: 'Token使用统计',
+    totalTokens: '总Token数',
+    apiCalls: 'API调用次数',
+    dailyTokenTrend: '每日Token趋势',
+    providerTokens: 'Provider Token分布',
+    topModels: '模型消耗排行',
+    topAgents: 'Agent效能排行',
   },
   providers: {
     title: 'LLM 提供商',

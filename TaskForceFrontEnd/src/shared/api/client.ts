@@ -1,4 +1,4 @@
-import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse } from './types';
+import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO } from './types';
 
 const API_BASE = '/api';
 
@@ -106,5 +106,24 @@ export const api = {
       fetchJson<void>(`/group-chat/${sessionId}/stop`, {
         method: 'POST'
       }),
+  },
+  tokenUsage: {
+    getProviderCost: (startDate: string, endDate: string) =>
+      fetchJson<ProviderCostDTO[]>(`/token-usage/provider-cost?startDate=${startDate}&endDate=${endDate}`),
+
+    getTopModels: (startDate: string, endDate: string, limit: number = 10) =>
+      fetchJson<ModelUsageDTO[]>(`/token-usage/top-models?startDate=${startDate}&endDate=${endDate}&limit=${limit}`),
+
+    getDailyCostTrend: (startDate: string, endDate: string) =>
+      fetchJson<DailyCostDTO[]>(`/token-usage/daily-cost?startDate=${startDate}&endDate=${endDate}`),
+
+    getTopSessions: (startDate: string, endDate: string, limit: number = 10) =>
+      fetchJson<SessionCostDTO[]>(`/token-usage/top-sessions?startDate=${startDate}&endDate=${endDate}&limit=${limit}`),
+
+    getTopAgents: (startDate: string, endDate: string, limit: number = 10) =>
+      fetchJson<AgentUsageDTO[]>(`/token-usage/top-agents?startDate=${startDate}&endDate=${endDate}&limit=${limit}`),
+
+    getTopAgentsCost: (startDate: string, endDate: string, limit: number = 10) =>
+      fetchJson<AgentCostDTO[]>(`/token-usage/top-agents-cost?startDate=${startDate}&endDate=${endDate}&limit=${limit}`),
   }
  };

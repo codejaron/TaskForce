@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -26,6 +27,7 @@ public class TokenUsageService {
      *
      * @param sessionId        会话ID
      * @param providerId       Provider ID
+     * @param agentId          Agent ID
      * @param modelName        模型名称
      * @param promptTokens     提示Token数
      * @param completionTokens 完成Token数
@@ -35,6 +37,7 @@ public class TokenUsageService {
     public TokenUsage recordUsage(
             String sessionId,
             Long providerId,
+            Long agentId,
             String modelName,
             Integer promptTokens,
             Integer completionTokens
@@ -42,16 +45,17 @@ public class TokenUsageService {
         TokenUsage usage = TokenUsage.builder()
                 .sessionId(sessionId)
                 .providerId(providerId)
+                .agentId(agentId)
                 .modelName(modelName)
                 .promptTokens(promptTokens)
                 .completionTokens(completionTokens)
                 .totalTokens(promptTokens + completionTokens)
-                .cost(calculateCost(modelName, promptTokens, completionTokens))
+                .cost(BigDecimal.ZERO)  // 不再计算价格，设为0
                 .build();
 
         tokenUsageMapper.insert(usage);
-        log.info("Token usage recorded: session={}, model={}, prompt={}, completion={}, total={}",
-                sessionId, modelName, promptTokens, completionTokens, usage.getTotalTokens());
+        log.info("Token usage recorded: session={}, agent={}, model={}, prompt={}, completion={}, total={}",
+                sessionId, agentId, modelName, promptTokens, completionTokens, usage.getTotalTokens());
 
         return usage;
     }
@@ -99,21 +103,51 @@ public class TokenUsageService {
         return cost != null ? cost : BigDecimal.ZERO;
     }
 
-    /**
-     * 计算成本（预留，可根据模型定价计算）
-     * 当前返回0，未来可根据实际定价表实现
-     *
-     * @param modelName        模型名称
-     * @param promptTokens     提示Token数
-     * @param completionTokens 完成Token数
-     * @return 成本（美元）
-     */
-    private BigDecimal calculateCost(String modelName, Integer promptTokens, Integer completionTokens) {
-        // TODO: 实现真实的成本计算逻辑
-        // 示例定价（需要根据实际情况调整）：
-        // GPT-4o: $2.5/1M input tokens, $10/1M output tokens
-        // Claude Sonnet 3.5: $3/1M input, $15/1M output
+    // ============= 维度1：成本与模型维度 =============
 
-        return BigDecimal.ZERO;
+    /**
+     * Provider费用占比统计
+     */
+    public List<com.agent.dto.ProviderCostDTO> getProviderCostDistribution(LocalDateTime startDate, LocalDateTime endDate) {
+        return tokenUsageMapper.sumCostByProvider(startDate, endDate);
+    }
+
+    /**
+     * 模型消耗排行
+     */
+    public List<com.agent.dto.ModelUsageDTO> getTopModelsByUsage(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
+        return tokenUsageMapper.sumTokensByModel(startDate, endDate, limit);
+    }
+
+    /**
+     * 每日成本趋势
+     */
+    public List<com.agent.dto.DailyCostDTO> getDailyCostTrend(LocalDateTime startDate, LocalDateTime endDate) {
+        return tokenUsageMapper.sumCostByDay(startDate, endDate);
+    }
+
+    // ============= 维度2：会话与任务维度 =============
+
+    /**
+     * Top昂贵会话
+     */
+    public List<com.agent.dto.SessionCostDTO> getTopExpensiveSessions(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
+        return tokenUsageMapper.getTopExpensiveSessions(startDate, endDate, limit);
+    }
+
+    // ============= 维度3：Agent效能维度 =============
+
+    /**
+     * Agent Token消耗排行
+     */
+    public List<com.agent.dto.AgentUsageDTO> getTopAgentsByUsage(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
+        return tokenUsageMapper.sumTokensByAgent(startDate, endDate, limit);
+    }
+
+    /**
+     * Agent成本排行
+     */
+    public List<com.agent.dto.AgentCostDTO> getTopAgentsByCost(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
+        return tokenUsageMapper.sumCostByAgent(startDate, endDate, limit);
     }
 }
