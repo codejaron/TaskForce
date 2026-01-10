@@ -288,7 +288,7 @@ public class PlannerAgent {
 
         } catch (Exception e) {
             log.error("[PlannerAgent] Failed to get planner agent ID, using default", e);
-            return 1L;
+            return null;
         }
     }
 }

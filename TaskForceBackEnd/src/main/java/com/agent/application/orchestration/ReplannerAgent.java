@@ -2,10 +2,13 @@ package com.agent.application.orchestration;
 
 import com.agent.application.orchestration.dto.ReplanResponseDTO;
 import com.agent.domain.model.plan.*;
+import com.agent.entity.Agent;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;
 import com.agent.infrastructure.prompt.PromptManager;
+import com.agent.mapper.AgentMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.converter.BeanOutputConverter;
@@ -27,6 +30,7 @@ public class ReplannerAgent {
     private final LlmAdapter llmAdapter;
     private final EventBus eventBus;
     private final PromptManager promptManager;
+    private final AgentMapper agentMapper;
 
     // BeanOutputConverter for automatic JSON parsing
     private final BeanOutputConverter<ReplanResponseDTO> replanOutputConverter =
@@ -191,7 +195,30 @@ public class ReplannerAgent {
         return str.substring(0, maxLen) + "\n...[省略 " + (str.length() - maxLen) + " 字符]";
     }
 
+    /**
+     * 获取 Planner Agent ID
+     * 从数据库中查找 role_type='PLANNER' 的 Agent，复用 Planner 的模型配置
+     */
     private Long getPlannerAgentId() {
-        return 1L;
+        try {
+            Agent plannerAgent = agentMapper.selectOne(
+                    new LambdaQueryWrapper<Agent>()
+                            .eq(Agent::getRoleType, "PLANNER")
+                            .last("LIMIT 1")
+            );
+
+            if (plannerAgent != null) {
+                log.debug("[ReplannerAgent] Found PLANNER agent: id={}, name={}",
+                        plannerAgent.getId(), plannerAgent.getName());
+                return plannerAgent.getId();
+            }
+
+            log.warn("[ReplannerAgent] No PLANNER agent found in database");
+            return null;
+
+        } catch (Exception e) {
+            log.error("[ReplannerAgent] Failed to get planner agent ID", e);
+            return null;
+        }
     }
 }
