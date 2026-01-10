@@ -30,6 +30,15 @@ public class ExecutionPlanDO {
     @TableField("pause_reason")
     private String pauseReason;
 
+    @TableField("paused_by")
+    private String pausedBy;
+
+    @TableField("paused_at_step_index")
+    private Integer pausedAtStepIndex;
+
+    @TableField("paused_agent_id")
+    private String pausedAgentId;
+
     @TableField("pending_question")
     private String pendingQuestion;
 

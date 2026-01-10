@@ -3,15 +3,18 @@ package com.agent.application.orchestration;
 import com.agent.application.orchestration.dto.PlannerResponseDTO;
 import com.agent.domain.model.plan.*;
 import com.agent.entity.Agent;
+import com.agent.entity.Message;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.mapper.AgentMapper;
+import com.agent.mapper.MessageMapper;
 import com.agent.model.AgentProfile;
 import com.agent.service.AgentProfileService;
 import com.agent.service.SessionService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.converter.BeanOutputConverter;
@@ -35,6 +38,7 @@ public class PlannerAgent {
     private final SessionService sessionService;
     private final EventBus eventBus;
     private final AgentMapper agentMapper;
+    private final MessageMapper messageMapper;
     private final PromptManager promptManager;
 
     // BeanOutputConverter for automatic JSON parsing
@@ -50,11 +54,14 @@ public class PlannerAgent {
         // 获取可用 Worker 列表
         List<AgentProfile> workers = loadWorkers(sessionId);
 
+        // 构建包含历史澄清的上下文化目标
+        String contextualGoal = buildContextualGoal(sessionId, userGoal);
+
         // 获取 BeanOutputConverter 的格式说明
         String formatInstructions = plannerOutputConverter.getFormat();
 
-        // 构建 Prompt（包含格式说明）
-        String prompt = promptManager.buildPlannerPrompt(workers, userGoal, formatInstructions);
+        // 构建 Prompt（包含格式说明和上下文）
+        String prompt = promptManager.buildPlannerPrompt(workers, contextualGoal, formatInstructions);
         log.debug("[PlannerAgent] 📝 发送给 LLM 的完整 Prompt:\n{}", prompt);
 
         // 使用 Self-Correction 重试机制生成计划
@@ -290,5 +297,39 @@ public class PlannerAgent {
             log.error("[PlannerAgent] Failed to get planner agent ID, using default", e);
             return null;
         }
+    }
+
+    /**
+     * 构建包含上下文的用户目标
+     * 如果是Planner澄清后的恢复，需要结合历史消息
+     */
+    private String buildContextualGoal(String sessionId, String userGoal) {
+        try {
+            QueryWrapper<Message> queryWrapper = new QueryWrapper<>();
+            queryWrapper.eq("session_id", sessionId)
+                       .eq("role", "user")
+                       .orderByDesc("created_at")
+                       .last("LIMIT 3");
+
+            List<Message> recentInputs = messageMapper.selectList(queryWrapper);
+
+            if (recentInputs.size() > 1) {
+                // 多条用户输入，表示有澄清过程
+                StringBuilder contextual = new StringBuilder();
+                contextual.append("【原始目标】\n");
+                contextual.append(recentInputs.get(recentInputs.size() - 1).getContent());
+
+                for (int i = recentInputs.size() - 2; i >= 0; i--) {
+                    contextual.append("\n\n【用户补充澄清 ").append(recentInputs.size() - i - 1).append("】\n");
+                    contextual.append(recentInputs.get(i).getContent());
+                }
+
+                return contextual.toString();
+            }
+        } catch (Exception e) {
+            log.warn("[PlannerAgent] Failed to build contextual goal", e);
+        }
+
+        return userGoal;
     }
 }

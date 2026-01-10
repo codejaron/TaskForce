@@ -69,6 +69,21 @@ public class ExecutionPlan {
     private String pendingQuestion;
 
     /**
+     * 暂停触发源
+     */
+    private PauseSource pausedBy;
+
+    /**
+     * Worker澄清时记录的步骤索引
+     */
+    private Integer pausedAtStepIndex;
+
+    /**
+     * Worker澄清时记录的Agent ID
+     */
+    private String pausedAgentId;
+
+    /**
      * 重规划次数
      */
     @Builder.Default
@@ -185,8 +200,50 @@ public class ExecutionPlan {
     // === 暂停/恢复 ===
 
     /**
-     * 暂停等待用户输入
+     * Planner阶段暂停等待用户输入（需要完全重新规划）
      */
+    public void pauseForPlannerClarification(String question) {
+        this.status = PlanStatus.PAUSED;
+        this.pauseReason = "waiting_user";
+        this.pausedBy = PauseSource.PLANNER;
+        this.pendingQuestion = question;
+        this.pausedAtStepIndex = null;
+        this.pausedAgentId = null;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * Worker执行时暂停等待用户输入（需要重新执行当前步骤）
+     */
+    public void pauseForWorkerClarification(String question, int stepIndex, String agentId) {
+        this.status = PlanStatus.PAUSED;
+        this.pauseReason = "waiting_user";
+        this.pausedBy = PauseSource.WORKER;
+        this.pendingQuestion = question;
+        this.pausedAtStepIndex = stepIndex;
+        this.pausedAgentId = agentId;
+        this.updatedAt = LocalDateTime.now();
+        // 注意：步骤状态保持IN_PROGRESS，不改变
+    }
+
+    /**
+     * 用户手动停止
+     */
+    public void pauseForUserStop(String reason) {
+        this.status = PlanStatus.PAUSED;
+        this.pauseReason = "user_stopped";
+        this.pausedBy = PauseSource.USER;
+        this.pendingQuestion = reason;
+        this.pausedAtStepIndex = this.currentStepIndex;
+        this.pausedAgentId = getCurrentAgentId();
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 暂停等待用户输入（已废弃，保留用于兼容）
+     * @deprecated 使用 pauseForPlannerClarification 或 pauseForWorkerClarification
+     */
+    @Deprecated
     public void pauseForUserInput(String question) {
         this.status = PlanStatus.PAUSED;
         this.pauseReason = "waiting_user";
@@ -200,18 +257,67 @@ public class ExecutionPlan {
     public void pauseForBlocked(String reason) {
         this.status = PlanStatus.PAUSED;
         this.pauseReason = "blocked";
+        this.pausedBy = PauseSource.BLOCKED;
         this.pendingQuestion = reason;
+        this.pausedAtStepIndex = this.currentStepIndex;
+        this.pausedAgentId = getCurrentAgentId();
         this.updatedAt = LocalDateTime.now();
     }
 
     /**
-     * 恢复执行
+     * 恢复执行（清除暂停标记）
      */
     public void resume() {
         this.status = PlanStatus.EXECUTING;
         this.pauseReason = null;
         this.pendingQuestion = null;
+        // 注意：不清除 pausedBy/pausedAtStepIndex/pausedAgentId，
+        // 这些信息在processAsync中用于判断恢复策略
         this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 清除暂停上下文（完成恢复后调用）
+     */
+    public void clearPauseContext() {
+        this.pausedBy = null;
+        this.pausedAtStepIndex = null;
+        this.pausedAgentId = null;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 是否需要完全重新规划（Planner澄清）
+     */
+    public boolean needsFullReplanning() {
+        return pausedBy == PauseSource.PLANNER;
+    }
+
+    /**
+     * 是否需要重新执行被打断的步骤（Worker澄清）
+     */
+    public boolean needsRestepExecution() {
+        return pausedBy == PauseSource.WORKER;
+    }
+
+    /**
+     * 获取被打断的步骤（Worker澄清恢复时使用）
+     */
+    public PlanStep getPausedStep() {
+        if (pausedAtStepIndex != null && steps != null && pausedAtStepIndex < steps.size()) {
+            return steps.get(pausedAtStepIndex);
+        }
+        return null;
+    }
+
+    /**
+     * 重置到被打断的步骤（Worker澄清恢复时调用）
+     */
+    public void resetToPausedStep() {
+        if (pausedAtStepIndex != null) {
+            this.currentStepIndex = pausedAtStepIndex;
+            // 步骤状态保持IN_PROGRESS，不改变
+        }
     }
 
     /**

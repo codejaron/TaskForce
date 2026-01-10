@@ -48,7 +48,7 @@ public class SpringAiLlmAdapter implements LlmAdapter {
 
             String prompt = promptManager.combinePrompts(systemPrompt, userMessage);
 
-            log.debug("[LlmAdapter] 发送给 LLM 的完整 Prompt (agentId={}):\n{}", agentId, prompt);
+            //log.debug("[LlmAdapter] 发送给 LLM 的完整 Prompt (agentId={}):\n{}", agentId, prompt);
 
             // 用于累计Usage数据
             AtomicReference<Usage> usageHolder = new AtomicReference<>();

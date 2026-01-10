@@ -1,6 +1,7 @@
 package com.agent.infrastructure.persistence;
 
 import com.agent.domain.model.plan.ExecutionPlan;
+import com.agent.domain.model.plan.PauseSource;
 import com.agent.domain.model.plan.PlanStatus;
 import com.agent.domain.model.plan.PlanStep;
 import com.agent.domain.repository.PlanRepository;
@@ -83,6 +84,9 @@ public class PlanRepositoryImpl implements PlanRepository {
                     .status(PlanStatus.valueOf(entity.getStatus()))
                     .currentStepIndex(entity.getCurrentStepIndex() != null ? entity.getCurrentStepIndex() : 0)
                     .pauseReason(entity.getPauseReason())
+                    .pausedBy(entity.getPausedBy() != null ? PauseSource.valueOf(entity.getPausedBy()) : null)
+                    .pausedAtStepIndex(entity.getPausedAtStepIndex())
+                    .pausedAgentId(entity.getPausedAgentId())
                     .pendingQuestion(entity.getPendingQuestion())
                     .replanCount(entity.getReplanCount() != null ? entity.getReplanCount() : 0)
                     .steps(steps)
@@ -107,6 +111,9 @@ public class PlanRepositoryImpl implements PlanRepository {
             entity.setStatus(plan.getStatus().name());
             entity.setCurrentStepIndex(plan.getCurrentStepIndex());
             entity.setPauseReason(plan.getPauseReason());
+            entity.setPausedBy(plan.getPausedBy() != null ? plan.getPausedBy().name() : null);
+            entity.setPausedAtStepIndex(plan.getPausedAtStepIndex());
+            entity.setPausedAgentId(plan.getPausedAgentId());
             entity.setPendingQuestion(plan.getPendingQuestion());
             entity.setReplanCount(plan.getReplanCount());
 

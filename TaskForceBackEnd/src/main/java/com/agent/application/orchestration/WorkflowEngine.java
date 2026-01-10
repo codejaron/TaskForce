@@ -106,14 +106,41 @@ public class WorkflowEngine {
                     return; // 规划失败或需要用户输入
                 }
             } else if (plan.getStatus() == PlanStatus.PAUSED && "waiting_user".equals(plan.getPauseReason())) {
-                // 用户回答了问题，尝试重新规划或继续执行
-                if (plan.getSteps() == null || plan.getSteps().isEmpty()) {
+                // === 用户回答了问题，根据暂停类型决定恢复策略 ===
+
+                if (plan.needsFullReplanning()) {
+                    // 策略1：Planner澄清 - 完全重新规划
+                    log.info("[WorkflowEngine] Planner clarification answered, replanning from scratch");
+                    stateManager.deletePlan(sessionId);
                     plan = runPlanningPhase(sessionId, userText);
                     if (plan == null) {
                         return;
                     }
-                } else {
+                } else if (plan.needsRestepExecution()) {
+                    // 策略2：Worker澄清 - 重新执行被打断的步骤
+                    log.info("[WorkflowEngine] Worker clarification answered, restarting step {} (Agent: {})",
+                            plan.getPausedAtStepIndex(), plan.getPausedAgentId());
+
+                    // 重置到被打断的步骤
+                    plan.resetToPausedStep();
+
+                    // 在步骤指令中追加用户澄清内容
+                    PlanStep pausedStep = plan.getPausedStep();
+                    if (pausedStep != null) {
+                        String originalInstruction = pausedStep.getInstruction();
+                        String clarification = "\n\n【用户澄清】\n" + userText;
+                        pausedStep.setInstruction(originalInstruction + clarification);
+                        log.info("[WorkflowEngine] Appended user clarification to step instruction");
+                    }
+
+                    // 恢复执行状态并清除暂停上下文
                     plan.resume();
+                    plan.clearPauseContext();
+                    stateManager.savePlan(plan);
+                } else {
+                    // 其他暂停情况（USER/BLOCKED）- 直接恢复
+                    plan.resume();
+                    plan.clearPauseContext();
                     stateManager.savePlan(plan);
                 }
             }
@@ -164,8 +191,15 @@ public class WorkflowEngine {
             }
             case PlannerResult.NeedClarification nc -> {
                 ExecutionPlan pausedPlan = ExecutionPlan.createPaused(sessionId, nc.question());
+                pausedPlan.pauseForPlannerClarification(nc.question());  // 使用新方法标记来源
                 stateManager.savePlan(pausedPlan);
-                eventBus.publish(sessionId, new NeedClarificationEvent(sessionId, nc.question()));
+                eventBus.publish(sessionId, new NeedClarificationEvent(
+                    sessionId,
+                    nc.question(),
+                    "PLANNER",  // 标记来源
+                    null,
+                    null
+                ));
                 return null;
             }
             case PlannerResult.CannotPlan cp -> {
@@ -187,7 +221,7 @@ public class WorkflowEngine {
             // 检查停止标志
             if (sessionStopService.shouldStop(sessionId)) {
                 log.info("[WorkflowEngine] Stopped by user: sessionId={}", sessionId);
-                plan.pauseForUserInput("用户停止");
+                plan.pauseForUserStop("用户停止");  // 使用新方法
                 stateManager.savePlan(plan);
                 eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "user_stopped"));
                 return;
@@ -317,9 +351,21 @@ public class WorkflowEngine {
      * 处理需要用户输入
      */
     private void handleNeedsUserInput(String sessionId, ExecutionPlan plan, PlanStep step, StepResult result) {
-        plan.pauseForUserInput(result.getQuestion());
+        // Worker澄清：记录暂停上下文
+        plan.pauseForWorkerClarification(
+            result.getQuestion(),
+            step.getStepIndex(),
+            step.getAssignedAgentId()
+        );
         stateManager.savePlan(plan);
-        eventBus.publish(sessionId, new NeedClarificationEvent(sessionId, result.getQuestion()));
+
+        eventBus.publish(sessionId, new NeedClarificationEvent(
+            sessionId,
+            result.getQuestion(),
+            "WORKER",  // 标记来源
+            step.getStepId(),
+            step.getAssignedAgentId()
+        ));
     }
 
     /**

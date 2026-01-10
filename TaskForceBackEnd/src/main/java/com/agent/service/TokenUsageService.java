@@ -1,5 +1,6 @@
 package com.agent.service;
 
+import com.agent.dto.*;
 import com.agent.entity.TokenUsage;
 import com.agent.mapper.TokenUsageMapper;
 import lombok.RequiredArgsConstructor;
@@ -108,21 +109,21 @@ public class TokenUsageService {
     /**
      * Provider费用占比统计
      */
-    public List<com.agent.dto.ProviderCostDTO> getProviderCostDistribution(LocalDateTime startDate, LocalDateTime endDate) {
+    public List<ProviderCostDTO> getProviderCostDistribution(LocalDateTime startDate, LocalDateTime endDate) {
         return tokenUsageMapper.sumCostByProvider(startDate, endDate);
     }
 
     /**
      * 模型消耗排行
      */
-    public List<com.agent.dto.ModelUsageDTO> getTopModelsByUsage(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
+    public List<ModelUsageDTO> getTopModelsByUsage(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
         return tokenUsageMapper.sumTokensByModel(startDate, endDate, limit);
     }
 
     /**
      * 每日成本趋势
      */
-    public List<com.agent.dto.DailyCostDTO> getDailyCostTrend(LocalDateTime startDate, LocalDateTime endDate) {
+    public List<DailyCostDTO> getDailyCostTrend(LocalDateTime startDate, LocalDateTime endDate) {
         return tokenUsageMapper.sumCostByDay(startDate, endDate);
     }
 
@@ -131,7 +132,7 @@ public class TokenUsageService {
     /**
      * Top昂贵会话
      */
-    public List<com.agent.dto.SessionCostDTO> getTopExpensiveSessions(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
+    public List<SessionCostDTO> getTopExpensiveSessions(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
         return tokenUsageMapper.getTopExpensiveSessions(startDate, endDate, limit);
     }
 
@@ -140,14 +141,14 @@ public class TokenUsageService {
     /**
      * Agent Token消耗排行
      */
-    public List<com.agent.dto.AgentUsageDTO> getTopAgentsByUsage(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
+    public List<AgentUsageDTO> getTopAgentsByUsage(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
         return tokenUsageMapper.sumTokensByAgent(startDate, endDate, limit);
     }
 
     /**
      * Agent成本排行
      */
-    public List<com.agent.dto.AgentCostDTO> getTopAgentsByCost(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
+    public List<AgentCostDTO> getTopAgentsByCost(LocalDateTime startDate, LocalDateTime endDate, Integer limit) {
         return tokenUsageMapper.sumCostByAgent(startDate, endDate, limit);
     }
 }
