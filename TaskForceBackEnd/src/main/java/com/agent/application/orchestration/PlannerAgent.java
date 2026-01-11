@@ -206,7 +206,7 @@ public class PlannerAgent {
 
                     return PlanStep.builder()
                             .stepId(UUID.randomUUID().toString())
-                            .stepIndex(stepDto.getStepIndex())
+                            .stepIndex(stepDto.getStepIndex() - 1)  // LLM的1-based转换为内部0-based
                             .description(stepDto.getDescription())
                             .assignedAgentId(stepDto.getAssignedAgentId())
                             .assignedAgentName(agent != null ? agent.getName() : "Unknown")
@@ -223,7 +223,7 @@ public class PlannerAgent {
                 .sessionId(sessionId)
                 .goal(dto.getGoal())
                 .steps(steps)
-                .currentStepIndex(0)
+                .currentStepIndex(0)  // 总是从第一个步骤开始（内部索引0）
                 .status(PlanStatus.EXECUTING)
                 .build();
     }

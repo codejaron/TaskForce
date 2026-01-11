@@ -47,10 +47,12 @@ public class PromptManager {
 
         【规则】
         1. 如果用户目标模糊，优先选择 type=question 询问用户
-        2. 步骤数量控制在 10 步以内
-        3. 每个步骤必须分配给一个具体的 Worker
-        4. 最后一步通常是汇总/输出步骤
-        5. assignedAgentId 必须是可用 Worker 列表中的真实 ID
+        2. 将目标分解为清晰的步骤
+        3. stepIndex 从 1 开始编号
+        4. 每个步骤必须分配给一个具体的 Worker（assignedAgentId 必须是可用 Worker 列表中的真实 ID）
+        5. 步骤数量控制在 10 步以内
+        6. 确保步骤之间逻辑连贯
+        7. 最后一步通常是汇总/输出步骤
         """;
 
     /**
@@ -78,7 +80,8 @@ public class PromptManager {
         %s
 
         【规则】
-        1. 步骤编号从 1 开始重新计数
+        1. stepIndex 从 1 开始重新计数
+        2. 只输出需要调整的步骤
         """;
 
     /**
@@ -99,9 +102,14 @@ public class PromptManager {
 
         【执行规则】
         1. 严格按照任务指令执行
-        2. 如果遇到无法完成的情况，输出 "BLOCKED: 原因"
-        3. 如果需要用户提供更多信息，输出 "NEED_USER_INPUT: 问题"
-        4. 完成后直接输出结果，不需要额外的格式
+        2. **区分两种特殊情况**：
+           - **BLOCKED（阻塞）**：遇到技术限制、资源不可用等**无法通过用户澄清解决**的问题时，输出 "BLOCKED: 原因"
+           - **NEED_USER_INPUT（需要用户澄清）**：需要用户**提供信息、确认选择、补充需求**时，输出 "NEED_USER_INPUT: 问题"
+        3. 完成后直接输出结果，不需要额外的格式
+
+        【示例】
+        - BLOCKED示例: "BLOCKED: 目标服务器无法连接，需要管理员权限"
+        - NEED_USER_INPUT示例: "NEED_USER_INPUT: 请确认要抓取哪些网站的数据？（提供具体URL列表）"
         """;
 
     /**
@@ -145,14 +153,14 @@ public class PromptManager {
                 currentGoal,
                 completedSteps,
                 totalSteps,
-                blockedStepIndex,
+                blockedStepIndex + 1,  // 内部0-based转换为LLM的1-based
                 blockedStepDesc,
                 blockedReason,
                 formatInstructions
         );
 
-        log.debug("[PromptManager] 构建 Replanner Prompt, goal={}, blocked at step {}",
-                currentGoal, blockedStepIndex);
+        log.debug("[PromptManager] 构建 Replanner Prompt, goal={}, blocked at step {} (internal index: {})",
+                currentGoal, blockedStepIndex + 1, blockedStepIndex);
 
         return fullPrompt;
     }

@@ -10,6 +10,7 @@ import com.agent.mapper.MessageMapper;
 import com.agent.mapper.SessionArtifactMapper;
 import com.agent.model.AgentProfile;
 import com.agent.service.AgentProfileService;
+import com.agent.service.MessageService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +32,7 @@ public class StateManager {
     private final MessageMapper messageMapper;
     private final AgentProfileService agentProfileService;
     private final SessionArtifactMapper sessionArtifactMapper;
+    private final MessageService messageService;
 
     // === Plan 操作 ===
 
@@ -118,9 +120,6 @@ public class StateManager {
         }
     }
 
-    // 删除了未使用的 recordAgentMessage 方法
-
-    // === Agent 查询 ===
 
     /**
      * 加载 Agent 配置
@@ -131,26 +130,6 @@ public class StateManager {
         } catch (Exception e) {
             log.error("[StateManager] Failed to load agent: {}", agentId, e);
             return null;
-        }
-    }
-
-    /**
-     * 获取最后一条用户输入
-     */
-    public String getLastUserText(String sessionId, String requestId) {
-        try {
-            QueryWrapper<Message> queryWrapper = new QueryWrapper<>();
-            queryWrapper.eq("session_id", sessionId)
-                       .eq("role", "user")
-                       .eq("message_type", "USER_INPUT")
-                       .orderByDesc("created_at")
-                       .last("LIMIT 1");
-
-            List<Message> messages = messageMapper.selectList(queryWrapper);
-            return messages.isEmpty() ? "" : messages.get(0).getContent();
-        } catch (Exception e) {
-            log.error("[StateManager] Failed to get last user text", e);
-            return "";
         }
     }
 
@@ -217,7 +196,7 @@ public class StateManager {
             }
 
             // 2. 查询最近的对话历史（最多 10 条）
-            List<Message> recentHistory = queryRecentMessages(sessionId, 10);
+            List<Message> recentHistory = messageService.getRecentMessages(sessionId, 10);
 
             // 3. 查询所有 Artifact（黑板数据）
             Map<String, String> sharedData = queryAllArtifacts(sessionId);
@@ -244,29 +223,6 @@ public class StateManager {
         }
     }
 
-    /**
-     * 查询最近的消息
-     *
-     * @param sessionId 会话ID
-     * @param limit 最多返回的消息数量
-     * @return 消息列表（按时间正序）
-     */
-    private List<Message> queryRecentMessages(String sessionId, int limit) {
-        try {
-            QueryWrapper<Message> queryWrapper = new QueryWrapper<>();
-            queryWrapper.eq("session_id", sessionId)
-                        .orderByDesc("created_at")
-                        .last("LIMIT " + limit);
-
-            List<Message> messages = messageMapper.selectList(queryWrapper);
-            // 反转列表，使其按时间正序排列
-            Collections.reverse(messages);
-            return messages;
-        } catch (Exception e) {
-            log.error("[StateManager] Failed to query recent messages", e);
-            return List.of();
-        }
-    }
 
     /**
      * 查询所有 Artifact

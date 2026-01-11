@@ -104,7 +104,6 @@ public class TokenUsageService {
         return cost != null ? cost : BigDecimal.ZERO;
     }
 
-    // ============= 维度1：成本与模型维度 =============
 
     /**
      * Provider费用占比统计
@@ -127,7 +126,6 @@ public class TokenUsageService {
         return tokenUsageMapper.sumCostByDay(startDate, endDate);
     }
 
-    // ============= 维度2：会话与任务维度 =============
 
     /**
      * Top昂贵会话
@@ -136,7 +134,6 @@ public class TokenUsageService {
         return tokenUsageMapper.getTopExpensiveSessions(startDate, endDate, limit);
     }
 
-    // ============= 维度3：Agent效能维度 =============
 
     /**
      * Agent Token消耗排行

@@ -122,13 +122,9 @@ public class AgentService {
         LambdaQueryWrapper<Agent> wrapper = new LambdaQueryWrapper<>();
         wrapper.orderByDesc(Agent::getCreatedAt);
 
-        // 排除系统内置的5个Agent
+        // 排除系统内置 Agent
         wrapper.notIn(Agent::getRoleType,
-            "SYSTEM_EMBEDDING",
-            "SYSTEM_SUMMARIZER",
-            "SYSTEM_INTENT_TRANSLATOR",
-            "SYSTEM_OUTPUT_SUMMARIZER",
-            "MODERATOR"
+            "PLANNER"
         );
 
         return agentMapper.selectList(wrapper);

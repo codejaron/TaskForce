@@ -49,10 +49,7 @@ public class MessageService {
         wrapper.eq(Message::getSessionId, sessionId)
                .orderByDesc(Message::getCreatedAt)
                .last("LIMIT " + limit);
-        List<Message> messages = messageMapper.selectList(wrapper);
-        // 反转顺序，使其按时间正序
-        java.util.Collections.reverse(messages);
-        return messages;
+        return messageMapper.selectList(wrapper);
     }
     
     /**

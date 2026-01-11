@@ -8,6 +8,9 @@ import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.mapper.AgentMapper;
+import com.agent.model.AgentProfile;
+import com.agent.service.AgentProfileService;
+import com.agent.service.SessionService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +34,8 @@ public class ReplannerAgent {
     private final EventBus eventBus;
     private final PromptManager promptManager;
     private final AgentMapper agentMapper;
+    private final AgentProfileService agentProfileService;
+    private final SessionService sessionService;
 
     // BeanOutputConverter for automatic JSON parsing
     private final BeanOutputConverter<ReplanResponseDTO> replanOutputConverter =
@@ -161,17 +166,26 @@ public class ReplannerAgent {
             throw new IllegalArgumentException("Replan steps cannot be empty");
         }
 
+        // 加载Worker列表（根据会话关联的Agent）
+        List<AgentProfile> workers = loadWorkers(sessionId);
+
         List<PlanStep> newSteps = dto.getSteps().stream()
-                .map(stepDto -> PlanStep.builder()
-                        .stepId(UUID.randomUUID().toString())
-                        .stepIndex(stepDto.getStepIndex())
-                        .description(stepDto.getDescription())
-                        .assignedAgentId(stepDto.getAssignedAgentId())
-                        .requiredCapability(stepDto.getRequiredCapability())
-                        .instruction(stepDto.getInstruction())
-                        .expectedOutput(stepDto.getExpectedOutput())
-                        .status(StepStatus.PENDING)
-                        .build())
+                .map(stepDto -> {
+                    // 根据agentId查找Agent信息
+                    AgentProfile agent = findAgentById(workers, stepDto.getAssignedAgentId());
+
+                    return PlanStep.builder()
+                            .stepId(UUID.randomUUID().toString())
+                            .stepIndex(stepDto.getStepIndex() - 1)  // LLM的1-based转换为内部0-based
+                            .description(stepDto.getDescription())
+                            .assignedAgentId(stepDto.getAssignedAgentId())
+                            .assignedAgentName(agent != null ? agent.getName() : "Unknown")  // 设置Agent名称
+                            .requiredCapability(stepDto.getRequiredCapability())
+                            .instruction(stepDto.getInstruction())
+                            .expectedOutput(stepDto.getExpectedOutput())
+                            .status(StepStatus.PENDING)
+                            .build();
+                })
                 .toList();
 
         return ExecutionPlan.builder()
@@ -179,7 +193,7 @@ public class ReplannerAgent {
                 .sessionId(sessionId)
                 .goal(dto.getGoal() != null ? dto.getGoal() : currentPlan.getGoal())
                 .steps(newSteps)
-                .currentStepIndex(0)
+                .currentStepIndex(0)  // 重规划后从第一个步骤开始
                 .status(PlanStatus.EXECUTING)
                 .replanCount(currentPlan.getReplanCount() + 1)
                 .build();
@@ -220,5 +234,42 @@ public class ReplannerAgent {
             log.error("[ReplannerAgent] Failed to get planner agent ID", e);
             return null;
         }
+    }
+
+    /**
+     * 加载可用的Worker列表
+     */
+    private List<AgentProfile> loadWorkers(String sessionId) {
+        try {
+            // 从会话中获取关联的 Agent 列表
+            var sessionAgents = sessionService.getSessionAgents(sessionId);
+            if (sessionAgents.isEmpty()) {
+                // 如果会话没有关联 Agent，返回所有可用的 Agent
+                return agentProfileService.listAll();
+            }
+
+            // 根据 AgentId 加载对应的 AgentProfile
+            return sessionAgents.stream()
+                    .map(sa -> agentProfileService.findById(String.valueOf(sa.getAgentId())))
+                    .filter(opt -> opt.isPresent())
+                    .map(opt -> opt.get())
+                    .toList();
+        } catch (Exception e) {
+            log.error("[ReplannerAgent] Failed to load workers", e);
+            return List.of();
+        }
+    }
+
+    /**
+     * 根据ID查找Agent
+     */
+    private AgentProfile findAgentById(List<AgentProfile> workers, String agentId) {
+        if (agentId == null || workers == null) {
+            return null;
+        }
+        return workers.stream()
+                .filter(w -> agentId.equals(String.valueOf(w.getId())))
+                .findFirst()
+                .orElse(null);
     }
 }
