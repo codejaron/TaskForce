@@ -60,6 +60,7 @@ export const A2AStudioPage: React.FC = () => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const lastScrollTopRef = useRef<number>(0);
 
   useEffect(() => {
     fetchSessions();
@@ -77,14 +78,25 @@ export const A2AStudioPage: React.FC = () => {
     }
   }, [messages, isUserScrolling]);
 
-  // 监听滚动事件，检测用户是否手动滚动
+  // 监听滚动事件，检测用户是否主动向上滚动
   const handleScroll = () => {
     const container = messagesContainerRef.current;
     if (!container) return;
 
     const { scrollTop, scrollHeight, clientHeight } = container;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
-    setIsUserScrolling(!isAtBottom);
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+
+    // 检测用户是否主动向上滚动（而不是因为内容增加导致的被动滚动）
+    const isScrollingUp = scrollTop < lastScrollTopRef.current;
+    lastScrollTopRef.current = scrollTop;
+
+    // 只有当用户主动向上滚动，且不在底部时，才标记为用户滚动
+    if (isScrollingUp && !isAtBottom) {
+      setIsUserScrolling(true);
+    } else if (isAtBottom) {
+      // 如果用户滚动到底部，恢复自动滚动
+      setIsUserScrolling(false);
+    }
   };
 
   const handleCreate = async () => {
@@ -126,7 +138,9 @@ export const A2AStudioPage: React.FC = () => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // 检查是否正在使用输入法（中文、日文等）
+    // isComposing 为 true 表示输入法正在组合字符，此时不应该提交
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
     }
