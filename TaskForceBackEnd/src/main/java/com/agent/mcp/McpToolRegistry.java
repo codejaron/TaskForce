@@ -87,7 +87,7 @@ public class McpToolRegistry {
                 String toolName = callback.getName();
                 String toolId = serverId + "::" + toolName;
 
-                // 🔥 关键修复：包装为非阻塞回调，避免在 Reactor 线程中阻塞
+
                 ToolCallback nonBlockingCallback = new NonBlockingMcpToolCallback(callback);
                 toolCallbackCache.put(toolId, nonBlockingCallback);
 

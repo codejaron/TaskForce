@@ -4,6 +4,7 @@ import com.agent.application.orchestration.dto.PlannerResponseDTO;
 import com.agent.domain.model.plan.*;
 import com.agent.entity.Agent;
 import com.agent.entity.Message;
+import com.agent.infrastructure.context.SessionContextHolder;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;
@@ -51,26 +52,36 @@ public class PlannerAgent {
     public PlannerResult generatePlan(String sessionId, String userGoal) {
         log.info("[PlannerAgent] Generating plan for session: {}", sessionId);
 
-        // 获取可用 Worker 列表
-        List<AgentProfile> workers = loadWorkers(sessionId);
-
-        // 构建包含历史澄清的上下文化目标
-        String contextualGoal = buildContextualGoal(sessionId, userGoal);
-
-        // 获取 BeanOutputConverter 的格式说明
-        String formatInstructions = plannerOutputConverter.getFormat();
-
-        // 构建 Prompt（包含格式说明和上下文）
-        String prompt = promptManager.buildPlannerPrompt(workers, contextualGoal, formatInstructions);
-        log.debug("[PlannerAgent] 📝 发送给 LLM 的完整 Prompt:\n{}", prompt);
-
-        // 使用 Self-Correction 重试机制生成计划
         try {
-            PlannerResponseDTO dto = generatePlanWithRetry(sessionId, prompt, 3);
-            return convertDtoToResult(sessionId, dto, workers);
-        } catch (Exception e) {
-            log.error("[PlannerAgent] Failed to generate plan after all retries", e);
-            return new PlannerResult.CannotPlan("规划失败（已重试 3 次）: " + e.getMessage());
+            //  设置 SessionContext，使 Planner 调用的工具能获取 sessionId
+            SessionContextHolder.setSessionId(sessionId);
+            log.debug("[PlannerAgent] SessionContext set for planning phase: sessionId={}", sessionId);
+
+            // 获取可用 Worker 列表
+            List<AgentProfile> workers = loadWorkers(sessionId);
+
+            // 构建包含历史澄清的上下文化目标
+            String contextualGoal = buildContextualGoal(sessionId, userGoal);
+
+            // 获取 BeanOutputConverter 的格式说明
+            String formatInstructions = plannerOutputConverter.getFormat();
+
+            // 构建 Prompt（包含格式说明和上下文）
+            String prompt = promptManager.buildPlannerPrompt(workers, contextualGoal, formatInstructions);
+            log.debug("[PlannerAgent] 📝 发送给 LLM 的完整 Prompt:\n{}", prompt);
+
+            // 使用 Self-Correction 重试机制生成计划
+            try {
+                PlannerResponseDTO dto = generatePlanWithRetry(sessionId, prompt, 3);
+                return convertDtoToResult(sessionId, dto, workers);
+            } catch (Exception e) {
+                log.error("[PlannerAgent] Failed to generate plan after all retries", e);
+                return new PlannerResult.CannotPlan("规划失败（已重试 3 次）: " + e.getMessage());
+            }
+        } finally {
+            //  清理 SessionContext
+            SessionContextHolder.clear();
+            log.debug("[PlannerAgent] SessionContext cleared after planning phase");
         }
     }
 

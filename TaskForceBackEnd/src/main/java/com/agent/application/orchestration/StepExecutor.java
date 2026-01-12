@@ -3,6 +3,7 @@ package com.agent.application.orchestration;
 import com.agent.domain.model.context.TaskContext;
 import com.agent.domain.model.plan.PlanStep;
 import com.agent.domain.model.plan.StepResult;
+import com.agent.infrastructure.context.SessionContextHolder;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.WorkerDeltaEvent;
 import com.agent.infrastructure.llm.LlmAdapter;
@@ -37,6 +38,10 @@ public class StepExecutor {
                 sessionId, step.getStepId(), step.getStepIndex());
 
         try {
+            // 设置 ThreadLocal 上下文
+            SessionContextHolder.setSessionId(sessionId);
+            log.debug("[StepExecutor] SessionContext set: sessionId={}", sessionId);
+
             // 1. 加载 Worker 配置
             AgentProfile worker = stateManager.loadAgent(step.getAssignedAgentId());
             if (worker == null) {
@@ -87,6 +92,10 @@ public class StepExecutor {
         } catch (Exception e) {
             log.error("[StepExecutor] Failed to execute step", e);
             return StepResult.blocked("执行失败: " + e.getMessage());
+        } finally {
+            // 清理 ThreadLocal，避免内存泄漏
+            SessionContextHolder.clear();
+            log.debug("[StepExecutor] SessionContext cleared");
         }
     }
 

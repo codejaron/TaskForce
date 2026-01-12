@@ -3,6 +3,7 @@ package com.agent.application.orchestration;
 import com.agent.application.orchestration.dto.ReplanResponseDTO;
 import com.agent.domain.model.plan.*;
 import com.agent.entity.Agent;
+import com.agent.infrastructure.context.SessionContextHolder;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;
@@ -48,30 +49,40 @@ public class ReplannerAgent {
         log.info("[ReplannerAgent] Replanning for session: {}, replanCount: {}",
                 sessionId, currentPlan.getReplanCount());
 
-        PlanStep blockedStep = currentPlan.getCurrentStep();
-
-        // 获取 BeanOutputConverter 的格式说明
-        String formatInstructions = replanOutputConverter.getFormat();
-
-        // 构建 Prompt（包含格式说明）
-        String prompt = promptManager.buildReplannerPrompt(
-                currentPlan.getGoal(),
-                currentPlan.getCompletedStepCount(),
-                currentPlan.getSteps().size(),
-                blockedStep != null ? blockedStep.getStepIndex() : 0,
-                blockedStep != null ? blockedStep.getDescription() : "Unknown",
-                blockedReason,
-                formatInstructions
-        );
-        log.debug("[ReplannerAgent] 🔄 重规划 Prompt:\n{}", prompt);
-
         try {
-            ReplanResponseDTO dto = replanWithRetry(sessionId, prompt, 3);
-            return convertDtoToExecutionPlan(sessionId, currentPlan, dto);
-        } catch (Exception e) {
-            log.error("[ReplannerAgent] Replan failed after all retries", e);
-            currentPlan.markFailed("重规划失败（已重试 3 次）: " + e.getMessage());
-            return currentPlan;
+            //设置 SessionContext，使 Replanner 调用的工具能获取 sessionId
+            SessionContextHolder.setSessionId(sessionId);
+            log.debug("[ReplannerAgent] SessionContext set for replanning phase: sessionId={}", sessionId);
+
+            PlanStep blockedStep = currentPlan.getCurrentStep();
+
+            // 获取 BeanOutputConverter 的格式说明
+            String formatInstructions = replanOutputConverter.getFormat();
+
+            // 构建 Prompt（包含格式说明）
+            String prompt = promptManager.buildReplannerPrompt(
+                    currentPlan.getGoal(),
+                    currentPlan.getCompletedStepCount(),
+                    currentPlan.getSteps().size(),
+                    blockedStep != null ? blockedStep.getStepIndex() : 0,
+                    blockedStep != null ? blockedStep.getDescription() : "Unknown",
+                    blockedReason,
+                    formatInstructions
+            );
+            log.debug("[ReplannerAgent] 🔄 重规划 Prompt:\n{}", prompt);
+
+            try {
+                ReplanResponseDTO dto = replanWithRetry(sessionId, prompt, 3);
+                return convertDtoToExecutionPlan(sessionId, currentPlan, dto);
+            } catch (Exception e) {
+                log.error("[ReplannerAgent] Replan failed after all retries", e);
+                currentPlan.markFailed("重规划失败（已重试 3 次）: " + e.getMessage());
+                return currentPlan;
+            }
+        } finally {
+            // 清理 SessionContext
+            SessionContextHolder.clear();
+            log.debug("[ReplannerAgent] SessionContext cleared after replanning phase");
         }
     }
 

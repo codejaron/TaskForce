@@ -7,6 +7,7 @@ import com.agent.model.AgentProfile;
 import com.agent.model.ToolInfo;
 import com.agent.service.AgentToolService;
 import com.agent.mcp.McpToolRegistry;
+import com.agent.util.ArtifactParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -209,7 +210,7 @@ public class PromptManager {
             prompt.append("\n");
         }
 
-        // 6. 输出协议
+        // 6. 输出协议 + 工具使用说明
         prompt.append("""
             【输出协议】
             如果你产生了需要传递给后续步骤的关键产物（如代码、搜索结果、草稿），
@@ -233,6 +234,16 @@ public class PromptManager {
 
             未包裹的内容将被视为普通闲聊，不会被系统记忆。
 
+            【工具使用】
+            你可以使用以下工具来查询历史数据：
+            - query_artifact(key): 查询指定 Artifact 的完整内容
+            - list_artifacts(): 列出所有可用的 Artifact
+            - search_artifacts(keyword): 搜索包含关键词的 Artifact
+
+            示例：
+            如果你看到 "search_results" 的预览，但需要完整内容，可以调用：
+            query_artifact("search_results")
+
             【执行规则】
             1. 严格按照任务指令执行
             2. 如果遇到无法完成的情况，输出 "BLOCKED: 原因"
@@ -248,6 +259,7 @@ public class PromptManager {
 
     /**
      * 格式化共享数据（黑板）
+     * 只显示元数据和预览，完整内容通过工具查询
      * @param sharedData 共享数据Map
      * @return 格式化后的文本
      */
@@ -257,29 +269,39 @@ public class PromptManager {
         }
 
         StringBuilder sb = new StringBuilder();
+        sb.append("以下是当前会话中可用的 Artifact 列表（仅显示摘要）：\n\n");
+
         int index = 1;
+        int maxArtifacts = Math.min(sharedData.size(), 15); // 最多显示 15 个
 
         for (Map.Entry<String, String> entry : sharedData.entrySet()) {
+            if (index > maxArtifacts) break;
+
             String key = entry.getKey();
             String value = entry.getValue();
 
-            // 长度限制：每个 value 最多显示 1000 字符
-            String displayValue = value;
-//            if (value.length() > 1000) {
-//                displayValue = value.substring(0, 1000) + "\n[... 省略 " + (value.length() - 1000) + " 字符]";
-//            }
+            // 只显示前 200 字符作为预览
+            String preview = value.length() > 200
+                ? value.substring(0, 200) + "..."
+                : value;
 
-            sb.append(index++).append(". **").append(key).append("**:\n");
-            sb.append("```\n");
-            sb.append(displayValue);
-            sb.append("\n```\n\n");
+            sb.append(index++).append(". **").append(key).append("**\n");
+            sb.append("   大小: ").append(value.length()).append(" 字符\n");
+            sb.append("   预览: ").append(preview).append("\n\n");
         }
+
+        if (sharedData.size() > maxArtifacts) {
+            sb.append("... 还有 ").append(sharedData.size() - maxArtifacts).append(" 个 Artifact\n\n");
+        }
+
+        sb.append("💡 提示：如需查看完整内容，请使用 query_artifact(key) 工具。\n");
 
         return sb.toString();
     }
 
     /**
      * 格式化对话历史
+     * 清洗 Artifact 标签，避免重复发送
      * @param recentHistory 最近的对话消息列表
      * @return 格式化后的文本
      */
@@ -289,7 +311,7 @@ public class PromptManager {
         }
 
         StringBuilder sb = new StringBuilder();
-        int maxMessages = Math.min(recentHistory.size(), 3);
+        int maxMessages = Math.min(recentHistory.size(), 5); // 增加到 5 条
 
         for (int i = 0; i < maxMessages; i++) {
             Message msg = recentHistory.get(i);
@@ -306,11 +328,14 @@ public class PromptManager {
                 default -> role;
             };
 
-            // 内容裁剪
-            String displayContent = content;
-//            if (content.length() > 500) {
-//                displayContent = content.substring(0, 500) + "\n[... 省略 " + (content.length() - 500) + " 字符]";
-//            }
+            // 清洗 Artifact 标签
+            String cleanedContent = ArtifactParser.removeArtifacts(content);
+
+            // 内容裁剪（保留 800 字符）
+            String displayContent = cleanedContent;
+            if (cleanedContent.length() > 800) {
+                displayContent = cleanedContent.substring(0, 800) + "\n[... 省略 " + (cleanedContent.length() - 800) + " 字符]";
+            }
 
             sb.append("[").append(roleDisplay).append("]: ");
             sb.append(displayContent);

@@ -1,5 +1,6 @@
 package com.agent.factory;
 
+import com.agent.config.AutoToolConfiguration;
 import com.agent.service.AgentToolService;
 import com.agent.entity.Agent;
 import com.agent.mapper.AgentMapper;
@@ -13,11 +14,13 @@ import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.InMemoryChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -38,6 +41,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AgentFactory {
 
     private final McpToolRegistry mcpToolRegistry;
+    private final AutoToolConfiguration autoToolConfiguration; // 原生工具配置
     private final ChatModelFactory chatModelFactory; // 动态模型工厂
     private final AgentMapper agentMapper;
     private final LLMProviderMapper providerMapper;
@@ -126,16 +130,34 @@ public class AgentFactory {
                         .build()
         );
 
-        // 8. 挂载 MCP 工具（从数据库加载）
+        // 8. 挂载工具（MCP + 原生）
+        List<FunctionCallback> allTools = new ArrayList<>();
+
+        // 8.1 添加 MCP 工具（从数据库加载）
         List<String> enabledToolIds = agentToolService.getEnabledToolIds(agentId);
         if (!enabledToolIds.isEmpty()) {
-            ToolCallback[] callbacks = mcpToolRegistry.getToolCallbacks(enabledToolIds);
-            if (callbacks.length > 0) {
-                builder.defaultTools(callbacks);
-                log.info("  Attached {} tools to agent {} from database", callbacks.length, agent.getName());
+            ToolCallback[] mcpCallbacks = mcpToolRegistry.getToolCallbacks(enabledToolIds);
+            if (mcpCallbacks.length > 0) {
+                allTools.addAll(Arrays.asList(mcpCallbacks));
+                log.info("  Attached {} MCP tools", mcpCallbacks.length);
             } else {
-                log.warn("  No valid tools found for agent {} (tools may have been removed)", agent.getName());
+                log.warn("  No valid MCP tools found (tools may have been removed)");
             }
+        }
+
+        // 8.2 添加原生 @Tool 工具（所有 Worker 都可用，传入 sessionId 用于跨线程传递上下文）
+        FunctionCallback[] nativeCallbacks = autoToolConfiguration.getToolCallbacks(sessionId);
+        if (nativeCallbacks.length > 0) {
+            allTools.addAll(Arrays.asList(nativeCallbacks));
+            log.info("  Attached {} native @Tool tools (with sessionId: {})", nativeCallbacks.length, sessionId);
+        }
+
+        // 8.3 注册到 ChatClient
+        if (!allTools.isEmpty()) {
+            builder.defaultTools(allTools.toArray(new FunctionCallback[0]));
+            log.info("  Total tools attached to agent {}: {}", agent.getName(), allTools.size());
+        } else {
+            log.info("  No tools attached to agent {}", agent.getName());
         }
 
         return builder.build();

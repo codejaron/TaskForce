@@ -88,11 +88,11 @@ public class ArtifactParser {
     }
 
     /**
-     * 移除文本中的所有 Artifact 标签
-     * 用于清理消息内容，避免在前端显示原始 XML 标签
+     * 移除文本中的所有 Artifact 标签，替换为占位符
+     * 用于清理历史消息，避免重复发送 Artifact 内容
      *
      * @param text 待处理的文本
-     * @return 移除 artifact 标签后的文本
+     * @return 替换 artifact 标签后的文本
      */
     public static String removeArtifacts(String text) {
         if (text == null || text.trim().isEmpty()) {
@@ -100,11 +100,19 @@ public class ArtifactParser {
         }
 
         try {
-            // 移除 artifact 标签
-            String result = ARTIFACT_PATTERN.matcher(text).replaceAll("");
+            // 替换 artifact 标签为占位符
+            Matcher matcher = ARTIFACT_PATTERN.matcher(text);
+            StringBuffer result = new StringBuffer();
+
+            while (matcher.find()) {
+                String key = matcher.group(1);
+                matcher.appendReplacement(result, "[Artifact 已保存: " + key + "]");
+            }
+            matcher.appendTail(result);
+
             // 清理多余的空行（连续3个及以上换行替换为2个换行）
-            result = result.replaceAll("\n{3,}", "\n\n");
-            return result.trim();
+            String cleaned = result.toString().replaceAll("\n{3,}", "\n\n");
+            return cleaned.trim();
         } catch (Exception e) {
             log.error("[ArtifactParser] Failed to remove artifacts", e);
             return text;

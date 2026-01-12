@@ -1,7 +1,7 @@
 -- ========================================
 -- TaskForce - Complete Database Schema
--- Version: 2.5
--- Date: 2026-01-08
+-- Version: 2.7
+-- Date: 2026-01-12
 -- ========================================
 
 -- ========================================
@@ -154,6 +154,9 @@ CREATE TABLE IF NOT EXISTS execution_plan (
     status VARCHAR(32) NOT NULL COMMENT '状态: PLANNING/EXECUTING/REPLANNING/PAUSED/COMPLETED/FAILED',
     current_step_index INT DEFAULT 0 COMMENT '当前执行步骤索引',
     pause_reason VARCHAR(64) COMMENT '暂停原因: waiting_user/blocked/replan_limit',
+    paused_by VARCHAR(32) COMMENT '暂停触发源: PLANNER/WORKER/USER/BLOCKED',
+    paused_at_step_index INT COMMENT 'Worker澄清时记录的步骤索引',
+    paused_agent_id VARCHAR(64) COMMENT 'Worker澄清时记录的Agent ID',
     pending_question TEXT COMMENT '待用户回答的问题',
     replan_count INT DEFAULT 0 COMMENT '重规划次数',
     steps_json JSON COMMENT '步骤列表(JSON格式)',
@@ -161,6 +164,7 @@ CREATE TABLE IF NOT EXISTS execution_plan (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_session_id (session_id),
     INDEX idx_status (status),
+    INDEX idx_paused_by (paused_by),
     INDEX idx_updated_at (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='执行计划表-异步工作流状态管理';
 
@@ -170,6 +174,7 @@ CREATE TABLE IF NOT EXISTS execution_plan (
 CREATE TABLE IF NOT EXISTS token_usage (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     session_id VARCHAR(50) COMMENT '会话ID',
+    agent_id BIGINT COMMENT 'Agent ID',
     provider_id BIGINT COMMENT '渠道ID',
     model_name VARCHAR(100) COMMENT '模型名称',
     prompt_tokens INT DEFAULT 0 COMMENT '输入Token数',
@@ -178,9 +183,15 @@ CREATE TABLE IF NOT EXISTS token_usage (
     cost DECIMAL(10,6) COMMENT '成本(预留)',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_session_id (session_id),
+    INDEX idx_agent_id (agent_id),
     INDEX idx_provider_id (provider_id),
+    INDEX idx_model_name (model_name),
+    INDEX idx_cost (cost),
     INDEX idx_created_at (created_at),
+    INDEX idx_created_provider (created_at, provider_id),
+    INDEX idx_created_agent (created_at, agent_id),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL,
     FOREIGN KEY (provider_id) REFERENCES llm_providers(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Token使用统计表';
 
