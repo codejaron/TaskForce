@@ -17,6 +17,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -37,7 +38,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class AgentFactory {
 
     private final McpToolRegistry mcpToolRegistry;
@@ -46,6 +46,22 @@ public class AgentFactory {
     private final AgentMapper agentMapper;
     private final LLMProviderMapper providerMapper;
     private final AgentToolService agentToolService; // Agent工具服务
+
+    // 使用构造函数注入，对 AutoToolConfiguration 使用 @Lazy 打破循环依赖
+    public AgentFactory(
+            McpToolRegistry mcpToolRegistry,
+            @Lazy AutoToolConfiguration autoToolConfiguration,
+            ChatModelFactory chatModelFactory,
+            AgentMapper agentMapper,
+            LLMProviderMapper providerMapper,
+            AgentToolService agentToolService) {
+        this.mcpToolRegistry = mcpToolRegistry;
+        this.autoToolConfiguration = autoToolConfiguration;
+        this.chatModelFactory = chatModelFactory;
+        this.agentMapper = agentMapper;
+        this.providerMapper = providerMapper;
+        this.agentToolService = agentToolService;
+    }
 
     /**
      * 会话记忆缓存：sessionId -> ChatMemory

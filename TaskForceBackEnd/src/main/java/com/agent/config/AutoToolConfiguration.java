@@ -51,6 +51,11 @@ public class AutoToolConfiguration implements ApplicationContextAware {
         int totalRegistered = 0;
 
         for (String beanName : beanNames) {
+            // 跳过自己，避免循环依赖
+            if ("autoToolConfiguration".equals(beanName)) {
+                continue;
+            }
+
             try {
                 Object bean = applicationContext.getBean(beanName);
                 Class<?> clazz = bean.getClass();
