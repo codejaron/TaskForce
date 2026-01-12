@@ -8,6 +8,7 @@ import org.springframework.beans.BeansException;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
 import java.lang.reflect.Method;
@@ -44,22 +45,25 @@ public class AutoToolConfiguration implements ApplicationContextAware {
 
     @PostConstruct
     public void scanTools() {
-        log.info("[AutoToolConfiguration] Starting to scan @Tool methods...");
+        log.info("[AutoToolConfiguration] Starting to scan @Tool methods in com.agent.service.tool package...");
 
-        String[] beanNames = applicationContext.getBeanDefinitionNames();
+        // 只扫描 com.agent.service.tool 包下的 Bean
+        Map<String, Object> toolBeans = applicationContext.getBeansWithAnnotation(Service.class);
         int totalScanned = 0;
         int totalRegistered = 0;
 
-        for (String beanName : beanNames) {
-            // 跳过自己，避免循环依赖
-            if ("autoToolConfiguration".equals(beanName)) {
+        for (Map.Entry<String, Object> entry : toolBeans.entrySet()) {
+            String beanName = entry.getKey();
+            Object bean = entry.getValue();
+            Class<?> clazz = bean.getClass();
+
+            // 只处理 com.agent.service.tool 包下的类
+            String packageName = clazz.getPackage() != null ? clazz.getPackage().getName() : "";
+            if (!packageName.startsWith("com.agent.service.tool")) {
                 continue;
             }
 
             try {
-                Object bean = applicationContext.getBean(beanName);
-                Class<?> clazz = bean.getClass();
-
                 // 跳过 Spring 内部类和代理类
                 if (clazz.getName().contains("$$") && !clazz.getName().contains("EnhancerBySpringCGLIB")) {
                     continue;
