@@ -23,6 +23,42 @@ interface A2AState {
 // 存储当前的 AbortController，用于关闭 SSE 连接
 let currentAbortController: AbortController | null = null;
 
+// 存储重连定时器
+let reconnectTimeoutId: NodeJS.Timeout | null = null;
+
+// ========== 重连配置 ==========
+const RECONNECT_CONFIG = {
+  maxRetries: 5,
+  initialDelay: 1000,  // 1秒
+  maxDelay: 32000,     // 32秒
+  backoffMultiplier: 2
+};
+
+// 计算重连延迟（指数退避 + 随机抖动）
+function getReconnectDelay(retryCount: number): number {
+  const baseDelay = RECONNECT_CONFIG.initialDelay *
+                    Math.pow(RECONNECT_CONFIG.backoffMultiplier, retryCount);
+  const jitter = Math.random() * 1000;  // 0-1秒随机抖动，避免重连风暴
+  return Math.min(baseDelay + jitter, RECONNECT_CONFIG.maxDelay);
+}
+
+// ========== 去重逻辑 ==========
+// 存储已处理的事件 ID（每个 session 独立）
+const processedEventIds = new Map<string, Set<string>>();
+
+// 获取或创建 session 的去重 Set
+function getEventIdSet(sessionId: string): Set<string> {
+  if (!processedEventIds.has(sessionId)) {
+    processedEventIds.set(sessionId, new Set<string>());
+  }
+  return processedEventIds.get(sessionId)!;
+}
+
+// 清理 session 的去重记录
+function clearEventIdSet(sessionId: string) {
+  processedEventIds.delete(sessionId);
+}
+
 /**
  * 解析 Moderator 消息中的特殊标记
  * 提取黑板 JSON 和 WAIT_USER 标记
@@ -82,7 +118,7 @@ function parseModeratorMessage(text: string): { cleanText: string; blackboard: a
 /**
  * 处理异步工作流事件
  */
-function handleAsyncEvent(ev: any, _sessionId: string, set: any, get: any) {
+function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
   const eventType = ev.event;
   let data: any;
 
@@ -92,6 +128,28 @@ function handleAsyncEvent(ev: any, _sessionId: string, set: any, get: any) {
     console.error('[A2A] Failed to parse event data:', e);
     return;
   }
+
+  // ========== 去重逻辑 ==========
+  const eventId = data.eventId;
+  if (eventId) {
+    const eventIdSet = getEventIdSet(sessionId);
+
+    // 检查是否已处理
+    if (eventIdSet.has(eventId)) {
+      console.debug('[A2A] Duplicate event ignored:', eventId, eventType);
+      return;  // 跳过重复事件
+    }
+
+    // 记录已处理的事件
+    eventIdSet.add(eventId);
+
+    // 内存管理：限制 Set 大小（保留最近 10000 个）
+    if (eventIdSet.size > 10000) {
+      const firstId = eventIdSet.values().next().value;
+      eventIdSet.delete(firstId);
+    }
+  }
+  // ========== 去重逻辑结束 ==========
 
   const { messages } = get();
 
@@ -341,6 +399,12 @@ export const useA2AStore = create<A2AState>((set, get) => ({
   },
 
   selectSession: async (session) => {
+    // 清理旧 session 的去重记录
+    const oldSession = get().currentSession;
+    if (oldSession) {
+      clearEventIdSet(oldSession.id);
+    }
+
     get().disconnectStream();
     set({ currentSession: session, messages: [], isLoading: true });
 
@@ -370,6 +434,10 @@ export const useA2AStore = create<A2AState>((set, get) => ({
   },
 
   clearSession: () => {
+    const currentSession = get().currentSession;
+    if (currentSession) {
+      clearEventIdSet(currentSession.id);
+    }
     get().disconnectStream();
     set({ currentSession: null, messages: [] });
   },
@@ -402,34 +470,92 @@ export const useA2AStore = create<A2AState>((set, get) => ({
       const submitResponse = await api.groupChat.submit(sessionId, userMessage || '');
       console.log('[A2A V2] Submit response:', submitResponse);
 
-      // 4. Subscribe to SSE event stream (独立连接)
+      // 4. Subscribe to SSE event stream (独立连接，支持自动重连)
       const eventSourceUrl = `/api/group-chat/${sessionId}/events`;
-      currentAbortController = new AbortController();
 
-      fetchEventSource(eventSourceUrl, {
-        signal: currentAbortController.signal,
+      // 重连状态管理
+      let reconnectAttempts = 0;
 
-        onmessage(ev) {
-          handleAsyncEvent(ev, sessionId, set, get);
-        },
+      // 清理重连定时器的辅助函数
+      const cleanupReconnect = () => {
+        if (reconnectTimeoutId) {
+          clearTimeout(reconnectTimeoutId);
+          reconnectTimeoutId = null;
+        }
+      };
 
-        onerror(err) {
-          if (err.name !== 'AbortError') {
-            console.error('[A2A V2 SSE] Error:', err);
-            set({ error: 'Stream connection error', isLoading: false });
+      // 递归重连函数
+      const connectSSE = () => {
+        const controller = new AbortController();
+        currentAbortController = controller;
+
+        fetchEventSource(eventSourceUrl, {
+          signal: controller.signal,
+
+          onmessage(ev) {
+            // 重连成功，重置计数器
+            if (reconnectAttempts > 0) {
+              console.log('[A2A V2 SSE] Reconnected successfully');
+              reconnectAttempts = 0;
+            }
+            handleAsyncEvent(ev, sessionId, set, get);
+          },
+
+          onerror(err) {
+            // 忽略主动中断
+            if (err.name === 'AbortError') {
+              return;
+            }
+
+            console.error('[A2A V2 SSE] Connection error:', err);
+
+            // 尝试重连
+            if (reconnectAttempts < RECONNECT_CONFIG.maxRetries) {
+              const delay = getReconnectDelay(reconnectAttempts);
+              reconnectAttempts++;
+
+              console.log(`[A2A V2 SSE] Reconnecting in ${Math.round(delay)}ms (attempt ${reconnectAttempts}/${RECONNECT_CONFIG.maxRetries})`);
+
+              reconnectTimeoutId = setTimeout(() => {
+                connectSSE();
+              }, delay);
+            } else {
+              console.error('[A2A V2 SSE] Max reconnection attempts reached');
+              set({
+                error: 'Connection lost. Please refresh the page.',
+                isLoading: false
+              });
+            }
+          },
+
+          onclose() {
+            console.log('[A2A V2 SSE] Connection closed');
+            cleanupReconnect();
+
+            // 如果不是主动断开，尝试重连
+            if (!controller.signal.aborted && reconnectAttempts < RECONNECT_CONFIG.maxRetries) {
+              const delay = getReconnectDelay(reconnectAttempts);
+              reconnectAttempts++;
+
+              console.log(`[A2A V2 SSE] Reconnecting after close (attempt ${reconnectAttempts}/${RECONNECT_CONFIG.maxRetries})`);
+
+              reconnectTimeoutId = setTimeout(() => {
+                connectSSE();
+              }, delay);
+            } else {
+              set({ isLoading: false });
+            }
           }
-        },
+        }).catch(err => {
+          if (err.name !== 'AbortError') {
+            console.error('[A2A V2 SSE] Fatal error:', err);
+            set({ error: err.message, isLoading: false });
+          }
+        });
+      };
 
-        onclose() {
-          console.log('[A2A V2 SSE] Connection closed');
-          set({ isLoading: false });
-        }
-      }).catch(err => {
-        if (err.name !== 'AbortError') {
-          console.error('[A2A V2 SSE] Connection error:', err);
-          set({ error: err.message, isLoading: false });
-        }
-      });
+      // 启动初始连接
+      connectSSE();
 
     } catch (error: any) {
       console.error('[A2A V2] Failed to start group chat:', error);
@@ -438,6 +564,12 @@ export const useA2AStore = create<A2AState>((set, get) => ({
   },
 
   disconnectStream: () => {
+    // 清理重连定时器
+    if (reconnectTimeoutId) {
+      clearTimeout(reconnectTimeoutId);
+      reconnectTimeoutId = null;
+    }
+
     if (currentAbortController) {
       try {
         currentAbortController.abort();

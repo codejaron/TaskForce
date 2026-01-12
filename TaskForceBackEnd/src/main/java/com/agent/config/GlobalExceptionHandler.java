@@ -37,6 +37,22 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理 IOException（包括 Broken pipe）
+     * 这是 SSE 连接断开时的正常现象
+     */
+    @ExceptionHandler(java.io.IOException.class)
+    @ResponseStatus(HttpStatus.OK)
+    public void handleIOException(java.io.IOException e) {
+        // Broken pipe 是客户端断开连接的正常现象
+        if (e.getMessage() != null && e.getMessage().contains("Broken pipe")) {
+            log.debug("[SSE] Client disconnected (broken pipe)");
+        } else {
+            log.warn("[SSE] IO exception: {}", e.getMessage());
+        }
+        // 不返回响应，因为连接已断开
+    }
+
+    /**
      * 处理 AsyncContext 竞态条件异常
      * 这是 SSE 连接断开时的正常现象
      */

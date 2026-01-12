@@ -58,8 +58,8 @@ public class InMemoryEventBus implements EventBus {
         ChannelInfo channelInfo = channels.computeIfAbsent(sessionId, k -> {
             log.info("[EventBus] Creating new channel for session: {}", sessionId);
             Sinks.Many<OrchestrationEvent> sink = Sinks.many()
-                    .multicast()
-                    .onBackpressureBuffer(MAX_BUFFER_SIZE);
+                    .replay()
+                    .limit(MAX_BUFFER_SIZE);  // 保留最近 8192 个事件，支持重连恢复
             return new ChannelInfo(sink);
         });
 
