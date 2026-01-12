@@ -175,42 +175,8 @@ public class PromptManager {
     public String buildWorkerPromptWithContext(TaskContext context, AgentProfile worker) {
         StringBuilder prompt = new StringBuilder();
 
-        // 1. 基础角色说明
-        prompt.append("你是一个任务执行专家：").append(worker.getName()).append("\n\n");
-        prompt.append("【你的角色】\n");
-        prompt.append(worker.getSystemPrompt() != null ? worker.getSystemPrompt() : "执行任务").append("\n\n");
 
-        // 2. 用户目标
-        if (context.getUserGoal() != null && !context.getUserGoal().isEmpty()) {
-            prompt.append("【用户目标】\n");
-            prompt.append(context.getUserGoal()).append("\n\n");
-        }
-
-        // 3. 已知信息（共享黑板）
-        if (context.hasSharedData()) {
-            prompt.append("【已知信息（共享黑板）】\n");
-            prompt.append(formatSharedData(context.getSharedData())).append("\n\n");
-        }
-
-        // 4. 对话历史
-        if (context.hasHistory()) {
-            prompt.append("【对话历史】\n");
-            prompt.append(formatRecentHistory(context.getRecentHistory())).append("\n\n");
-        }
-
-        // 5. 当前任务
-        PlanStep step = context.getCurrentStep();
-        if (step != null) {
-            prompt.append("【当前任务】\n");
-            prompt.append("步骤 ").append(step.getStepIndex()).append(": ").append(step.getDescription()).append("\n");
-            prompt.append("指令: ").append(step.getInstruction()).append("\n");
-            if (step.getExpectedOutput() != null && !step.getExpectedOutput().isEmpty()) {
-                prompt.append("预期输出: ").append(step.getExpectedOutput()).append("\n");
-            }
-            prompt.append("\n");
-        }
-
-        // 6. 输出协议 + 工具使用说明
+        // 1. 输出协议 + 工具使用说明（静态 - 大块内容，优先缓存）
         prompt.append("""
             【输出协议】
             如果你产生了需要传递给后续步骤的关键产物（如代码、搜索结果、草稿），
@@ -249,7 +215,43 @@ public class PromptManager {
             2. 如果遇到无法完成的情况，输出 "BLOCKED: 原因"
             3. 如果需要用户提供更多信息，输出 "NEED_USER_INPUT: 问题"
             4. 完成后直接输出结果，不需要额外的格式
+
             """);
+
+        // 2. 角色定义
+        prompt.append("你是一个任务执行专家：").append(worker.getName()).append("\n\n");
+        prompt.append("【你的角色】\n");
+        prompt.append(worker.getSystemPrompt() != null ? worker.getSystemPrompt() : "执行任务").append("\n\n");
+
+        // 3. 用户目标（动态）
+        if (context.getUserGoal() != null && !context.getUserGoal().isEmpty()) {
+            prompt.append("【用户目标】\n");
+            prompt.append(context.getUserGoal()).append("\n\n");
+        }
+
+        // 4. 已知信息（共享黑板）（动态）
+        if (context.hasSharedData()) {
+            prompt.append("【已知信息（共享黑板）】\n");
+            prompt.append(formatSharedData(context.getSharedData())).append("\n\n");
+        }
+
+        // 5. 对话历史（动态）
+        if (context.hasHistory()) {
+            prompt.append("【对话历史】\n");
+            prompt.append(formatRecentHistory(context.getRecentHistory())).append("\n\n");
+        }
+
+        // 6. 当前任务（动态）
+        PlanStep step = context.getCurrentStep();
+        if (step != null) {
+            prompt.append("【当前任务】\n");
+            prompt.append("步骤 ").append(step.getStepIndex()).append(": ").append(step.getDescription()).append("\n");
+            prompt.append("指令: ").append(step.getInstruction()).append("\n");
+            if (step.getExpectedOutput() != null && !step.getExpectedOutput().isEmpty()) {
+                prompt.append("预期输出: ").append(step.getExpectedOutput()).append("\n");
+            }
+            prompt.append("\n");
+        }
 
         log.debug("[PromptManager] Built Worker Prompt with context: worker={}, historyCount={}, artifactCount={}",
                 worker.getName(), context.getHistoryCount(), context.getSharedDataCount());
