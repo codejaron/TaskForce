@@ -1,4 +1,6 @@
-# 构建阶段
+# ========================
+# 第一阶段：构建 (Builder)
+# ========================
 FROM maven:3.9.5-eclipse-temurin-21 AS builder
 
 WORKDIR /build
@@ -32,8 +34,10 @@ FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
 
-# [新增加速] 替换 apt 源为阿里云镜像，解决 apt-get 慢的问题
-RUN sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+# [关键修复] 同时替换 ports.ubuntu.com (ARM64) 和 archive.ubuntu.com (AMD64)
+# 这样无论在 Intel 还是 M1/M2 Mac 上都能走阿里云加速
+RUN sed -i 's/ports.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list && \
     sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
 
 # 安装 Python3 和 Git
@@ -66,4 +70,3 @@ COPY --from=builder /build/target/*.jar app.jar
 EXPOSE 8080
 
 ENTRYPOINT ["sh", "-c", "java ${JAVA_OPTS} -jar /app/app.jar"]
-
