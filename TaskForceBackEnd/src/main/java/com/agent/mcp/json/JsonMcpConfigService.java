@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.FileTime;
+import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -44,6 +45,7 @@ public class JsonMcpConfigService {
     private WatchService watchService;
     private ScheduledExecutorService pollingExecutor;
     private FileTime lastModifiedTime;
+    private String lastFileHash;
 
     @Getter
     private final Set<String> loadedServerIds = Collections.synchronizedSet(new HashSet<>());
@@ -270,8 +272,9 @@ public class JsonMcpConfigService {
      */
     private void startPollingWatcher(Path configFile) {
         try {
-            // 记录初始修改时间
+            // 记录初始修改时间和文件哈希
             lastModifiedTime = Files.getLastModifiedTime(configFile);
+            lastFileHash = calculateFileHash(configFile);
 
             // 创建单线程调度器
             pollingExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -283,10 +286,24 @@ public class JsonMcpConfigService {
             // 定时检查文件修改
             pollingExecutor.scheduleWithFixedDelay(() -> {
                 try {
+                    boolean fileChanged = false;
+
+                    // 方法1: 检查修改时间
                     FileTime currentModifiedTime = Files.getLastModifiedTime(configFile);
                     if (currentModifiedTime.compareTo(lastModifiedTime) > 0) {
-                        log.info("[JsonMcpConfig] MCP config file changed (polling detected), reloading...");
+                        fileChanged = true;
                         lastModifiedTime = currentModifiedTime;
+                    }
+
+                    // 方法2: 检查文件内容哈希（Docker volume 挂载时修改时间可能不更新）
+                    String currentHash = calculateFileHash(configFile);
+                    if (!currentHash.equals(lastFileHash)) {
+                        fileChanged = true;
+                        lastFileHash = currentHash;
+                    }
+
+                    if (fileChanged) {
+                        log.info("[JsonMcpConfig] MCP config file changed (polling detected), reloading...");
                         Thread.sleep(500);  // 防抖
                         loadConfig(configFile);
                     }
@@ -300,6 +317,29 @@ public class JsonMcpConfigService {
 
         } catch (Exception e) {
             log.error("[JsonMcpConfig] Failed to start polling watcher", e);
+        }
+    }
+
+    /**
+     * 计算文件内容的 SHA-256 哈希值
+     */
+    private String calculateFileHash(Path file) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] fileBytes = Files.readAllBytes(file);
+            byte[] hashBytes = digest.digest(fileBytes);
+
+            // 转换为十六进制字符串
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hashBytes) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (Exception e) {
+            log.error("[JsonMcpConfig] Failed to calculate file hash", e);
+            return "";
         }
     }
 
