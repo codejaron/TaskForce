@@ -30,23 +30,26 @@ FROM ubuntu:22.04
 
 WORKDIR /app
 
-# 安装 Java、Node.js、Python 和常用工具
-RUN apt-get update && apt-get install -y \
-    # Java 运行环境
+# 配置 Ubuntu 使用阿里云镜像源（加速下载）
+RUN sed -i 's@//.*archive.ubuntu.com@//mirrors.aliyun.com@g' /etc/apt/sources.list && \
+    sed -i 's@//.*ports.ubuntu.com@//mirrors.aliyun.com@g' /etc/apt/sources.list
+
+# 安装 Java、Python 和常用工具
+RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-21-jre-headless \
-    # Python 和 pip（用于 Python MCP Server）
     python3 python3-pip \
-    # 常用系统工具
-    git curl wget ca-certificates gnupg \
+    git curl wget ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 Node.js 20.x（LTS 版本，支持最新的 MCP Server）
-RUN mkdir -p /etc/apt/keyrings && \
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list && \
+# 安装 Node.js 20.x（使用国内镜像加速）
+RUN curl -fsSL https://mirrors.tuna.tsinghua.edu.cn/nodesource/deb_20.x/nodistro/repo/deb/nodesource-repo.gpg.key | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://mirrors.tuna.tsinghua.edu.cn/nodesource/deb_20.x/nodistro nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
     apt-get update && \
-    apt-get install -y nodejs && \
+    apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
+
+# 配置 npm 使用淘宝镜像
+RUN npm config set registry https://registry.npmmirror.com
 
 # 验证安装
 RUN java -version && \
