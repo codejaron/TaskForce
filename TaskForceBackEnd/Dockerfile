@@ -34,24 +34,30 @@ FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
 
-# [关键修复] 同时替换 ports.ubuntu.com (ARM64) 和 archive.ubuntu.com (AMD64)
-# 这样无论在 Intel 还是 M1/M2 Mac 上都能走阿里云加速
+# 1. 替换 apt 源为阿里云镜像 (加速系统包安装)
 RUN sed -i 's/ports.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list && \
     sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list && \
     sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
 
-# 安装 Python3 和 Git
+# 2. 安装基础环境 (Python3, Git, Curl)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
+    python3-venv \
     git \
     curl \
     xz-utils && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 安装 Node.js 20.x（直接下载二进制包 - 自动检测架构）
+# 3. [新增] 安装 uv (用于支持 uvx 命令)
+# 使用官方脚本安装到 /usr/local/bin 以便全局可用
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/ && \
+    mv /root/.local/bin/uvx /usr/local/bin/
+
+# 4. 安装 Node.js 20.x (加速下载)
 ENV NODE_VERSION=20.11.0
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi && \
@@ -62,7 +68,7 @@ RUN ARCH=$(uname -m) && \
     rm node.tar.xz && \
     node --version && npm --version
 
-# 配置 npm 使用淘宝镜像
+# 5. 配置 npm 淘宝镜像
 RUN npm config set registry https://registry.npmmirror.com
 
 COPY --from=builder /build/target/*.jar app.jar

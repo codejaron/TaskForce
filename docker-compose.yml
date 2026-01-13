@@ -39,6 +39,7 @@ services:
     volumes:
       - ./mcp-config.json:/app/mcp-config.json
       - ./mcp-tools:/app/mcp-tools:ro
+      - ./workspace:/app/workspace
     depends_on:
       mysql:
         condition: service_healthy
