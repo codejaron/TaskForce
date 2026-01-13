@@ -38,12 +38,13 @@ RUN sed -i 's@//.*archive.ubuntu.com@//mirrors.aliyun.com@g' /etc/apt/sources.li
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-21-jre-headless \
     python3 python3-pip \
-    git curl wget ca-certificates \
+    git curl wget ca-certificates gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 Node.js 20.x（使用国内镜像加速）
-RUN curl -fsSL https://mirrors.tuna.tsinghua.edu.cn/nodesource/deb_20.x/nodistro/repo/deb/nodesource-repo.gpg.key | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://mirrors.tuna.tsinghua.edu.cn/nodesource/deb_20.x/nodistro nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+# 安装 Node.js 20.x（使用阿里云镜像）
+RUN mkdir -p /usr/share/keyrings && \
+    curl -fsSL https://mirrors.aliyun.com/nodesource/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://mirrors.aliyun.com/nodesource/deb_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
