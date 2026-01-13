@@ -24,7 +24,7 @@ interface A2AState {
 let currentAbortController: AbortController | null = null;
 
 // 存储重连定时器
-let reconnectTimeoutId: NodeJS.Timeout | null = null;
+let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 // ========== 重连配置 ==========
 const RECONNECT_CONFIG = {
@@ -146,7 +146,9 @@ function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
     // 内存管理：限制 Set 大小（保留最近 10000 个）
     if (eventIdSet.size > 10000) {
       const firstId = eventIdSet.values().next().value;
-      eventIdSet.delete(firstId);
+      if (firstId !== undefined) {
+        eventIdSet.delete(firstId);
+      }
     }
   }
   // ========== 去重逻辑结束 ==========
