@@ -89,7 +89,4 @@ mcp:
   json:
     config-path: ./mcp-config.json     # JSON 配置文件路径
     auto-reload: true                   # 是否自动热加载
-
-# ========== 功能开关配置 ==========
-feature:
-  async-workflow: true  # 启用异步事件驱动工作流（新架构）
+    polling-interval: 5000              # 轮询间隔（毫秒），仅在 Docker 环境生效

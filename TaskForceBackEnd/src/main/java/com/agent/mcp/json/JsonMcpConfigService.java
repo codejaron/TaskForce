@@ -13,7 +13,11 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.*;
+import java.nio.file.attribute.FileTime;
 import java.util.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * JSON 配置热加载服务
@@ -34,7 +38,13 @@ public class JsonMcpConfigService {
     @Value("${mcp.json.auto-reload:true}")
     private boolean autoReload;
 
+    @Value("${mcp.json.polling-interval:5000}")
+    private long pollingInterval;
+
     private WatchService watchService;
+    private ScheduledExecutorService pollingExecutor;
+    private FileTime lastModifiedTime;
+
     @Getter
     private final Set<String> loadedServerIds = Collections.synchronizedSet(new HashSet<>());
 
@@ -54,7 +64,13 @@ public class JsonMcpConfigService {
 
         // 启动文件监听
         if (autoReload) {
-            startFileWatcher(configFile);
+            if (isRunningInDocker()) {
+                log.info("[JsonMcpConfig] Docker environment detected, using polling mode");
+                startPollingWatcher(configFile);
+            } else {
+                log.info("[JsonMcpConfig] Native environment detected, using WatchService mode");
+                startFileWatcher(configFile);
+            }
         }
     }
 
@@ -184,6 +200,32 @@ public class JsonMcpConfigService {
     }
 
     /**
+     * 检测是否在 Docker 容器中运行
+     */
+    private boolean isRunningInDocker() {
+        // 方法1: 检查 /.dockerenv 文件
+        if (Files.exists(Path.of("/.dockerenv"))) {
+            return true;
+        }
+
+        // 方法2: 检查 /proc/1/cgroup
+        try {
+            Path cgroupPath = Path.of("/proc/1/cgroup");
+            if (Files.exists(cgroupPath)) {
+                String content = Files.readString(cgroupPath);
+                if (content.contains("docker") || content.contains("containerd")) {
+                    return true;
+                }
+            }
+        } catch (IOException e) {
+            // 忽略错误
+        }
+
+        // 方法3: 检查环境变量
+        return "true".equalsIgnoreCase(System.getenv("CONTAINER_ENV"));
+    }
+
+    /**
      * 启动文件监听（热加载）
      */
     private void startFileWatcher(Path configFile) {
@@ -220,6 +262,44 @@ public class JsonMcpConfigService {
 
         } catch (Exception e) {
             log.error("[JsonMcpConfig] Failed to start file watcher", e);
+        }
+    }
+
+    /**
+     * 启动轮询监听（用于 Docker 环境）
+     */
+    private void startPollingWatcher(Path configFile) {
+        try {
+            // 记录初始修改时间
+            lastModifiedTime = Files.getLastModifiedTime(configFile);
+
+            // 创建单线程调度器
+            pollingExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread thread = new Thread(r, "mcp-json-config-polling");
+                thread.setDaemon(true);
+                return thread;
+            });
+
+            // 定时检查文件修改
+            pollingExecutor.scheduleWithFixedDelay(() -> {
+                try {
+                    FileTime currentModifiedTime = Files.getLastModifiedTime(configFile);
+                    if (currentModifiedTime.compareTo(lastModifiedTime) > 0) {
+                        log.info("[JsonMcpConfig] MCP config file changed (polling detected), reloading...");
+                        lastModifiedTime = currentModifiedTime;
+                        Thread.sleep(500);  // 防抖
+                        loadConfig(configFile);
+                    }
+                } catch (Exception e) {
+                    log.error("[JsonMcpConfig] Error checking config file", e);
+                }
+            }, pollingInterval, pollingInterval, TimeUnit.MILLISECONDS);
+
+            log.info("[JsonMcpConfig] Started polling watcher for MCP config: {} (interval: {}ms)",
+                     configPath, pollingInterval);
+
+        } catch (Exception e) {
+            log.error("[JsonMcpConfig] Failed to start polling watcher", e);
         }
     }
 
@@ -313,11 +393,27 @@ public class JsonMcpConfigService {
 
     @PreDestroy
     public void cleanup() {
+        // 关闭 WatchService
         if (watchService != null) {
             try {
                 watchService.close();
+                log.info("[JsonMcpConfig] WatchService closed");
             } catch (Exception e) {
                 log.error("[JsonMcpConfig] Failed to close watch service", e);
+            }
+        }
+
+        // 关闭轮询执行器
+        if (pollingExecutor != null) {
+            pollingExecutor.shutdown();
+            try {
+                if (!pollingExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    pollingExecutor.shutdownNow();
+                }
+                log.info("[JsonMcpConfig] Polling executor closed");
+            } catch (InterruptedException e) {
+                pollingExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
             }
         }
     }
