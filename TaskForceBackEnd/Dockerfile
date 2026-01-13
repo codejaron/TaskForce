@@ -34,14 +34,19 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     # Java 运行环境
     openjdk-21-jre-headless \
-    # Node.js 和 npm（用于 MCP Server）
-    nodejs npm \
     # Python 和 pip（用于 Python MCP Server）
     python3 python3-pip \
     # 常用系统工具
-    git curl wget \
-    # 清理缓存减小镜像体积
+    git curl wget ca-certificates gnupg \
     && rm -rf /var/lib/apt/lists/*
+
+# 安装 Node.js 20.x（LTS 版本，支持最新的 MCP Server）
+RUN mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
 
 # 验证安装
 RUN java -version && \
