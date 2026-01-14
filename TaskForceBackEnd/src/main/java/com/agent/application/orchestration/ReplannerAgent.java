@@ -56,10 +56,14 @@ public class ReplannerAgent {
 
             PlanStep blockedStep = currentPlan.getCurrentStep();
 
+            // 加载可用的 Workers
+            List<AgentProfile> workers = loadWorkers(sessionId);
+            String workersInfo = formatWorkersInfo(workers);
+
             // 获取 BeanOutputConverter 的格式说明
             String formatInstructions = replanOutputConverter.getFormat();
 
-            // 构建 Prompt（包含格式说明）
+            // 构建 Prompt（包含 workers 信息和格式说明）
             String prompt = promptManager.buildReplannerPrompt(
                     currentPlan.getGoal(),
                     currentPlan.getCompletedStepCount(),
@@ -67,13 +71,14 @@ public class ReplannerAgent {
                     blockedStep != null ? blockedStep.getStepIndex() : 0,
                     blockedStep != null ? blockedStep.getDescription() : "Unknown",
                     blockedReason,
+                    workersInfo,
                     formatInstructions
             );
             log.debug("[ReplannerAgent] 🔄 重规划 Prompt:\n{}", prompt);
 
             try {
                 ReplanResponseDTO dto = replanWithRetry(sessionId, prompt, 3);
-                return convertDtoToExecutionPlan(sessionId, currentPlan, dto);
+                return convertDtoToExecutionPlan(sessionId, currentPlan, dto, workers);
             } catch (Exception e) {
                 log.error("[ReplannerAgent] Replan failed after all retries", e);
                 currentPlan.markFailed("重规划失败（已重试 3 次）: " + e.getMessage());
@@ -84,6 +89,24 @@ public class ReplannerAgent {
             SessionContextHolder.clear();
             log.debug("[ReplannerAgent] SessionContext cleared after replanning phase");
         }
+    }
+
+    /**
+     * 格式化 Workers 信息为字符串
+     */
+    private String formatWorkersInfo(List<AgentProfile> workers) {
+        if (workers == null || workers.isEmpty()) {
+            return "暂无可用的 Worker";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (AgentProfile worker : workers) {
+            sb.append(String.format("- ID: %s, 名称: %s, 描述: %s\n",
+                    worker.getId(),
+                    worker.getName(),
+                    worker.getDescription() != null ? worker.getDescription() : "通用任务处理"));
+        }
+        return sb.toString();
     }
 
     /**
@@ -172,13 +195,10 @@ public class ReplannerAgent {
     /**
      * 将 DTO 转换为 ExecutionPlan
      */
-    private ExecutionPlan convertDtoToExecutionPlan(String sessionId, ExecutionPlan currentPlan, ReplanResponseDTO dto) {
+    private ExecutionPlan convertDtoToExecutionPlan(String sessionId, ExecutionPlan currentPlan, ReplanResponseDTO dto, List<AgentProfile> workers) {
         if (dto.getSteps() == null || dto.getSteps().isEmpty()) {
             throw new IllegalArgumentException("Replan steps cannot be empty");
         }
-
-        // 加载Worker列表（根据会话关联的Agent）
-        List<AgentProfile> workers = loadWorkers(sessionId);
 
         List<PlanStep> newSteps = dto.getSteps().stream()
                 .map(stepDto -> {

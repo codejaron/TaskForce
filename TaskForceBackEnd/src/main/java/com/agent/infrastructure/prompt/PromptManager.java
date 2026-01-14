@@ -76,10 +76,14 @@ public class PromptManager {
         步骤 %d (%s) 执行失败
         原因: %s
 
+        【可用的 Worker Agents】
+        %s
+
         【要求】
         1. 分析失败原因
         2. 决定是否需要修改后续步骤
         3. 输出调整后的计划（从当前步骤开始）
+        4. 为每个步骤分配合适的 Worker（从上面的可用 Worker 列表中选择）
 
         【输出格式要求】
         %s
@@ -87,6 +91,7 @@ public class PromptManager {
         【规则】
         1. stepIndex 从 1 开始重新计数
         2. 只输出需要调整的步骤
+        3. assignedAgentId 必须从可用的 Worker 列表中选择
 
         【重要】
         直接输出 JSON 格式，不要添加任何解释性文字、前言或后缀。
@@ -146,6 +151,7 @@ public class PromptManager {
      * @param blockedStepIndex 阻塞步骤索引
      * @param blockedStepDesc 阻塞步骤描述
      * @param blockedReason 阻塞原因
+     * @param workersInfo 可用的 Worker 信息
      * @param formatInstructions BeanOutputParser 生成的格式说明
      * @return 完整的Replanner Prompt
      */
@@ -156,6 +162,7 @@ public class PromptManager {
             int blockedStepIndex,
             String blockedStepDesc,
             String blockedReason,
+            String workersInfo,
             String formatInstructions) {
 
         String fullPrompt = String.format(REPLANNER_PROMPT,
@@ -165,6 +172,7 @@ public class PromptManager {
                 blockedStepIndex + 1,  // 内部0-based转换为LLM的1-based
                 blockedStepDesc,
                 blockedReason,
+                workersInfo,
                 formatInstructions
         );
 
