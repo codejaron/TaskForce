@@ -123,7 +123,7 @@ export function SystemConfigPage() {
             providerId: providerId,
             modelName: model,
             temperature: 0.3,
-            maxTokens: 500
+            maxTokens: 4096  // 使用后端默认值，与其他 agent 保持一致
           } as Partial<AgentProfile>)
         )
       );
