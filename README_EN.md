@@ -2,134 +2,27 @@
 
 [中文 README](./README.md) | [English README](./README_EN.md)
 
-> 🚧 **Project Status: Early Development**
-> 
-> This project is currently in its **initial stages** and is created primarily for **learning and experimentation purposes**.
-> Expect bugs and unstable features. It is **not intended for production use**.
+## 🚧 Disclaimer
 
-A smart chat/agent platform built with **Spring Boot** and **React + Vite**, supporting MCP tool integration.
+This project is in early development stage, primarily for personal learning and technical exploration. The code may contain bugs, and interfaces may change. Welcome to learn and exchange ideas, but please do not use in production environments.
 
-## Table of Contents
+## Introduction
+TaskForce is an AI Agent platform based on Plan-Execute architecture, supporting MCP tool integration.
 
-- [GroupChat Workflow](#groupchat-workflow)
-  - [Execution Flow](#execution-flow)
-  - [Key Features](#key-features)
-- [Context Management: Artifact System](#context-management-artifact-system)
-  - [How Artifact System Works](#how-artifact-system-works)
-  - [Context Composition](#context-composition)
-- [Quick Start (Docker one-command)](#-quick-start-docker-one-command)
-- [Docs](#-docs)
-- [Project Structure](#-project-structure)
-- [Development](#-development)
-- [Tech Stack](#tech-stack)
+It adopts a role separation + context isolation design:
 
-## GroupChat Workflow
+- **Planner**: Analyzes requirements and generates structured execution plans
+- **Worker**: Independently executes each step with clean, non-accumulating context
+- **Artifact**: Passes key results between steps
 
-TaskForce uses a **Plan-Execute asynchronous architecture** for intelligent task orchestration.
+## Core Features
+- **Plan-Execute Separation**: Decoupled planning and execution with clear responsibilities
+- **Context Isolation**: Each Worker only receives current task + necessary Artifacts, not polluted by irrelevant history
+- **Real-time Observability**: SSE pushes execution status, know what each step is doing
+- **Automatic Error Recovery**: Triggers Replanner to replan when failures occur
+- **MCP Tool Integration**: Standardized tool integration approach
 
-### Execution Flow
-
-```
-User Input → Create Session
-    ↓
-PlannerAgent analyzes requirements
-    ↓
-Generate ExecutionPlan → Store to execution_plan table
-    ↓                           ↓
-Display plan ← PlanGeneratedEvent (to frontend)
-    ↓
-WorkflowEngine executes asynchronously
-    ↓
-StepExecutor executes each step
-    ↓
-Invoke Worker (with MCP tools)
-    ↓
-Worker output → Extract Artifact → session_artifact table
-    ↓                                       ↓
-EventBus pushes events            Used by subsequent steps
-    ↓
-Frontend real-time update (SSE stream)
-    ↓
-All steps complete → SessionCompleteEvent
-```
-
-### Key Features
-
-1. **Fire-and-forget execution**: HTTP request returns immediately, doesn't block waiting for completion
-2. **Event-driven communication**: Frontend and backend sync in real-time via independent SSE connection
-3. **Automatic error recovery**: Triggers ReplannerAgent for automatic fix on errors
-4. **Structured context**: Passes structured data between steps via Artifact system
-5. **Pausable/Resumable**: Automatically pauses when user input needed, continues after receiving input
-
----
-
-## Context Management: Artifact System
-
-TaskForce uses an **Artifact system** for session-level context management.
-
-### How Artifact System Works
-
-#### 1. Storage Structure
-- **Database table**: `session_artifact`
-- **Fields**:
-  - `session_id`: Session ID
-  - `artifact_key`: Data identifier (e.g., "PLAN", "search_results", "generated_code")
-  - `artifact_value`: LONGTEXT content
-  - Unique constraint: `(session_id, artifact_key)`
-
-#### 2. XML Tag Format
-Workers output structured data using XML tags:
-```xml
-<artifact key="search_results">
-1. Search Result A
-2. Search Result B
-</artifact>
-
-<artifact key="generated_code">
-public class Example {
-    // code content
-}
-</artifact>
-```
-
-#### 3. Context Passing Flow
-```
-PlannerAgent generates ExecutionPlan
-    ↓
-Store to execution_plan table (JSON format)
-    ↓
-WorkflowEngine starts execution
-    ↓
-StepExecutor builds TaskContext:
-  - userGoal (from ExecutionPlan.goal)
-  - recentHistory (last 3 messages)
-  - sharedData (existing artifacts)
-  - currentStep (current step info)
-    ↓
-Worker A executes Step 1
-    ↓
-Outputs result with <artifact> tags
-    ↓
-StepExecutor extracts and saves to session_artifact table
-    ↓
-Worker B executes Step 2
-    ↓
-Reads Worker A's artifacts via TaskContext.sharedData
-    ↓
-Continues execution...
-```
-
-### Context Composition
-
-#### PlannerAgent Context
-- User-provided goal description
-- Available Workers list (with their tool capabilities)
-
-#### Worker Context
-- **User goal**: Overall objective of the session
-- **Current step description**: Specific task assigned by PlannerAgent
-- **Shared data**: All generated Artifacts
-- **Recent conversation history**: Last 3 messages (for context understanding)
+📖 Detailed Introduction: [blog.jarontech.top](https://blog.jarontech.top)
 
 ---
 
