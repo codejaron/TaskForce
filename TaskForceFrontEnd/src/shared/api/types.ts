@@ -211,3 +211,18 @@ export interface AgentCostDTO {
   totalTokens: number;
   callCount: number;
 }
+
+// ============= 工具调用记录类型 =============
+
+export interface ToolCallDTO {
+  toolCallId: string;
+  toolName: string;
+  serverName?: string;  // MCP Server 名称
+  toolArgs: string;
+  toolResult?: string;
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED';
+  errorMessage?: string;
+  durationMs?: number;
+  stepId?: string;
+  sequence: number;
+}

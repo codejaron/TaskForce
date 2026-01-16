@@ -59,8 +59,8 @@ public class StepExecutor {
 
             StringBuilder response = new StringBuilder();
 
-            // 4. 流式调用 Worker
-            llmAdapter.streamChat(Long.valueOf(step.getAssignedAgentId()), sessionId, systemPrompt, null)
+            // 4. 流式调用 Worker（传入 stepId 用于工具调用事件追踪）
+            llmAdapter.streamChat(Long.valueOf(step.getAssignedAgentId()), sessionId, step.getStepId(), systemPrompt, null)
                     .doOnNext(token -> {
                         response.append(token);
                         eventBus.publish(sessionId, new WorkerDeltaEvent(sessionId, step.getStepId(), token));

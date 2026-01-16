@@ -1,4 +1,4 @@
-import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO } from './types';
+import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO, ToolCallDTO } from './types';
 
 const API_BASE = '/api';
 
@@ -72,6 +72,10 @@ export const api = {
   },
   messages: {
     getBySession: (sessionId: string) => fetchJson<Message[]>(`/messages/session/${sessionId}`),
+  },
+  toolCalls: {
+    getBySession: (sessionId: string) => fetchJson<ToolCallDTO[]>(`/tool-calls/session/${sessionId}`),
+    getByStep: (stepId: string) => fetchJson<ToolCallDTO[]>(`/tool-calls/step/${stepId}`),
   },
   remoteModels: {
     fetch: (baseUrl: string, apiKey?: string) => fetchJson<{modelValue: string; displayName: string}[]>('/providers/fetch-models', { method: 'POST', body: JSON.stringify({ baseUrl, apiKey }) }),

@@ -5,6 +5,7 @@ import { api } from '../../../shared/api';
 import { useTranslation } from 'react-i18next';
 import { parseArtifacts, stripArtifactTags } from '../../../utils/parseArtifacts';
 import { ArtifactCard } from '../../../components/ArtifactCard';
+import { ToolCallList } from '../../../components/ToolCallCard';
 import {
   Plus,
   Users,
@@ -32,7 +33,7 @@ import remarkGfm from 'remark-gfm';
 import type { Session } from '../../../shared/api/types';
 
 export const A2AStudioPage: React.FC = () => {
-  const { sessions, currentSession, messages, isLoading, fetchSessions, selectSession, startGroupChatV2, disconnectStream, stopStream } = useA2AStore();
+  const { sessions, currentSession, messages, toolCallsByStepId, isLoading, fetchSessions, selectSession, startGroupChatV2, disconnectStream, stopStream } = useA2AStore();
   const { agents, fetchAgents } = useAgentStore();
   const { t } = useTranslation();
 
@@ -612,6 +613,12 @@ export const A2AStudioPage: React.FC = () => {
                                   </div>
                                 </div>
                               )}
+
+                              {/* Tool Calls for this step */}
+                              {msg.stepId && toolCallsByStepId[msg.stepId] && toolCallsByStepId[msg.stepId].length > 0 && (
+                                <ToolCallList toolCalls={toolCallsByStepId[msg.stepId]} />
+                              )}
+
                               {msg.blackboardState && (
                                 <div className="mt-3 p-4 bg-purple-50 border border-purple-200 rounded-xl overflow-hidden">
                                   <div className="text-xs font-bold text-purple-900 mb-2 flex items-center gap-2">

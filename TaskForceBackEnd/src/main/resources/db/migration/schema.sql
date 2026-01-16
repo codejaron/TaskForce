@@ -196,6 +196,32 @@ CREATE TABLE IF NOT EXISTS token_usage (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Token使用统计表';
 
 -- ========================================
+-- 11. 工具调用记录表
+-- ========================================
+CREATE TABLE IF NOT EXISTS tool_calls (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    session_id VARCHAR(50) NOT NULL COMMENT '会话ID',
+    step_id VARCHAR(64) COMMENT '关联工作流步骤',
+    agent_id BIGINT COMMENT 'Agent ID',
+    tool_call_id VARCHAR(64) NOT NULL COMMENT '唯一标识',
+    tool_name VARCHAR(200) NOT NULL COMMENT '工具名称',
+    server_name VARCHAR(200) COMMENT 'MCP Server 名称（便于前端展示和调试）',
+    tool_args JSON COMMENT '工具参数',
+    tool_result LONGTEXT COMMENT '工具执行结果',
+    status VARCHAR(20) DEFAULT 'RUNNING' COMMENT '状态: RUNNING/SUCCESS/FAILED',
+    error_message TEXT COMMENT '错误信息',
+    started_at TIMESTAMP NULL COMMENT '开始时间',
+    completed_at TIMESTAMP NULL COMMENT '完成时间',
+    duration_ms BIGINT COMMENT '执行耗时（毫秒）',
+    sequence INT DEFAULT 0 COMMENT '同一步骤中的调用顺序',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_session_id (session_id),
+    INDEX idx_step_id (step_id),
+    INDEX idx_tool_call_id (tool_call_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具调用记录表';
+
+-- ========================================
 -- 系统Agent初始化数据
 -- ========================================
 INSERT IGNORE INTO agents (provider_id, name, system_prompt, model, temperature, max_tokens, role_type, created_at, updated_at)

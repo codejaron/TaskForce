@@ -1,12 +1,15 @@
 package com.agent.factory;
 
 import com.agent.config.AutoToolConfiguration;
+import com.agent.config.EventPublishingFunctionCallback;
+import com.agent.config.EventPublishingToolCallback;
+import com.agent.infrastructure.event.EventBus;
 import com.agent.service.AgentToolService;
 import com.agent.entity.Agent;
 import com.agent.mapper.AgentMapper;
 import com.agent.mapper.LLMProviderMapper;
 import com.agent.mcp.McpToolRegistry;
-import com.agent.model.AgentProfile;
+import com.agent.service.ToolCallService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
@@ -20,10 +23,10 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 智能体工厂
@@ -45,6 +48,8 @@ public class AgentFactory {
     private final AgentMapper agentMapper;
     private final LLMProviderMapper providerMapper;
     private final AgentToolService agentToolService; // Agent工具服务
+    private final EventBus eventBus;
+    private final ToolCallService toolCallService;
 
     // 使用构造函数注入，对 AutoToolConfiguration 使用 @Lazy 打破循环依赖
     public AgentFactory(
@@ -53,13 +58,17 @@ public class AgentFactory {
             ChatModelFactory chatModelFactory,
             AgentMapper agentMapper,
             LLMProviderMapper providerMapper,
-            AgentToolService agentToolService) {
+            AgentToolService agentToolService,
+            EventBus eventBus,
+            @Lazy ToolCallService toolCallService) {
         this.mcpToolRegistry = mcpToolRegistry;
         this.autoToolConfiguration = autoToolConfiguration;
         this.chatModelFactory = chatModelFactory;
         this.agentMapper = agentMapper;
         this.providerMapper = providerMapper;
         this.agentToolService = agentToolService;
+        this.eventBus = eventBus;
+        this.toolCallService = toolCallService;
     }
 
     /**
@@ -89,20 +98,28 @@ public class AgentFactory {
     }
 
     /**
-     * 根据数据库中的 Agent ID 构建 ChatClient（新方法，使用数据库）
-     *
-     * @param agentId 数据库中的智能体ID
-     * @param sessionId 会话ID
-     * @return ChatClient
+     * 根据数据库中的 Agent ID 构建 ChatClient（向后兼容，不带 stepId）
      */
     public ChatClient buildClientForDatabaseAgent(Long agentId, String sessionId) {
+        return buildClientForDatabaseAgent(agentId, sessionId, null);
+    }
+
+    /**
+     * 根据数据库中的 Agent ID 构建 ChatClient（支持工具调用事件追踪）
+     *
+     * @param agentId   数据库中的智能体ID
+     * @param sessionId 会话ID
+     * @param stepId    步骤ID（用于工具调用事件关联，可为 null）
+     * @return ChatClient
+     */
+    public ChatClient buildClientForDatabaseAgent(Long agentId, String sessionId, String stepId) {
         // 1. 从数据库加载 Agent
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
             throw new RuntimeException("Agent not found: " + agentId);
         }
 
-        log.info("Building ChatClient for database agent: {} (id: {})", agent.getName(), agentId);
+        log.info("Building ChatClient for database agent: {} (id: {}, stepId: {})", agent.getName(), agentId, stepId);
 
         // 2. 确定使用的 ChatModel
         // 强制要求Agent配置Provider
@@ -145,16 +162,25 @@ public class AgentFactory {
                         .build()
         );
 
-        // 8. 挂载工具（MCP + 原生）
+        // 8. 挂载工具（MCP + 原生），并用 EventPublishingToolCallback 包装
         List<FunctionCallback> allTools = new ArrayList<>();
+        AtomicInteger sequenceCounter = new AtomicInteger(0);
 
         // 8.1 添加 MCP 工具（从数据库加载）
         List<String> enabledToolIds = agentToolService.getEnabledToolIds(agentId);
         if (!enabledToolIds.isEmpty()) {
             ToolCallback[] mcpCallbacks = mcpToolRegistry.getToolCallbacks(enabledToolIds);
             if (mcpCallbacks.length > 0) {
-                allTools.addAll(Arrays.asList(mcpCallbacks));
-                log.info("  Attached {} MCP tools", mcpCallbacks.length);
+                for (ToolCallback callback : mcpCallbacks) {
+                    // 获取 serverName
+                    String serverName = getServerNameForTool(callback.getName(), enabledToolIds);
+                    // 包装为事件发布回调
+                    ToolCallback wrapped = wrapWithEventPublishing(
+                            callback, sessionId, stepId, agentId, serverName, sequenceCounter
+                    );
+                    allTools.add(wrapped);
+                }
+                log.info("  Attached {} MCP tools (with event publishing)", mcpCallbacks.length);
             } else {
                 log.warn("  No valid MCP tools found (tools may have been removed)");
             }
@@ -163,8 +189,14 @@ public class AgentFactory {
         // 8.2 添加原生 @Tool 工具（所有 Worker 都可用，传入 sessionId 用于跨线程传递上下文）
         FunctionCallback[] nativeCallbacks = autoToolConfiguration.getToolCallbacks(sessionId);
         if (nativeCallbacks.length > 0) {
-            allTools.addAll(Arrays.asList(nativeCallbacks));
-            log.info("  Attached {} native @Tool tools (with sessionId: {})", nativeCallbacks.length, sessionId);
+            for (FunctionCallback callback : nativeCallbacks) {
+                // 原生工具使用 EventPublishingFunctionCallback 包装
+                FunctionCallback wrapped = wrapFunctionWithEventPublishing(
+                        callback, sessionId, stepId, agentId, sequenceCounter
+                );
+                allTools.add(wrapped);
+            }
+            log.info("  Attached {} native @Tool tools (with event publishing, sessionId: {})", nativeCallbacks.length, sessionId);
         }
 
         // 8.3 注册到 ChatClient
@@ -176,5 +208,64 @@ public class AgentFactory {
         }
 
         return builder.build();
+    }
+
+    /**
+     * 用 EventPublishingToolCallback 包装工具回调（MCP 工具）
+     */
+    private ToolCallback wrapWithEventPublishing(
+            ToolCallback delegate,
+            String sessionId,
+            String stepId,
+            Long agentId,
+            String serverName,
+            AtomicInteger sequenceCounter) {
+        return new EventPublishingToolCallback(
+                delegate,
+                sessionId,
+                stepId,
+                agentId,
+                serverName,
+                eventBus,
+                toolCallService,
+                sequenceCounter
+        );
+    }
+
+    /**
+     * 用 EventPublishingFunctionCallback 包装 FunctionCallback（原生 @Tool 工具）
+     */
+    private FunctionCallback wrapFunctionWithEventPublishing(
+            FunctionCallback delegate,
+            String sessionId,
+            String stepId,
+            Long agentId,
+            AtomicInteger sequenceCounter) {
+        return new EventPublishingFunctionCallback(
+                delegate,
+                sessionId,
+                stepId,
+                agentId,
+                eventBus,
+                toolCallService,
+                sequenceCounter
+        );
+    }
+
+    /**
+     * 根据工具名称从 enabledToolIds 中获取 serverName
+     */
+    private String getServerNameForTool(String toolName, List<String> enabledToolIds) {
+        for (String toolId : enabledToolIds) {
+            // toolId 格式: serverId::toolName
+            if (toolId.endsWith("::" + toolName)) {
+                String serverId = toolId.substring(0, toolId.indexOf("::"));
+                // 从 McpToolRegistry 获取 serverName
+                return mcpToolRegistry.getServer(serverId)
+                        .map(def -> def.getName())
+                        .orElse(serverId);
+            }
+        }
+        return null;
     }
 }

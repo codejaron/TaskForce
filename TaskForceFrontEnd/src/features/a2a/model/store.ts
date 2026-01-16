@@ -1,12 +1,13 @@
 import { create } from 'zustand';
 import { api } from '../../../shared/api';
-import type { Session, A2AMessage } from '../../../shared/api';
+import type { Session, A2AMessage, ToolCallDTO } from '../../../shared/api';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 
 interface A2AState {
   sessions: Session[];
   currentSession: Session | null;
   messages: A2AMessage[];
+  toolCallsByStepId: Record<string, ToolCallDTO[]>;  // stepId -> ToolCallDTO[]
   isLoading: boolean;
   error: string | null;
 
@@ -323,6 +324,56 @@ function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
       });
       break;
 
+    case 'tool_call_start':
+      // 添加新的工具调用记录（status: RUNNING）
+      {
+        const stepId = data.stepId || 'unknown';
+        const { toolCallsByStepId } = get();
+        const existingCalls = toolCallsByStepId[stepId] || [];
+        const newToolCall: ToolCallDTO = {
+          toolCallId: data.toolCallId,
+          toolName: data.toolName,
+          serverName: data.serverName,
+          toolArgs: data.toolArgs,
+          status: 'RUNNING',
+          sequence: data.sequence || 0,
+          stepId: stepId
+        };
+        set({
+          toolCallsByStepId: {
+            ...toolCallsByStepId,
+            [stepId]: [...existingCalls, newToolCall]
+          }
+        });
+      }
+      break;
+
+    case 'tool_call_complete':
+      // 更新工具调用记录（status: SUCCESS/FAILED, result, duration）
+      {
+        const stepId = data.stepId || 'unknown';
+        const { toolCallsByStepId } = get();
+        const existingCalls = toolCallsByStepId[stepId] || [];
+        const updatedCalls = existingCalls.map(tc =>
+          tc.toolCallId === data.toolCallId
+            ? {
+                ...tc,
+                toolResult: data.toolResult,
+                status: data.status as 'SUCCESS' | 'FAILED',
+                errorMessage: data.errorMessage,
+                durationMs: data.durationMs
+              }
+            : tc
+        );
+        set({
+          toolCallsByStepId: {
+            ...toolCallsByStepId,
+            [stepId]: updatedCalls
+          }
+        });
+      }
+      break;
+
     default:
       console.warn('[A2A] Unknown event type:', eventType, data);
   }
@@ -386,6 +437,7 @@ export const useA2AStore = create<A2AState>((set, get) => ({
   sessions: [],
   currentSession: null,
   messages: [],
+  toolCallsByStepId: {},
   isLoading: false,
   error: null,
 
@@ -408,10 +460,25 @@ export const useA2AStore = create<A2AState>((set, get) => ({
     }
 
     get().disconnectStream();
-    set({ currentSession: session, messages: [], isLoading: true });
+    set({ currentSession: session, messages: [], toolCallsByStepId: {}, isLoading: true });
 
     try {
-      const dbMessages = await api.messages.getBySession(session.id);
+      // 并行加载消息和工具调用记录
+      const [dbMessages, toolCalls] = await Promise.all([
+        api.messages.getBySession(session.id),
+        api.toolCalls.getBySession(session.id)
+      ]);
+
+      // 将工具调用按 stepId 分组
+      const toolCallsByStepId: Record<string, ToolCallDTO[]> = {};
+      for (const tc of toolCalls) {
+        const stepId = tc.stepId || 'unknown';
+        if (!toolCallsByStepId[stepId]) {
+          toolCallsByStepId[stepId] = [];
+        }
+        toolCallsByStepId[stepId].push(tc);
+      }
+
       const a2aMessages: A2AMessage[] = dbMessages.map(msg => {
         const isUser = msg.role === 'user';
         // 解析 BLACKBOARD_JSON 和 WAIT_USER 标记
@@ -428,10 +495,10 @@ export const useA2AStore = create<A2AState>((set, get) => ({
           waitingUser: waitUser || undefined
         };
       });
-      set({ messages: a2aMessages, isLoading: false });
+      set({ messages: a2aMessages, toolCallsByStepId, isLoading: false });
     } catch (error: any) {
       console.warn('Failed to fetch messages:', error);
-      set({ messages: [], isLoading: false });
+      set({ messages: [], toolCallsByStepId: {}, isLoading: false });
     }
   },
 

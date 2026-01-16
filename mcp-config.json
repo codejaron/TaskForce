@@ -1,6 +1,40 @@
 {
   "mcpServers" : {
-
+    "fetch" : {
+      "command" : "uvx",
+      "args" : [ "mcp-server-fetch" ],
+      "description" : null,
+      "enabled" : true,
+      "env" : { }
+    },
+    "filesystem" : {
+      "command" : "npx",
+      "args" : [ "-y", "@modelcontextprotocol/server-filesystem", "/Users/jaron/Downloads/test" ],
+      "description" : null,
+      "enabled" : true,
+      "env" : { }
+    },
+    "memory" : {
+      "command" : "npx",
+      "args" : [ "-y", "@modelcontextprotocol/server-memory" ],
+      "description" : null,
+      "enabled" : true,
+      "env" : { }
+    },
+    "sequential-thinking" : {
+      "command" : "npx",
+      "args" : [ "-y", "@modelcontextprotocol/server-sequential-thinking" ],
+      "description" : null,
+      "enabled" : true,
+      "env" : { }
+    },
+    "ddg-search" : {
+      "command" : "uvx",
+      "args" : [ "duckduckgo-mcp-server" ],
+      "description" : null,
+      "enabled" : true,
+      "env" : { }
+    }
   },
   "globalSettings" : {
     "autoReload" : true,
