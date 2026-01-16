@@ -2,6 +2,7 @@ package com.agent.controller;
 
 import com.agent.application.orchestration.WorkflowEngine;
 import com.agent.domain.model.plan.ExecutionPlan;
+import com.agent.domain.model.plan.PlanStatus;
 import com.agent.dto.SubmitResponse;
 import com.agent.dto.UserInputRequest;
 import com.agent.dto.WorkflowStateResponse;
@@ -40,7 +41,39 @@ public class GroupChatController {
     private final EventBus eventBus;
     private final SessionStopService sessionStopService;
 
-    // ==================== 新架构 API（异步模式）====================
+
+
+    /**
+     * 处理用户消息
+     */
+    @PostMapping("/group-chat/{sessionId}/message")
+    public ResponseEntity<SubmitResponse> handleUserMessage(
+            @PathVariable String sessionId,
+            @RequestBody UserInputRequest request) {
+
+        log.info("[API] Handle user message: sessionId={}", sessionId);
+
+        ExecutionPlan plan = workflowEngine.getState(sessionId);
+
+        try {
+            String requestId;
+
+            if (plan != null && plan.getStatus() == PlanStatus.PAUSED) {
+                log.info("Session is PAUSED, routing to RESUME logic");
+                requestId = workflowEngine.resume(sessionId, request.text());
+                return ResponseEntity.ok(SubmitResponse.resumed(requestId));
+            } else {
+                log.info("Session is IDLE/NEW, routing to SUBMIT logic");
+                requestId = workflowEngine.submitUserInput(sessionId, request.text());
+                return ResponseEntity.ok(SubmitResponse.processing(requestId));
+            }
+
+        } catch (Exception e) {
+            log.error("[API] Message handling failed", e);
+            return ResponseEntity.internalServerError()
+                    .body(SubmitResponse.error(UUID.randomUUID().toString(), e.getMessage()));
+        }
+    }
 
     /**
      * 提交用户输入 - Fire and Forget

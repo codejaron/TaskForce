@@ -33,9 +33,12 @@ import remarkGfm from 'remark-gfm';
 import type { Session } from '../../../shared/api/types';
 
 export const A2AStudioPage: React.FC = () => {
-  const { sessions, currentSession, messages, toolCallsByStepId, isLoading, fetchSessions, selectSession, startGroupChatV2, disconnectStream, stopStream } = useA2AStore();
+  const { sessions, currentSession, messages, toolCallsByStepId, workflowStatus, fetchSessions, selectSession, startGroupChatV2, disconnectStream, stopStream } = useA2AStore();
   const { agents, fetchAgents } = useAgentStore();
   const { t } = useTranslation();
+
+  // 计算是否正在运行（用于显示停止按钮）
+  const isRunning = workflowStatus === 'PLANNING' || workflowStatus === 'EXECUTING' || workflowStatus === 'REPLANNING';
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newSessionName, setNewSessionName] = useState('');
@@ -185,7 +188,7 @@ export const A2AStudioPage: React.FC = () => {
 
           {/* Sessions List */}
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {isLoading && sessions.length === 0 ? (
+            {sessions.length === 0 ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 size={24} className="animate-spin text-gray-500" />
               </div>
@@ -241,7 +244,7 @@ export const A2AStudioPage: React.FC = () => {
                 <div>
                   <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
                     {currentSession.name}
-                    {isLoading && (
+                    {isRunning && (
                       <span className="flex items-center gap-1 text-xs text-purple-600 bg-purple-50 px-2 py-1 rounded-full">
                         <span className="w-2 h-2 bg-purple-600 rounded-full animate-pulse" />
                         {t('a2a.live')}
@@ -415,7 +418,7 @@ export const A2AStudioPage: React.FC = () => {
                                     {(() => {
                                       // 判断是否为流式传输中
                                       // 只有最后一条消息才可能正在流式传输
-                                      const isStreaming = isLoading && (idx === messages.length - 1);
+                                      const isStreaming = isRunning && (idx === messages.length - 1);
 
                                       if (isStreaming) {
                                         // 流式传输中：简单剔除标签，避免不完整标签导致渲染问题
@@ -734,7 +737,7 @@ export const A2AStudioPage: React.FC = () => {
                       </div>
                     );
                   })}
-                  {isLoading && (
+                  {isRunning && (
                     <div className="flex items-center gap-2 text-gray-600">
                       <Loader2 size={16} className="animate-spin text-purple-600" />
                       <span className="text-sm">{t('a2a.agentsThinking')}</span>
@@ -755,9 +758,9 @@ export const A2AStudioPage: React.FC = () => {
                   onKeyDown={handleKeyDown}
                   placeholder={currentSession.status === 'CREATED' ? t('a2a.enterInitialTopic') : t('a2a.sendMessagePlaceholder')}
                   className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none shadow-sm"
-                  disabled={isLoading}
+                  disabled={isRunning}
                 />
-                {isLoading ? (
+                {isRunning ? (
                   <button
                     onClick={handleStop}
                     className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium transition-colors duration-200 flex items-center gap-2 cursor-pointer shadow-sm"

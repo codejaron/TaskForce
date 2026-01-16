@@ -105,43 +105,64 @@ public class WorkflowEngine {
                 if (plan == null) {
                     return; // 规划失败或需要用户输入
                 }
-            } else if (plan.getStatus() == PlanStatus.PAUSED && "waiting_user".equals(plan.getPauseReason())) {
-                // === 用户回答了问题，根据暂停类型决定恢复策略 ===
+            } else if (plan.getStatus() == PlanStatus.PAUSED) {
+                String pauseReason = plan.getPauseReason();
 
-                if (plan.needsFullReplanning()) {
-                    // 策略1：Planner澄清 - 完全重新规划
-                    log.info("[WorkflowEngine] Planner clarification answered, replanning from scratch");
-                    stateManager.deletePlan(sessionId);
-                    plan = runPlanningPhase(sessionId, userText);
-                    if (plan == null) {
-                        return;
-                    }
-                } else if (plan.needsRestepExecution()) {
-                    // 策略2：Worker澄清 - 重新执行被打断的步骤
-                    log.info("[WorkflowEngine] Worker clarification answered, restarting step {} (Agent: {})",
-                            plan.getPausedAtStepIndex(), plan.getPausedAgentId());
+                if ("user_stopped".equals(pauseReason)) {
+                    // === 用户手动停止后恢复 ===
+                    log.info("[WorkflowEngine] Resuming from user stop: sessionId={}, pausedStep={}",
+                            sessionId, plan.getPausedAtStepIndex());
 
-                    // 重置到被打断的步骤
+                    // 重置到被暂停的步骤
                     plan.resetToPausedStep();
 
-                    // 在步骤指令中追加用户澄清内容
-                    PlanStep pausedStep = plan.getPausedStep();
-                    if (pausedStep != null) {
-                        String originalInstruction = pausedStep.getInstruction();
-                        String clarification = "\n\n【用户澄清】\n" + userText;
-                        pausedStep.setInstruction(originalInstruction + clarification);
-                        log.info("[WorkflowEngine] Appended user clarification to step instruction");
+                    // 关键：将该步骤状态重置为 PENDING，确保能被重新执行
+                    PlanStep pausedStep = plan.getCurrentStep();
+                    if (pausedStep != null && pausedStep.getStatus() == StepStatus.IN_PROGRESS) {
+                        pausedStep.resetToPending();
                     }
 
-                    // 恢复执行状态并清除暂停上下文
                     plan.resume();
                     plan.clearPauseContext();
                     stateManager.savePlan(plan);
-                } else {
-                    // 其他暂停情况（USER/BLOCKED）- 直接恢复
-                    plan.resume();
-                    plan.clearPauseContext();
-                    stateManager.savePlan(plan);
+                } else if ("waiting_user".equals(pauseReason)) {
+                    // === 用户回答了问题，根据暂停类型决定恢复策略 ===
+
+                    if (plan.needsFullReplanning()) {
+                        // 策略1：Planner澄清 - 完全重新规划
+                        log.info("[WorkflowEngine] Planner clarification answered, replanning from scratch");
+                        stateManager.deletePlan(sessionId);
+                        plan = runPlanningPhase(sessionId, userText);
+                        if (plan == null) {
+                            return;
+                        }
+                    } else if (plan.needsRestepExecution()) {
+                        // 策略2：Worker澄清 - 重新执行被打断的步骤
+                        log.info("[WorkflowEngine] Worker clarification answered, restarting step {} (Agent: {})",
+                                plan.getPausedAtStepIndex(), plan.getPausedAgentId());
+
+                        // 重置到被打断的步骤
+                        plan.resetToPausedStep();
+
+                        // 在步骤指令中追加用户澄清内容
+                        PlanStep pausedStep = plan.getPausedStep();
+                        if (pausedStep != null) {
+                            String originalInstruction = pausedStep.getInstruction();
+                            String clarification = "\n\n【用户澄清】\n" + userText;
+                            pausedStep.setInstruction(originalInstruction + clarification);
+                            log.info("[WorkflowEngine] Appended user clarification to step instruction");
+                        }
+
+                        // 恢复执行状态并清除暂停上下文
+                        plan.resume();
+                        plan.clearPauseContext();
+                        stateManager.savePlan(plan);
+                    } else {
+                        // 其他暂停情况（USER/BLOCKED）- 直接恢复
+                        plan.resume();
+                        plan.clearPauseContext();
+                        stateManager.savePlan(plan);
+                    }
                 }
             }
 
@@ -247,6 +268,18 @@ public class WorkflowEngine {
             // 执行步骤
             StepResult result = stepExecutor.execute(sessionId, currentStep);
 
+            // ⚠️ 关键修复：执行完成后立即检查停止标志
+            if (sessionStopService.shouldStop(sessionId)) {
+                log.info("[WorkflowEngine] Stopped by user after step execution: sessionId={}, step={}",
+                        sessionId, currentStep.getStepIndex());
+                // 不调用 handleStepSuccess，保持当前步骤为 IN_PROGRESS
+                plan.pauseForUserStop("用户停止");
+                stateManager.savePlan(plan);
+                eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "user_stopped"));
+                return;  // 立即退出，不标记步骤完成
+            }
+
+            // 只有在没有停止的情况下才处理结果
             if (result.isSuccess()) {
                 handleStepSuccess(sessionId, plan, currentStep, result);
             } else if (result.isBlocked()) {

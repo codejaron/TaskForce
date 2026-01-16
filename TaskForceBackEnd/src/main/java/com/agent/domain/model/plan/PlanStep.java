@@ -111,4 +111,13 @@ public class PlanStep {
     public boolean isBlocked() {
         return this.status == StepStatus.BLOCKED;
     }
+
+    /**
+     * 重置为待执行状态（用于恢复被中断的步骤）
+     */
+    public void resetToPending() {
+        this.status = StepStatus.PENDING;
+        this.result = null;
+        this.blockedReason = null;
+    }
 }

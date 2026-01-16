@@ -94,6 +94,13 @@ export const api = {
     replaceModels: (providerId: number, models: ChannelModel[]) => fetchJson<ChannelModel[]>(`/providers/${providerId}/models`, { method: 'PUT', body: JSON.stringify(models) }),
   },
   groupChat: {
+    // 新增：统一消息接口（后端自动判断 submit 还是 resume）
+    message: (sessionId: string, text: string) =>
+      fetchJson<SubmitResponse>(`/group-chat/${sessionId}/message`, {
+        method: 'POST',
+        body: JSON.stringify({ text })
+      }),
+    // 保留旧接口（可选，后续可删除）
     submit: (sessionId: string, text: string) =>
       fetchJson<SubmitResponse>(`/group-chat/${sessionId}/submit`, {
         method: 'POST',
