@@ -194,11 +194,11 @@ public class WorkflowEngine {
                 pausedPlan.pauseForPlannerClarification(nc.question());  // 使用新方法标记来源
                 stateManager.savePlan(pausedPlan);
                 eventBus.publish(sessionId, new NeedClarificationEvent(
-                    sessionId,
-                    nc.question(),
-                    "PLANNER",  // 标记来源
-                    null,
-                    null
+                        sessionId,
+                        nc.question(),
+                        "PLANNER",  // 标记来源
+                        null,
+                        null
                 ));
                 return null;
             }
@@ -278,7 +278,7 @@ public class WorkflowEngine {
         step.complete(result.getOutput());
 
         // 判断是否是最后一步
-        boolean isLastStep = (step.getStepIndex() == plan.getSteps().size() - 1);
+        boolean isLastStep = (step.getStepIndex() == plan.getSteps().size());
 
         if (isLastStep) {
             // 最后一步完成，标记计划为完成
@@ -353,18 +353,18 @@ public class WorkflowEngine {
     private void handleNeedsUserInput(String sessionId, ExecutionPlan plan, PlanStep step, StepResult result) {
         // Worker澄清：记录暂停上下文
         plan.pauseForWorkerClarification(
-            result.getQuestion(),
-            step.getStepIndex(),
-            step.getAssignedAgentId()
+                result.getQuestion(),
+                step.getStepIndex(),
+                step.getAssignedAgentId()
         );
         stateManager.savePlan(plan);
 
         eventBus.publish(sessionId, new NeedClarificationEvent(
-            sessionId,
-            result.getQuestion(),
-            "WORKER",  // 标记来源
-            step.getStepId(),
-            step.getAssignedAgentId()
+                sessionId,
+                result.getQuestion(),
+                "WORKER",  // 标记来源
+                step.getStepId(),
+                step.getAssignedAgentId()
         ));
     }
 

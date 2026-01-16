@@ -144,7 +144,7 @@ export const ToolCallList: React.FC<ToolCallListProps> = ({ toolCalls }) => {
         <ToolCallCard
           key={tc.toolCallId}
           toolCall={tc}
-          defaultExpanded={idx === 0 && toolCalls.length === 1}  // 只有一个时默认展开
+          defaultExpanded={false}  // 始终默认折叠
         />
       ))}
     </div>

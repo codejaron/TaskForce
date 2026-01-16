@@ -207,7 +207,7 @@ public class ReplannerAgent {
 
                     return PlanStep.builder()
                             .stepId(UUID.randomUUID().toString())
-                            .stepIndex(stepDto.getStepIndex() - 1)  // LLM的1-based转换为内部0-based
+                            .stepIndex(stepDto.getStepIndex())  // 保持LLM的1-based
                             .description(stepDto.getDescription())
                             .assignedAgentId(stepDto.getAssignedAgentId())
                             .assignedAgentName(agent != null ? agent.getName() : "Unknown")  // 设置Agent名称
