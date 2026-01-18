@@ -54,6 +54,20 @@ After startup:
 ./stop.sh
 ```
 
+## 📱 Page Screenshots
+
+### Dashboard
+![Dashboard](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.15.03@2x.png)
+
+### Agent Workshop
+![Agent Workshop](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.34.21@2x.png)
+
+### MCP Marketplace
+![MCP Tools](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.34.59@2x.png)
+
+### A2A Workspace
+![A2A Workspace](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.32.40@2x.png)
+
 ## 📘 Docs
 
 - Quick start / env vars / FAQ: [QUICKSTART_EN.md](./QUICKSTART_EN.md) (English)

@@ -10,6 +10,8 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.ai.autoconfigure.openai.OpenAiAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.cache.CacheAutoConfiguration
 
   # ========== 数据源配置 ==========
   datasource:

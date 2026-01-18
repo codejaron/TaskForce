@@ -82,16 +82,6 @@
       <version>1.2.20</version>
     </dependency>
 
-    <!-- Redis -->
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-data-redis</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-cache</artifactId>
-    </dependency>
-
     <!-- Validation -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
