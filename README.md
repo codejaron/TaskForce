@@ -55,17 +55,17 @@ TaskForce 是一个基于 Plan-Execute 架构的 AI Agent 平台，支持 MCP �
 
 ## 📱 页面展示
 
-### Agent 工作坊
-![Agent工作坊](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.15.03@2x.png)
-
 ### 仪表板
-![仪表板](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.32.40@2x.png)
+![仪表板](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.15.03@2x.png)
+
+### Agent 工作坊
+![Agent工作坊](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.34.21@2x.png)
 
 ### MCP 工具市场
-![MCP工具配置](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.34.21@2x.png)
+![MCP工具配置](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.34.59@2x.png)
 
 ### A2A 工作台
-![A2A工作台](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.34.59@2x.png)
+![A2A工作台](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.32.40@2x.png)
 
 ## 📘 文档
 
