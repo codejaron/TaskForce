@@ -268,7 +268,7 @@ public class WorkflowEngine {
             // 执行步骤
             StepResult result = stepExecutor.execute(sessionId, currentStep);
 
-            // ⚠️ 关键修复：执行完成后立即检查停止标志
+            // 执行完成后立即检查停止标志
             if (sessionStopService.shouldStop(sessionId)) {
                 log.info("[WorkflowEngine] Stopped by user after step execution: sessionId={}, step={}",
                         sessionId, currentStep.getStepIndex());

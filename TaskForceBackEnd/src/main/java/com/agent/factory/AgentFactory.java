@@ -71,31 +71,6 @@ public class AgentFactory {
         this.toolCallService = toolCallService;
     }
 
-    /**
-     * 会话记忆缓存：sessionId -> ChatMemory
-     * 同一个会话中的所有智能体共享同一个记忆
-     */
-    private final Map<String, ChatMemory> sessionMemoryCache = new ConcurrentHashMap<>();
-
-    /**
-     * 获取或创建会话的 ChatMemory
-     */
-    public ChatMemory getOrCreateSessionMemory(String sessionId) {
-        return sessionMemoryCache.computeIfAbsent(sessionId, k -> {
-            log.info("Creating new ChatMemory for session: {}", sessionId);
-            return new InMemoryChatMemory();
-        });
-    }
-
-    /**
-     * 清除会话记忆（会话结束时调用）
-     */
-    public void clearSessionMemory(String sessionId) {
-        ChatMemory memory = sessionMemoryCache.remove(sessionId);
-        if (memory != null) {
-            log.info("Cleared ChatMemory for session: {}", sessionId);
-        }
-    }
 
     /**
      * 根据数据库中的 Agent ID 构建 ChatClient（向后兼容，不带 stepId）
@@ -140,8 +115,6 @@ public class AgentFactory {
                 .maxTokens(agent.getMaxTokens())
                 .build();
 
-        // 3. 获取会话记忆
-        ChatMemory sessionMemory = getOrCreateSessionMemory(sessionId);
 
         // 4. 创建 ChatClient Builder
         ChatClient.Builder builder = ChatClient.builder(chatModel);
@@ -154,13 +127,6 @@ public class AgentFactory {
         // 6. 设置默认模型参数（温度、maxTokens 等）
         builder.defaultOptions(clientOptions);
 
-        // 7. 添加记忆顾问
-        builder.defaultAdvisors(
-                MessageChatMemoryAdvisor.builder(sessionMemory)
-                        .conversationId(sessionId)
-                        .chatMemoryRetrieveSize(10)
-                        .build()
-        );
 
         // 8. 挂载工具（MCP + 原生），并用 EventPublishingToolCallback 包装
         List<FunctionCallback> allTools = new ArrayList<>();
