@@ -12,12 +12,15 @@ import com.agent.model.AgentProfile;
 import com.agent.service.AgentProfileService;
 import com.agent.service.MessageService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 状态管理器
@@ -34,28 +37,79 @@ public class StateManager {
     private final SessionArtifactMapper sessionArtifactMapper;
     private final MessageService messageService;
 
+    private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
+
+    private static final long PLAN_CACHE_TTL_MINUTES = 30;
+
+    private static String planCacheKey(String sessionId) {
+        return "plan:" + sessionId;
+    }
+
     // === Plan 操作 ===
 
     /**
-     * 加载计划
+     * 加载计划（Cache-Aside）
      */
     public ExecutionPlan loadPlan(String sessionId) {
-        return planRepository.findBySessionId(sessionId).orElse(null);
+        String cacheKey = planCacheKey(sessionId);
+
+        // 1) Redis 优先
+        try {
+            String json = redisTemplate.opsForValue().get(cacheKey);
+            if (json != null && !json.isBlank()) {
+                return objectMapper.readValue(json, ExecutionPlan.class);
+            }
+        } catch (Exception e) {
+            // 缓存异常不能影响主流程
+            log.warn("[StateManager] Redis deserialize failed, fallback to DB: sessionId={}", sessionId, e);
+        }
+
+        // 2) DB fallback
+        ExecutionPlan plan = planRepository.findBySessionId(sessionId).orElse(null);
+
+        // 3) 回填缓存
+        if (plan != null) {
+            cachePlan(sessionId, plan);
+        }
+        return plan;
     }
 
     /**
-     * 保存计划
+     * 保存计划（双写：DB + Redis）
      */
     public void savePlan(ExecutionPlan plan) {
         plan.setUpdatedAt(LocalDateTime.now());
         planRepository.save(plan);
+
+        // 再更新 Redis，保证读一致
+        cachePlan(plan.getSessionId(), plan);
     }
 
     /**
-     * 删除计划
+     * 删除计划（DB + Redis）
      */
     public void deletePlan(String sessionId) {
         planRepository.deleteBySessionId(sessionId);
+        try {
+            redisTemplate.delete(planCacheKey(sessionId));
+        } catch (Exception e) {
+            log.warn("[StateManager] Failed to evict plan cache: sessionId={}", sessionId, e);
+        }
+    }
+
+    private void cachePlan(String sessionId, ExecutionPlan plan) {
+        try {
+            String json = objectMapper.writeValueAsString(plan);
+            redisTemplate.opsForValue().set(
+                    planCacheKey(sessionId),
+                    json,
+                    PLAN_CACHE_TTL_MINUTES,
+                    TimeUnit.MINUTES
+            );
+        } catch (Exception e) {
+            log.warn("[StateManager] Failed to cache plan: sessionId={}", sessionId, e);
+        }
     }
 
     // === 事件记录 ===
@@ -71,7 +125,7 @@ public class StateManager {
             msg.setMessageType("USER_INPUT");
             msg.setContent(text);
             msg.setCreatedAt(LocalDateTime.now());
-            messageMapper.insert(msg);
+            messageService.saveMessage(msg);
             return msg.getId();
         } catch (Exception e) {
             log.error("[StateManager] Failed to record user input", e);
@@ -91,7 +145,7 @@ public class StateManager {
             msg.setAgentName("Planner");
             msg.setContent(response);
             msg.setCreatedAt(LocalDateTime.now());
-            messageMapper.insert(msg);
+            messageService.saveMessage(msg);
             return msg.getId();
         } catch (Exception e) {
             log.error("[StateManager] Failed to record planner message", e);
@@ -112,7 +166,7 @@ public class StateManager {
             msg.setAgentName(step.getAssignedAgentName());
             msg.setContent(response);
             msg.setCreatedAt(LocalDateTime.now());
-            messageMapper.insert(msg);
+            messageService.saveMessage(msg);
             return msg.getId();
         } catch (Exception e) {
             log.error("[StateManager] Failed to record step message", e);

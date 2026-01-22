@@ -6,11 +6,14 @@ import com.agent.infrastructure.event.events.*;
 import com.agent.service.SessionStopService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 工作流引擎
@@ -33,6 +36,7 @@ public class WorkflowEngine {
     private final ReplannerAgent replannerAgent;
     private final EventBus eventBus;
     private final SessionStopService sessionStopService;
+    private final RedissonClient redissonClient;
 
     @Qualifier("virtualThreadExecutor")
     private final TaskExecutor virtualThreadExecutor;
@@ -91,87 +95,112 @@ public class WorkflowEngine {
     }
 
     /**
-     * 后台异步处理 - 基于 ExecutionPlan 推导状态
+     * 后台异步处理 - 基于 Session 维度的分布式锁，避免并发状态写冲突
      */
     private void processAsync(String sessionId, String requestId, String userText) {
-        log.info("[WorkflowEngine] Processing async: sessionId={}, requestId={}", sessionId, requestId);
+        String lockKey = "lock:session:" + sessionId;
+        RLock lock = redissonClient.getLock(lockKey);
 
         try {
-            ExecutionPlan plan = stateManager.loadPlan(sessionId);
-
-            // === PLANNING 阶段 ===
-            if (plan == null) {
-                plan = runPlanningPhase(sessionId, userText);
-                if (plan == null) {
-                    return; // 规划失败或需要用户输入
-                }
-            } else if (plan.getStatus() == PlanStatus.PAUSED) {
-                String pauseReason = plan.getPauseReason();
-
-                if ("user_stopped".equals(pauseReason)) {
-                    // === 用户手动停止后恢复 ===
-                    log.info("[WorkflowEngine] Resuming from user stop: sessionId={}, pausedStep={}",
-                            sessionId, plan.getPausedAtStepIndex());
-
-                    // 重置到被暂停的步骤
-                    plan.resetToPausedStep();
-
-                    // 关键：将该步骤状态重置为 PENDING，确保能被重新执行
-                    PlanStep pausedStep = plan.getCurrentStep();
-                    if (pausedStep != null && pausedStep.getStatus() == StepStatus.IN_PROGRESS) {
-                        pausedStep.resetToPending();
-                    }
-
-                    plan.resume();
-                    plan.clearPauseContext();
-                    stateManager.savePlan(plan);
-                } else if ("waiting_user".equals(pauseReason)) {
-                    // === 用户回答了问题，根据暂停类型决定恢复策略 ===
-
-                    if (plan.needsFullReplanning()) {
-                        // 策略1：Planner澄清 - 完全重新规划
-                        log.info("[WorkflowEngine] Planner clarification answered, replanning from scratch");
-                        stateManager.deletePlan(sessionId);
-                        plan = runPlanningPhase(sessionId, userText);
-                        if (plan == null) {
-                            return;
-                        }
-                    } else if (plan.needsRestepExecution()) {
-                        // 策略2：Worker澄清 - 重新执行被打断的步骤
-                        log.info("[WorkflowEngine] Worker clarification answered, restarting step {} (Agent: {})",
-                                plan.getPausedAtStepIndex(), plan.getPausedAgentId());
-
-                        // 重置到被打断的步骤
-                        plan.resetToPausedStep();
-
-                        // 在步骤指令中追加用户澄清内容
-                        PlanStep pausedStep = plan.getPausedStep();
-                        if (pausedStep != null) {
-                            String originalInstruction = pausedStep.getInstruction();
-                            String clarification = "\n\n【用户澄清】\n" + userText;
-                            pausedStep.setInstruction(originalInstruction + clarification);
-                            log.info("[WorkflowEngine] Appended user clarification to step instruction");
-                        }
-
-                        // 恢复执行状态并清除暂停上下文
-                        plan.resume();
-                        plan.clearPauseContext();
-                        stateManager.savePlan(plan);
-                    } else {
-                        // 其他暂停情况（USER/BLOCKED）- 直接恢复
-                        plan.resume();
-                        plan.clearPauseContext();
-                        stateManager.savePlan(plan);
-                    }
-                }
+            // 等待 3s 获取锁；leaseTime=60s 兜底防死锁（Redisson Watchdog 会自动续期）
+            if (!lock.tryLock(3, 60, TimeUnit.SECONDS)) {
+                log.warn("[WorkflowEngine] Failed to acquire lock for session: {}, skip processing (requestId={})", sessionId, requestId);
+                return;
             }
 
-            // === EXECUTING 阶段 ===
-            runExecutionLoop(sessionId, plan);
+            log.debug("[WorkflowEngine] Acquired lock for session: {} (requestId={})", sessionId, requestId);
 
-        } catch (Exception e) {
-            log.error("[WorkflowEngine] Workflow error: sessionId={}", sessionId, e);
-            eventBus.publish(sessionId, new ErrorEvent(sessionId, e.getMessage()));
+            try {
+                log.info("[WorkflowEngine] Processing async: sessionId={}, requestId={}", sessionId, requestId);
+
+                ExecutionPlan plan = stateManager.loadPlan(sessionId);
+
+                // === PLANNING 阶段 ===
+                if (plan == null) {
+                    plan = runPlanningPhase(sessionId, userText);
+                    if (plan == null) {
+                        return; // 规划失败或需要用户输入
+                    }
+                } else if (plan.getStatus() == PlanStatus.PAUSED) {
+                    String pauseReason = plan.getPauseReason();
+
+                    if ("user_stopped".equals(pauseReason)) {
+                        // === 用户手动停止后恢复 ===
+                        log.info("[WorkflowEngine] Resuming from user stop: sessionId={}, pausedStep={}",
+                                sessionId, plan.getPausedAtStepIndex());
+
+                        // 重置到被暂停的步骤
+                        plan.resetToPausedStep();
+
+                        // 关键：将该步骤状态重置为 PENDING，确保能被重新执行
+                        PlanStep pausedStep = plan.getCurrentStep();
+                        if (pausedStep != null && pausedStep.getStatus() == StepStatus.IN_PROGRESS) {
+                            pausedStep.resetToPending();
+                        }
+
+                        plan.resume();
+                        plan.clearPauseContext();
+                        stateManager.savePlan(plan);
+                    } else if ("waiting_user".equals(pauseReason)) {
+                        // === 用户回答了问题，根据暂停类型决定恢复策略 ===
+
+                        if (plan.needsFullReplanning()) {
+                            // 策略1：Planner澄清 - 完全重新规划
+                            log.info("[WorkflowEngine] Planner clarification answered, replanning from scratch");
+                            stateManager.deletePlan(sessionId);
+                            plan = runPlanningPhase(sessionId, userText);
+                            if (plan == null) {
+                                return;
+                            }
+                        } else if (plan.needsRestepExecution()) {
+                            // 策略2：Worker澄清 - 重新执行被打断的步骤
+                            log.info("[WorkflowEngine] Worker clarification answered, restarting step {} (Agent: {})",
+                                    plan.getPausedAtStepIndex(), plan.getPausedAgentId());
+
+                            // 重置到被打断的步骤
+                            plan.resetToPausedStep();
+
+                            // 在步骤指令中追加用户澄清内容
+                            PlanStep pausedStep = plan.getPausedStep();
+                            if (pausedStep != null) {
+                                String originalInstruction = pausedStep.getInstruction();
+                                String clarification = "\n\n【用户澄清】\n" + userText;
+                                pausedStep.setInstruction(originalInstruction + clarification);
+                                log.info("[WorkflowEngine] Appended user clarification to step instruction");
+                            }
+
+                            // 恢复执行状态并清除暂停上下文
+                            plan.resume();
+                            plan.clearPauseContext();
+                            stateManager.savePlan(plan);
+                        } else {
+                            // 其他暂停情况（USER/BLOCKED）- 直接恢复
+                            plan.resume();
+                            plan.clearPauseContext();
+                            stateManager.savePlan(plan);
+                        }
+                    }
+                }
+
+                // === EXECUTING 阶段 ===
+                runExecutionLoop(sessionId, plan);
+
+            } catch (Exception e) {
+                log.error("[WorkflowEngine] Workflow error: sessionId={}", sessionId, e);
+                eventBus.publish(sessionId, new ErrorEvent(sessionId, e.getMessage()));
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[WorkflowEngine] Interrupted while waiting for lock: sessionId={}, requestId={}", sessionId, requestId);
+        } finally {
+            if (lock.isHeldByCurrentThread()) {
+                try {
+                    lock.unlock();
+                } catch (Exception unlockEx) {
+                    log.warn("[WorkflowEngine] Failed to unlock for session: {}", sessionId, unlockEx);
+                }
+                log.debug("[WorkflowEngine] Released lock for session: {} (requestId={})", sessionId, requestId);
+            }
         }
     }
 
