@@ -1,29 +1,24 @@
 package com.agent.application.orchestration;
 
 import com.agent.domain.model.plan.*;
-import com.agent.infrastructure.event.EventBus;
-import com.agent.infrastructure.event.events.*;
+import com.agent.infrastructure.mq.TaskMessage;
+import com.agent.infrastructure.mq.WorkflowProcessor;
+import com.agent.infrastructure.mq.WorkflowProducer;
 import com.agent.service.SessionStopService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 工作流引擎
- * 核心编排组件，负责 Plan-Execute 主循环
+ * 核心编排组件，负责接收请求并发送到 MQ
  *
- * 特点：
+ * 改造后特点：
  * 1. Fire-and-Forget：HTTP 线程立即返回
- * 2. 虚拟线程：后台任务使用虚拟线程执行
- * 3. 单一状态源：基于 ExecutionPlan 推导当前阶段
- * 4. 事件驱动：通过 EventBus 推送事件到前端
+ * 2. MQ 解耦：发送消息到 RocketMQ，由 Consumer 异步处理
+ * 3. 顺序保证：同一 sessionId 的消息发到同一 Queue
  */
 @Slf4j
 @Service
@@ -31,24 +26,15 @@ import java.util.concurrent.TimeUnit;
 public class WorkflowEngine {
 
     private final StateManager stateManager;
-    private final PlannerAgent plannerAgent;
-    private final StepExecutor stepExecutor;
-    private final ReplannerAgent replannerAgent;
-    private final EventBus eventBus;
     private final SessionStopService sessionStopService;
-    private final RedissonClient redissonClient;
-
-    @Qualifier("virtualThreadExecutor")
-    private final TaskExecutor virtualThreadExecutor;
-
-    /**
-     * 最大重规划次数
-     */
-    private static final int MAX_REPLAN_COUNT = 3;
+    private final WorkflowProducer workflowProducer;
+    private  final WorkflowProcessor workflowProcessor;
 
     /**
      * 提交用户输入 - Fire and Forget
      * HTTP 线程立即返回 requestId
+     *
+     * @throws RuntimeException 消息发送失败时抛出
      */
     public String submitUserInput(String sessionId, String userText) {
         String requestId = UUID.randomUUID().toString();
@@ -60,14 +46,20 @@ public class WorkflowEngine {
         // 记录用户输入
         stateManager.recordUserInput(sessionId, requestId, userText);
 
-        // 使用虚拟线程异步执行
-        virtualThreadExecutor.execute(() -> processAsync(sessionId, requestId, userText));
+        // 构造消息并发送到 MQ
+        TaskMessage message = TaskMessage.ofSubmit(sessionId, requestId, userText);
+        workflowProducer.send(message);  // 发送失败会抛异常
+        // 直接调用处理器
+        //workflowProcessor.process(message);
 
+        log.info("[WorkflowEngine] Message sent to MQ: sessionId={}, requestId={}", sessionId, requestId);
         return requestId;
     }
 
     /**
      * 恢复执行（用户回答问题后）
+     *
+     * @throws RuntimeException 消息发送失败时抛出
      */
     public String resume(String sessionId, String userAnswer) {
         String requestId = UUID.randomUUID().toString();
@@ -82,8 +74,11 @@ public class WorkflowEngine {
             stateManager.savePlan(plan);
         }
 
-        virtualThreadExecutor.execute(() -> processAsync(sessionId, requestId, userAnswer));
+        // 构造消息并发送到 MQ
+        TaskMessage message = TaskMessage.ofResume(sessionId, requestId, userAnswer);
+        workflowProducer.send(message);  // 发送失败会抛异常
 
+        log.info("[WorkflowEngine] Resume message sent to MQ: sessionId={}, requestId={}", sessionId, requestId);
         return requestId;
     }
 
@@ -92,357 +87,5 @@ public class WorkflowEngine {
      */
     public ExecutionPlan getState(String sessionId) {
         return stateManager.loadPlan(sessionId);
-    }
-
-    /**
-     * 后台异步处理 - 基于 Session 维度的分布式锁，避免并发状态写冲突
-     */
-    private void processAsync(String sessionId, String requestId, String userText) {
-        String lockKey = "lock:session:" + sessionId;
-        RLock lock = redissonClient.getLock(lockKey);
-
-        try {
-            // 等待 3s 获取锁；leaseTime=60s 兜底防死锁（Redisson Watchdog 会自动续期）
-            if (!lock.tryLock(3, 60, TimeUnit.SECONDS)) {
-                log.warn("[WorkflowEngine] Failed to acquire lock for session: {}, skip processing (requestId={})", sessionId, requestId);
-                return;
-            }
-
-            log.debug("[WorkflowEngine] Acquired lock for session: {} (requestId={})", sessionId, requestId);
-
-            try {
-                log.info("[WorkflowEngine] Processing async: sessionId={}, requestId={}", sessionId, requestId);
-
-                ExecutionPlan plan = stateManager.loadPlan(sessionId);
-
-                // === PLANNING 阶段 ===
-                if (plan == null) {
-                    plan = runPlanningPhase(sessionId, userText);
-                    if (plan == null) {
-                        return; // 规划失败或需要用户输入
-                    }
-                } else if (plan.getStatus() == PlanStatus.PAUSED) {
-                    String pauseReason = plan.getPauseReason();
-
-                    if ("user_stopped".equals(pauseReason)) {
-                        // === 用户手动停止后恢复 ===
-                        log.info("[WorkflowEngine] Resuming from user stop: sessionId={}, pausedStep={}",
-                                sessionId, plan.getPausedAtStepIndex());
-
-                        // 重置到被暂停的步骤
-                        plan.resetToPausedStep();
-
-                        // 关键：将该步骤状态重置为 PENDING，确保能被重新执行
-                        PlanStep pausedStep = plan.getCurrentStep();
-                        if (pausedStep != null && pausedStep.getStatus() == StepStatus.IN_PROGRESS) {
-                            pausedStep.resetToPending();
-                        }
-
-                        plan.resume();
-                        plan.clearPauseContext();
-                        stateManager.savePlan(plan);
-                    } else if ("waiting_user".equals(pauseReason)) {
-                        // === 用户回答了问题，根据暂停类型决定恢复策略 ===
-
-                        if (plan.needsFullReplanning()) {
-                            // 策略1：Planner澄清 - 完全重新规划
-                            log.info("[WorkflowEngine] Planner clarification answered, replanning from scratch");
-                            stateManager.deletePlan(sessionId);
-                            plan = runPlanningPhase(sessionId, userText);
-                            if (plan == null) {
-                                return;
-                            }
-                        } else if (plan.needsRestepExecution()) {
-                            // 策略2：Worker澄清 - 重新执行被打断的步骤
-                            log.info("[WorkflowEngine] Worker clarification answered, restarting step {} (Agent: {})",
-                                    plan.getPausedAtStepIndex(), plan.getPausedAgentId());
-
-                            // 重置到被打断的步骤
-                            plan.resetToPausedStep();
-
-                            // 在步骤指令中追加用户澄清内容
-                            PlanStep pausedStep = plan.getPausedStep();
-                            if (pausedStep != null) {
-                                String originalInstruction = pausedStep.getInstruction();
-                                String clarification = "\n\n【用户澄清】\n" + userText;
-                                pausedStep.setInstruction(originalInstruction + clarification);
-                                log.info("[WorkflowEngine] Appended user clarification to step instruction");
-                            }
-
-                            // 恢复执行状态并清除暂停上下文
-                            plan.resume();
-                            plan.clearPauseContext();
-                            stateManager.savePlan(plan);
-                        } else {
-                            // 其他暂停情况（USER/BLOCKED）- 直接恢复
-                            plan.resume();
-                            plan.clearPauseContext();
-                            stateManager.savePlan(plan);
-                        }
-                    }
-                }
-
-                // === EXECUTING 阶段 ===
-                runExecutionLoop(sessionId, plan);
-
-            } catch (Exception e) {
-                log.error("[WorkflowEngine] Workflow error: sessionId={}", sessionId, e);
-                eventBus.publish(sessionId, new ErrorEvent(sessionId, e.getMessage()));
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.warn("[WorkflowEngine] Interrupted while waiting for lock: sessionId={}, requestId={}", sessionId, requestId);
-        } finally {
-            if (lock.isHeldByCurrentThread()) {
-                try {
-                    lock.unlock();
-                } catch (Exception unlockEx) {
-                    log.warn("[WorkflowEngine] Failed to unlock for session: {}", sessionId, unlockEx);
-                }
-                log.debug("[WorkflowEngine] Released lock for session: {} (requestId={})", sessionId, requestId);
-            }
-        }
-    }
-
-    /**
-     * 运行规划阶段
-     */
-    private ExecutionPlan runPlanningPhase(String sessionId, String userText) {
-        log.info("[WorkflowEngine] Running planning phase: sessionId={}", sessionId);
-
-        eventBus.publish(sessionId, new PlanningStartEvent(sessionId));
-
-        PlannerResult result = plannerAgent.generatePlan(sessionId, userText);
-
-        switch (result) {
-            case PlannerResult.PlanGenerated pg -> {
-                ExecutionPlan plan = pg.plan();
-                stateManager.savePlan(plan);
-
-                // 格式化计划内容
-                String formattedPlan = formatPlanForDisplay(plan);
-
-                // 保存 Planner 消息到数据库
-                try {
-                    stateManager.recordPlannerMessage(sessionId, sessionId, formattedPlan);
-                } catch (Exception e) {
-                    log.warn("[WorkflowEngine] Failed to save planner message", e);
-                }
-
-                // 发送事件（包含完整格式化的计划）
-                eventBus.publish(sessionId, new PlanGeneratedEvent(
-                        sessionId,
-                        plan.getPlanId(),
-                        plan.getGoal(),
-                        plan.getSteps().size(),
-                        formattedPlan  // 添加完整计划内容
-                ));
-                return plan;
-            }
-            case PlannerResult.NeedClarification nc -> {
-                ExecutionPlan pausedPlan = ExecutionPlan.createPaused(sessionId, nc.question());
-                pausedPlan.pauseForPlannerClarification(nc.question());  // 使用新方法标记来源
-                stateManager.savePlan(pausedPlan);
-                eventBus.publish(sessionId, new NeedClarificationEvent(
-                        sessionId,
-                        nc.question(),
-                        "PLANNER",  // 标记来源
-                        null,
-                        null
-                ));
-                return null;
-            }
-            case PlannerResult.CannotPlan cp -> {
-                eventBus.publish(sessionId, new PlanFailedEvent(sessionId, cp.reason()));
-                return null;
-            }
-        }
-    }
-
-    /**
-     * 执行循环 - 按计划顺序执行每个步骤
-     */
-    private void runExecutionLoop(String sessionId, ExecutionPlan plan) {
-        log.info("[WorkflowEngine] Running execution loop: sessionId={}, currentStep={}",
-                sessionId, plan.getCurrentStepIndex());
-
-        while (!plan.isComplete() && !Thread.currentThread().isInterrupted()) {
-
-            // 检查停止标志
-            if (sessionStopService.shouldStop(sessionId)) {
-                log.info("[WorkflowEngine] Stopped by user: sessionId={}", sessionId);
-                plan.pauseForUserStop("用户停止");  // 使用新方法
-                stateManager.savePlan(plan);
-                eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "user_stopped"));
-                return;
-            }
-
-            PlanStep currentStep = plan.getCurrentStep();
-            if (currentStep == null) {
-                break;
-            }
-
-            // 开始执行步骤
-            currentStep.start();
-            stateManager.savePlan(plan);
-            eventBus.publish(sessionId, new StepStartEvent(
-                    sessionId,
-                    currentStep.getStepId(),
-                    currentStep.getStepIndex(),
-                    currentStep.getDescription(),
-                    currentStep.getAssignedAgentId(),
-                    currentStep.getAssignedAgentName()
-            ));
-
-            // 执行步骤
-            StepResult result = stepExecutor.execute(sessionId, currentStep);
-
-            // 执行完成后立即检查停止标志
-            if (sessionStopService.shouldStop(sessionId)) {
-                log.info("[WorkflowEngine] Stopped by user after step execution: sessionId={}, step={}",
-                        sessionId, currentStep.getStepIndex());
-                // 不调用 handleStepSuccess，保持当前步骤为 IN_PROGRESS
-                plan.pauseForUserStop("用户停止");
-                stateManager.savePlan(plan);
-                eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "user_stopped"));
-                return;  // 立即退出，不标记步骤完成
-            }
-
-            // 只有在没有停止的情况下才处理结果
-            if (result.isSuccess()) {
-                handleStepSuccess(sessionId, plan, currentStep, result);
-            } else if (result.isBlocked()) {
-                if (!handleStepBlocked(sessionId, plan, currentStep, result)) {
-                    return; // 重规划失败，退出
-                }
-            } else if (result.needsUserInput()) {
-                handleNeedsUserInput(sessionId, plan, currentStep, result);
-                return; // 等待用户输入
-            }
-        }
-
-        // 所有步骤完成
-        if (plan.isComplete() || plan.getCurrentStep() == null) {
-            plan.markCompleted();
-            stateManager.savePlan(plan);
-            eventBus.publish(sessionId, new SessionCompleteEvent(
-                    sessionId,
-                    "all_steps_done",
-                    plan.getCompletedStepCount()
-            ));
-        }
-    }
-
-    /**
-     * 处理步骤成功
-     */
-    private void handleStepSuccess(String sessionId, ExecutionPlan plan, PlanStep step, StepResult result) {
-        step.complete(result.getOutput());
-
-        // 判断是否是最后一步
-        boolean isLastStep = (step.getStepIndex() == plan.getSteps().size());
-
-        if (isLastStep) {
-            // 最后一步完成，标记计划为完成
-            log.info("[WorkflowEngine] Last step completed, marking plan as completed: sessionId={}, stepIndex={}",
-                    sessionId, step.getStepIndex());
-            plan.markCompleted();
-        } else {
-            // 不是最后一步，推进到下一步
-            plan.advanceToNextStep();
-            log.info("[WorkflowEngine] Advanced to next step: sessionId={}, nextStepIndex={}",
-                    sessionId, plan.getCurrentStepIndex());
-        }
-
-        stateManager.savePlan(plan);
-        eventBus.publish(sessionId, new StepCompletedEvent(
-                sessionId,
-                step.getStepId(),
-                step.getStepIndex(),
-                result.getOutput()
-        ));
-    }
-
-    /**
-     * 处理步骤阻塞
-     * @return true 继续执行，false 退出
-     */
-    private boolean handleStepBlocked(String sessionId, ExecutionPlan plan, PlanStep step, StepResult result) {
-        step.block(result.getBlockedReason());
-        stateManager.savePlan(plan);
-        eventBus.publish(sessionId, new StepBlockedEvent(
-                sessionId,
-                step.getStepId(),
-                step.getStepIndex(),
-                result.getBlockedReason()
-        ));
-
-        // 尝试重规划
-        if (plan.canReplan(MAX_REPLAN_COUNT)) {
-            plan.startReplanning();
-            eventBus.publish(sessionId, new ReplanningStartEvent(sessionId, result.getBlockedReason()));
-
-            ExecutionPlan newPlan = replannerAgent.replan(sessionId, plan, result.getBlockedReason());
-            stateManager.savePlan(newPlan);
-
-            if (newPlan.getStatus() == PlanStatus.FAILED) {
-                eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "replan_failed"));
-                return false;
-            }
-
-            eventBus.publish(sessionId, new PlanUpdatedEvent(
-                    sessionId,
-                    newPlan.getPlanId(),
-                    newPlan.getSteps().size(),
-                    newPlan.getReplanCount()
-            ));
-
-            // 继续执行新计划
-            runExecutionLoop(sessionId, newPlan);
-            return false; // 已经在递归中处理完毕
-        } else {
-            // 重规划次数已达上限
-            plan.pauseForUserInput("重规划次数已达上限，请提供新的指示");
-            stateManager.savePlan(plan);
-            eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "replan_limit_reached"));
-            return false;
-        }
-    }
-
-    /**
-     * 处理需要用户输入
-     */
-    private void handleNeedsUserInput(String sessionId, ExecutionPlan plan, PlanStep step, StepResult result) {
-        // Worker澄清：记录暂停上下文
-        plan.pauseForWorkerClarification(
-                result.getQuestion(),
-                step.getStepIndex(),
-                step.getAssignedAgentId()
-        );
-        stateManager.savePlan(plan);
-
-        eventBus.publish(sessionId, new NeedClarificationEvent(
-                sessionId,
-                result.getQuestion(),
-                "WORKER",  // 标记来源
-                step.getStepId(),
-                step.getAssignedAgentId()
-        ));
-    }
-
-    /**
-     * 格式化计划内容用于显示和存储
-     */
-    private String formatPlanForDisplay(ExecutionPlan plan) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("📋 执行计划\n");
-        sb.append("目标: ").append(plan.getGoal()).append("\n\n");
-        for (PlanStep step : plan.getSteps()) {
-            sb.append(String.format("步骤 %d: %s\n", step.getStepIndex(), step.getDescription()));
-            sb.append(String.format("  负责: %s\n", step.getAssignedAgentName()));
-            sb.append(String.format("  指令: %s\n", step.getInstruction()));
-            sb.append("\n");
-        }
-        return sb.toString();
     }
 }

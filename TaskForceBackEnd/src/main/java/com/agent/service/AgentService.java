@@ -31,7 +31,7 @@ public class AgentService {
         Agent agent = Agent.builder()
             .providerId(request.getProviderId())
             .name(request.getName())
-            .model(request.getEffectiveModel())
+            .model(request.getModel())
             .systemPrompt(request.getSystemPrompt())
             .temperature(request.getTemperature() != null ? request.getTemperature() : new BigDecimal("0.70"))
             .maxTokens(request.getMaxTokens() != null ? request.getMaxTokens() : 4096)
@@ -69,9 +69,8 @@ public class AgentService {
         if (request.getProviderId() != null) {
             agent.setProviderId(request.getProviderId());
         }
-        String effectiveModel = request.getEffectiveModel();
-        if (effectiveModel != null) {
-            agent.setModel(effectiveModel);
+        if (request.getModel() != null) {
+            agent.setModel(request.getModel());
         }
         if (request.getSystemPrompt() != null) {
             agent.setSystemPrompt(request.getSystemPrompt());

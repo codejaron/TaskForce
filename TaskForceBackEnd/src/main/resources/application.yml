@@ -98,3 +98,17 @@ mcp:
     config-path: ./mcp-config.json     # JSON 配置文件路径
     auto-reload: true                   # 是否自动热加载
     polling-interval: 5000              # 轮询间隔（毫秒），仅在 Docker 环境生效
+
+# ========== RocketMQ 配置 ==========
+rocketmq:
+  name-server: ${ROCKETMQ_NAMESRV:localhost:9876}
+  producer:
+    group: taskforce-producer
+    send-message-timeout: 3000
+    retry-times-when-send-failed: 2
+
+# ========== 应用配置 ==========
+app:
+  idempotent:
+    expire-hours: 24  # 幂等 key 过期时间（小时）
+

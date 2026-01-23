@@ -1,5 +1,6 @@
 package com.agent.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -23,9 +24,13 @@ public class AgentRequest {
 
     private Long providerId; // 关联的LLM渠道ID
 
-    private String model; // 模型标识 (例如 gpt-4o)
-
-    private String modelName; // 前端发送的模型名称（映射到 model）
+    /**
+     * 模型标识（例如 gpt-4o / deepseek-chat）。
+     *
+     * 兼容：历史前端可能会发送 modelName 字段（与 model 同义），通过 JsonAlias 让其自动映射到 model。
+     */
+    @JsonAlias({"modelName"})
+    private String model;
 
     private String systemPrompt;
 
@@ -38,11 +43,4 @@ public class AgentRequest {
     private String roleType; // MODERATOR/WORKER
 
     private List<String> selectedMcpTools; // MCP工具ID列表 (格式: serverId::toolName)
-
-    /**
-     * 获取模型标识（优先使用 model，其次使用 modelName）
-     */
-    public String getEffectiveModel() {
-        return model != null ? model : modelName;
-    }
 }
