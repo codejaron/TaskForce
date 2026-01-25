@@ -2,6 +2,7 @@ services:
   # ========== RocketMQ ==========
   namesrv:
     image: apache/rocketmq:5.1.0
+    platform: linux/amd64
     container_name: taskforce-namesrv
     restart: always
     ports:
@@ -20,6 +21,7 @@ services:
 
   broker:
     image: apache/rocketmq:5.1.0
+    platform: linux/amd64
     container_name: taskforce-broker
     restart: always
     ports:
@@ -35,6 +37,7 @@ services:
       - taskforce-network
     volumes:
       - broker-data:/home/rocketmq/store
+      - broker-logs:/home/rocketmq/logs
       - ./broker.conf:/home/rocketmq/rocketmq-5.1.0/conf/broker.conf:ro
 
   rocketmq-dashboard:
@@ -148,6 +151,7 @@ volumes:
   mysql-data:
   redis-data:
   broker-data:
+  broker-logs:
 
 networks:
   taskforce-network:
