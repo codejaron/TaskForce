@@ -15,7 +15,6 @@ import java.util.UUID;
  * 工作流引擎
  * 核心编排组件，负责接收请求并发送到 MQ
  *
- * 改造后特点：
  * 1. Fire-and-Forget：HTTP 线程立即返回
  * 2. MQ 解耦：发送消息到 RocketMQ，由 Consumer 异步处理
  * 3. 顺序保证：同一 sessionId 的消息发到同一 Queue
