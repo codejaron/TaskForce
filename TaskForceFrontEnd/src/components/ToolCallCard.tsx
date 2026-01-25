@@ -140,7 +140,7 @@ export const ToolCallList: React.FC<ToolCallListProps> = ({ toolCalls }) => {
 
   return (
     <div className="mt-2 space-y-1.5">
-      {toolCalls.map((tc, idx) => (
+      {toolCalls.map((tc) => (
         <ToolCallCard
           key={tc.toolCallId}
           toolCall={tc}

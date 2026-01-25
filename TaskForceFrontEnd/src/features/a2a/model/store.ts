@@ -56,73 +56,32 @@ function clearEventIdSet(sessionId: string) {
 }
 
 /**
- * 解析 Moderator 消息中的特殊标记
- */
-function parseModeratorMessage(text: string): { cleanText: string; blackboard: any | null; waitUser: boolean } {
-  const beginIdx = text.indexOf('BLACKBOARD_JSON_BEGIN');
-  const endIdx = text.indexOf('BLACKBOARD_JSON_END');
-
-  let blackboard = null;
-  let cleanText = text;
-
-  if (beginIdx >= 0) {
-    if (endIdx > beginIdx) {
-      const jsonStart = beginIdx + 'BLACKBOARD_JSON_BEGIN'.length;
-      let jsonStr = text.substring(jsonStart, endIdx).trim();
-
-      if (jsonStr.startsWith('```json')) {
-        jsonStr = jsonStr.substring(7).trim();
-      }
-      if (jsonStr.startsWith('```')) {
-        jsonStr = jsonStr.substring(3).trim();
-      }
-      if (jsonStr.endsWith('```')) {
-        jsonStr = jsonStr.substring(0, jsonStr.length - 3).trim();
-      }
-
-      try {
-        blackboard = JSON.parse(jsonStr);
-      } catch (e) {
-        console.error('[A2A] Failed to parse blackboard JSON:', e);
-      }
-
-      cleanText = text.substring(0, beginIdx) + text.substring(endIdx + 'BLACKBOARD_JSON_END'.length);
-    } else {
-      cleanText = text.substring(0, beginIdx);
-    }
-  }
-
-  const waitUser = text.includes('WAIT_USER') || text.includes('[NEED_USER_INPUT_BEGIN]');
-
-  if (waitUser) {
-    cleanText = cleanText
-      .replace(/WAIT_USER/g, '')
-      .replace(/\[NEED_USER_INPUT_BEGIN\]/g, '')
-      .replace(/\[NEED_USER_INPUT_END\]/g, '')
-      .trim();
-  }
-
-  return { cleanText: cleanText.trim(), blackboard, waitUser };
-}
-
-/**
  * 处理异步工作流事件
  * 关键：每个事件都带 status 字段，前端直接更新 workflowStatus
  */
-function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
+function handleAsyncEvent(
+  ev: { event: string; data: string },
+  sessionId: string,
+  set: (partial: A2AState | Partial<A2AState> | ((state: A2AState) => A2AState | Partial<A2AState>), replace?: false) => void,
+  get: () => A2AState
+) {
   const eventType = ev.event;
-  let data: any;
+  let eventData: unknown;
 
   try {
-    data = JSON.parse(ev.data);
+    eventData = JSON.parse(ev.data);
   } catch (e) {
     console.error('[A2A] Failed to parse event data:', e);
     return;
   }
 
+  const data = (eventData && typeof eventData === 'object') ? (eventData as Record<string, unknown>) : {};
+  const getStr = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
+  const getNum = (v: unknown, fallback = 0): number => (typeof v === 'number' ? v : fallback);
+
   // ========== 去重逻辑 ==========
   const eventId = data.eventId;
-  if (eventId) {
+  if (typeof eventId === 'string' && eventId) {
     const eventIdSet = getEventIdSet(sessionId);
     if (eventIdSet.has(eventId)) {
       console.debug('[A2A] Duplicate event ignored:', eventId, eventType);
@@ -140,7 +99,10 @@ function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
   const { messages } = get();
 
   // 从事件中提取状态（后端每个事件都应该带 status）
-  const newStatus = data.status || null;
+  const newStatus = typeof data.status === 'string' ? data.status : null;
+
+  // 便捷提取（避免 unknown 直接当 string/number 用）
+  const stepIdStr = typeof data.stepId === 'string' ? data.stepId : null;
 
   switch (eventType) {
     case 'planning_start':
@@ -165,11 +127,13 @@ function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
         messages: [...messages, {
           agentId: 'system',
           agentName: 'Planner',
-          content: data.formattedPlan || `📋 执行计划已生成\n目标: ${data.goal}\n步骤数: ${data.stepCount}`,
+          content: (typeof data.formattedPlan === 'string' && data.formattedPlan)
+            ? data.formattedPlan
+            : `📋 执行计划已生成\n目标: ${getStr(data.goal)}\n步骤数: ${getNum(data.stepCount)}`,
           timestamp: new Date().toISOString(),
           type: 'text',
-          planId: data.planId,
-          goal: data.goal
+          planId: typeof data.planId === 'string' ? data.planId : undefined,
+          goal: typeof data.goal === 'string' ? data.goal : undefined
         }]
       });
       break;
@@ -202,24 +166,23 @@ function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
 
     case 'step_start':
       {
-        // 检查是否已存在相同 stepId 的消息
-        const hasExisting = messages.some((msg: A2AMessage) => msg.stepId === data.stepId);
+        const stepId = getStr(data.stepId, 'unknown');
 
-        // 如果已存在，给新消息的 stepId 加后缀区分
-        const newStepId = hasExisting ? `${data.stepId}_${Date.now()}` : data.stepId;
+        const hasExisting = messages.some((msg: A2AMessage) => msg.stepId === stepId);
+        const newStepId = hasExisting ? `${stepId}_${Date.now()}` : stepId;
 
         set({
           workflowStatus: newStatus || 'EXECUTING',
           messages: [...messages, {
-            agentId: data.assignedAgentId,
-            agentName: data.assignedAgentName,
+            agentId: getStr(data.assignedAgentId, 'unknown'),
+            agentName: getStr(data.assignedAgentName, 'unknown'),
             content: '',
             timestamp: new Date().toISOString(),
             type: 'text',
             stepId: newStepId,
-            originalStepId: data.stepId,  // 保留原始 stepId 用于工具卡片关联
-            stepIndex: data.stepIndex,
-            stepDescription: data.description
+            originalStepId: stepId,
+            stepIndex: typeof data.stepIndex === 'number' ? data.stepIndex : undefined,
+            stepDescription: typeof data.description === 'string' ? data.description : undefined
           }]
         });
       }
@@ -227,14 +190,14 @@ function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
 
     case 'worker_delta':
       // delta 不改状态，只追加内容
-      appendToLastMessage(data.delta, null, null, data.stepId, set, get);
+      appendToLastMessage(typeof data.delta === 'string' ? data.delta : '', null, null, stepIdStr, set, get);
       break;
 
     case 'step_completed':
       {
-        // 找最后一条匹配的消息
-        const targetIndex = messages.findLastIndex((msg: A2AMessage) =>
-          msg.stepId === data.stepId || msg.originalStepId === data.stepId
+        const completedStepId = typeof data.stepId === 'string' ? data.stepId : '';
+        const targetIndex = findLastIndexCompat(messages, (msg: A2AMessage) =>
+          msg.stepId === completedStepId || msg.originalStepId === completedStepId
         );
         if (targetIndex >= 0) {
           const targetMsg = messages[targetIndex];
@@ -277,7 +240,7 @@ function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
       break;
 
     case 'replanner_delta':
-      appendToLastMessage(data.delta, 'system', 'Replanner', null, set, get);
+      appendToLastMessage(typeof data.delta === 'string' ? data.delta : '', 'system', 'Replanner', null, set, get);
       break;
 
     case 'plan_updated':
@@ -317,39 +280,45 @@ function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
         messages: [...messages, {
           agentId: 'system',
           agentName: 'System',
-          content: `❌ 错误: ${data.error}`,
+          content: `❌ 错误: ${getStr(data.error)}`,
           timestamp: new Date().toISOString(),
           type: 'text'
         }],
-        error: data.error
+        error: typeof data.error === 'string' ? data.error : 'Unknown error'
       });
       break;
 
     case 'tool_call_start':
       {
-        const originalStepId = data.stepId || 'unknown';
+        const originalStepId = typeof data.stepId === 'string' ? data.stepId : 'unknown';
         const { toolCallsByStepId } = get();
 
-        // 找最新的消息，获取它的 stepId（可能带后缀）
-        const latestMsg = messages.findLast((msg: A2AMessage) =>
+        const latestMsg = findLastCompat(messages, (msg: A2AMessage) =>
           msg.stepId === originalStepId || msg.originalStepId === originalStepId
         );
         const actualStepId = latestMsg?.stepId || originalStepId;
 
         const existingCalls = toolCallsByStepId[actualStepId] || [];
 
-        // 去重
-        if (existingCalls.some(tc => tc.toolCallId === data.toolCallId)) {
+        const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
+        if (!toolCallId) {
           break;
         }
 
+        // 去重
+        if (existingCalls.some((tc: ToolCallDTO) => tc.toolCallId === toolCallId)) {
+          break;
+        }
+
+        const seq = typeof data.sequence === 'number' ? data.sequence : 0;
+
         const newToolCall: ToolCallDTO = {
-          toolCallId: data.toolCallId,
-          toolName: data.toolName,
-          serverName: data.serverName,
-          toolArgs: data.toolArgs,
+          toolCallId,
+          toolName: typeof data.toolName === 'string' ? data.toolName : 'unknown',
+          serverName: typeof data.serverName === 'string' ? data.serverName : undefined,
+          toolArgs: typeof data.toolArgs === 'string' ? data.toolArgs : '{}',
           status: 'RUNNING',
-          sequence: data.sequence || 0,
+          sequence: seq,
           stepId: actualStepId
         };
         set({
@@ -363,24 +332,30 @@ function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
 
     case 'tool_call_complete':
       {
-        const originalStepId = data.stepId || 'unknown';
+        const originalStepId = typeof data.stepId === 'string' ? data.stepId : 'unknown';
         const { toolCallsByStepId } = get();
 
-        // 找最新的消息，获取它的 stepId
-        const latestMsg = messages.findLast((msg: A2AMessage) =>
+        const latestMsg = findLastCompat(messages, (msg: A2AMessage) =>
           msg.stepId === originalStepId || msg.originalStepId === originalStepId
         );
         const actualStepId = latestMsg?.stepId || originalStepId;
 
+        const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
+        if (!toolCallId) {
+          break;
+        }
+
         const existingCalls = toolCallsByStepId[actualStepId] || [];
-        const updatedCalls = existingCalls.map(tc =>
-          tc.toolCallId === data.toolCallId
+        const updatedCalls = existingCalls.map((tc: ToolCallDTO) =>
+          tc.toolCallId === toolCallId
             ? {
                 ...tc,
-                toolResult: data.toolResult,
-                status: data.status as 'SUCCESS' | 'FAILED',
-                errorMessage: data.errorMessage,
-                durationMs: data.durationMs
+                toolResult: typeof data.toolResult === 'string' ? data.toolResult : undefined,
+                status: (data.status === 'SUCCESS' || data.status === 'FAILED')
+                  ? (data.status as 'SUCCESS' | 'FAILED')
+                  : 'SUCCESS',
+                errorMessage: typeof data.errorMessage === 'string' ? data.errorMessage : undefined,
+                durationMs: typeof data.durationMs === 'number' ? data.durationMs : undefined
               }
             : tc
         );
@@ -398,10 +373,30 @@ function handleAsyncEvent(ev: any, sessionId: string, set: any, get: any) {
   }
 }
 
+// 兼容：在不支持 findLast/findLastIndex 的环境里获取最后一个匹配项/索引
+function findLastIndexCompat<T>(arr: T[], predicate: (value: T, index: number) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (predicate(arr[i], i)) return i;
+  }
+  return -1;
+}
+
+function findLastCompat<T>(arr: T[], predicate: (value: T, index: number) => boolean): T | undefined {
+  const idx = findLastIndexCompat(arr, predicate);
+  return idx >= 0 ? arr[idx] : undefined;
+}
+
 /**
  * 追加内容到最后一条消息
  */
-function appendToLastMessage(delta: string, agentId: string | null, agentName: string | null, stepId: string | null, set: any, get: any) {
+function appendToLastMessage(
+  delta: string,
+  agentId: string | null,
+  agentName: string | null,
+  stepId: string | null,
+  set: (partial: A2AState | Partial<A2AState> | ((state: A2AState) => A2AState | Partial<A2AState>), replace?: false) => void,
+  get: () => A2AState
+) {
   const { messages } = get();
   const lastMsg = messages[messages.length - 1];
 
@@ -416,8 +411,7 @@ function appendToLastMessage(delta: string, agentId: string | null, agentName: s
       }]
     });
   } else if (stepId) {
-    // 找最后一条匹配的消息（可能是原始 stepId 或带后缀的）
-    const targetIndex = messages.findLastIndex((msg: A2AMessage) =>
+    const targetIndex = findLastIndexCompat(messages, (msg: A2AMessage) =>
       msg.stepId === stepId || msg.originalStepId === stepId
     );
     if (targetIndex >= 0) {
@@ -460,9 +454,9 @@ export const useA2AStore = create<A2AState>((set, get) => ({
     try {
       const sessions = await api.sessions.list();
       set({ sessions });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.warn("Failed to fetch sessions:", error);
-      set({ sessions: [], error: error.message });
+      set({ sessions: [], error: error instanceof Error ? error.message : String(error) });
     }
   },
 
@@ -495,16 +489,13 @@ export const useA2AStore = create<A2AState>((set, get) => ({
 
       const a2aMessages: A2AMessage[] = dbMessages.map(msg => {
         const isUser = msg.role === 'user';
-        const { cleanText, blackboard, waitUser } = parseModeratorMessage(msg.content);
 
         return {
           agentId: isUser ? 'human' : (msg.agentId?.toString() || 'assistant'),
           agentName: msg.agentName || (isUser ? 'User' : 'Agent'),
-          content: cleanText,
+          content: msg.content,
           timestamp: msg.createdAt,
-          type: (msg.messageType as 'text' | 'tool_use' | 'tool_result') || 'text',
-          blackboardState: blackboard || undefined,
-          waitingUser: waitUser || undefined
+          type: (msg.messageType as 'text' | 'tool_use' | 'tool_result') || 'text'
         };
       });
 
@@ -512,7 +503,7 @@ export const useA2AStore = create<A2AState>((set, get) => ({
       const workflowStatus = stateResponse?.status || null;
 
       set({ messages: a2aMessages, toolCallsByStepId, workflowStatus });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.warn('Failed to fetch messages:', error);
       set({ messages: [], toolCallsByStepId: {}, workflowStatus: null });
     }
@@ -637,7 +628,7 @@ export const useA2AStore = create<A2AState>((set, get) => ({
 
       connectSSE();
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[A2A V2] Failed to start group chat:', error);
       set({ error: 'Failed to start conversation', workflowStatus: 'FAILED' });
     }
@@ -672,7 +663,7 @@ export const useA2AStore = create<A2AState>((set, get) => ({
     try {
       await api.groupChat.stop(currentSession.id);
       console.log('[A2A] Stream stopped successfully');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[A2A] Failed to stop stream:', error);
     }
 

@@ -18,7 +18,6 @@ import {
   ChevronRight,
   Loader2,
   Wrench,
-  Database,
   CheckCircle,
   StopCircle,
   ClipboardList,
@@ -47,13 +46,17 @@ export const A2AStudioPage: React.FC = () => {
 
   // Filter agents - only show WORKER type agents to users
   const workerAgents = agents.filter(agent => {
-    const roleType = (agent as any).roleType || 'WORKER';
+    const roleType = typeof (agent as { roleType?: unknown }).roleType === 'string'
+      ? (agent as { roleType?: string }).roleType
+      : 'WORKER';
     return roleType === 'WORKER';
   });
 
   // Find the moderator agent (will be automatically added to sessions)
   const moderatorAgent = agents.find(agent => {
-    const roleType = (agent as any).roleType || 'WORKER';
+    const roleType = typeof (agent as { roleType?: unknown }).roleType === 'string'
+      ? (agent as { roleType?: string }).roleType
+      : 'WORKER';
     return roleType === 'MODERATOR';
   });
   const moderatorId = moderatorAgent?.id;
@@ -292,22 +295,27 @@ export const A2AStudioPage: React.FC = () => {
                                 components={{
                                   p: ({ children }) => <p className="mb-2 last:mb-0 text-gray-800 break-words">{children}</p>,
                                   pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-gray-100 rounded p-2">{children}</pre>,
-                                  code(props: any) {
-                                    const { node, inline, className, children, ...rest } = props;
+                                  code(props: unknown) {
+                                    const { inline, className, children, ...rest } = props as {
+                                      inline?: boolean;
+                                      className?: string;
+                                      children?: unknown;
+                                      [key: string]: unknown;
+                                    };
                                     const match = /language-(\w+)/.exec(className || '');
 
                                     if (!inline && match) {
                                       return (
                                         <div className="my-2 overflow-x-auto">
                                           <SyntaxHighlighter
-                                            {...rest}
+                                            {...(rest as any)}
                                             style={oneLight}
                                             language={match[1]}
                                             PreTag="div"
                                             customStyle={{ margin: 0, fontSize: '0.75rem' }}
                                             wrapLongLines={false}
                                           >
-                                            {String(children).replace(/\n$/, '')}
+                                            {String(children ?? '').replace(/\n$/, '')}
                                           </SyntaxHighlighter>
                                         </div>
                                       );
@@ -317,14 +325,14 @@ export const A2AStudioPage: React.FC = () => {
                                       return (
                                         <div className="my-2 overflow-x-auto">
                                           <SyntaxHighlighter
-                                            {...rest}
+                                            {...(rest as any)}
                                             style={oneLight}
                                             language="text"
                                             PreTag="div"
                                             customStyle={{ margin: 0, fontSize: '0.75rem' }}
                                             wrapLongLines={false}
                                           >
-                                            {String(children).replace(/\n$/, '')}
+                                            {String(children ?? '').replace(/\n$/, '')}
                                           </SyntaxHighlighter>
                                         </div>
                                       );
@@ -332,7 +340,7 @@ export const A2AStudioPage: React.FC = () => {
 
                                     return (
                                       <code className="px-1 py-0.5 bg-gray-200 rounded text-gray-800 font-mono text-xs break-all">
-                                        {children}
+                                        {children as any}
                                       </code>
                                     );
                                   },
@@ -398,7 +406,7 @@ export const A2AStudioPage: React.FC = () => {
                               )}
 
                               {/* 显示问题提示 */}
-                              {msg.type === 'question' && msg.waitingUser && (
+                              {msg.type === 'question' && (
                                 <div className="mb-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
                                   <div className="text-xs font-medium text-amber-900 flex items-center gap-1">
                                     <AlertCircle size={12} className="shrink-0" />
@@ -429,17 +437,22 @@ export const A2AStudioPage: React.FC = () => {
                                             components={{
                                               p: ({ children }) => <p className="mb-2 last:mb-0 break-words">{children}</p>,
                                               pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-gray-200 rounded p-2 text-xs">{children}</pre>,
-                                              code(props: any) {
-                                                const { node, inline, className, children, ...rest } = props;
+                                              code(props: unknown) {
+                                                const { inline, className, children, ...rest } = props as {
+                                                  inline?: boolean;
+                                                  className?: string;
+                                                  children?: unknown;
+                                                  [key: string]: unknown;
+                                                };
                                                 const match = /language-(\w+)/.exec(className || '');
-                                                const text = String(children);
+                                                const text = String(children ?? '');
 
                                                 // 有语言标记的代码块
                                                 if (!inline && match) {
                                                   return (
                                                     <div className="my-2 overflow-x-auto rounded">
                                                       <SyntaxHighlighter
-                                                        {...rest}
+                                                        {...(rest as any)}
                                                         style={oneLight}
                                                         language={match[1]}
                                                         PreTag="div"
@@ -458,7 +471,7 @@ export const A2AStudioPage: React.FC = () => {
                                                   if (!text.includes('\n') && text.length < 100) {
                                                     return (
                                                       <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
-                                                        {children}
+                                                        {children as any}
                                                       </code>
                                                     );
                                                   }
@@ -466,7 +479,7 @@ export const A2AStudioPage: React.FC = () => {
                                                   return (
                                                     <div className="my-2 overflow-x-auto rounded">
                                                       <SyntaxHighlighter
-                                                        {...rest}
+                                                        {...(rest as any)}
                                                         style={oneLight}
                                                         language="text"
                                                         PreTag="div"
@@ -482,7 +495,7 @@ export const A2AStudioPage: React.FC = () => {
                                                 // 行内代码
                                                 return (
                                                   <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
-                                                    {children}
+                                                    {children as any}
                                                   </code>
                                                 );
                                               },
@@ -516,17 +529,22 @@ export const A2AStudioPage: React.FC = () => {
                                                     components={{
                                                       p: ({ children }) => <p className="mb-2 last:mb-0 break-words">{children}</p>,
                                                       pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-gray-200 rounded p-2 text-xs">{children}</pre>,
-                                                      code(props: any) {
-                                                        const { node, inline, className, children, ...rest } = props;
+                                                      code(props: unknown) {
+                                                        const { inline, className, children, ...rest } = props as {
+                                                          inline?: boolean;
+                                                          className?: string;
+                                                          children?: unknown;
+                                                          [key: string]: unknown;
+                                                        };
                                                         const match = /language-(\w+)/.exec(className || '');
-                                                        const text = String(children);
+                                                        const text = String(children ?? '');
 
                                                         // 有语言标记的代码块
                                                         if (!inline && match) {
                                                           return (
                                                             <div className="my-2 overflow-x-auto rounded">
                                                               <SyntaxHighlighter
-                                                                {...rest}
+                                                                {...(rest as any)}
                                                                 style={oneLight}
                                                                 language={match[1]}
                                                                 PreTag="div"
@@ -545,7 +563,7 @@ export const A2AStudioPage: React.FC = () => {
                                                           if (!text.includes('\n') && text.length < 100) {
                                                             return (
                                                               <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
-                                                                {children}
+                                                                {children as any}
                                                               </code>
                                                             );
                                                           }
@@ -553,7 +571,7 @@ export const A2AStudioPage: React.FC = () => {
                                                           return (
                                                             <div className="my-2 overflow-x-auto rounded">
                                                               <SyntaxHighlighter
-                                                                {...rest}
+                                                                {...(rest as any)}
                                                                 style={oneLight}
                                                                 language="text"
                                                                 PreTag="div"
@@ -569,7 +587,7 @@ export const A2AStudioPage: React.FC = () => {
                                                         // 行内代码
                                                         return (
                                                           <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
-                                                            {children}
+                                                            {children as any}
                                                           </code>
                                                         );
                                                       },
@@ -608,128 +626,9 @@ export const A2AStudioPage: React.FC = () => {
                                 </div>
                               )}
 
-                              {/* Blackboard State */}
-                              {msg.isLoadingBlackboard && !msg.blackboardState && (
-                                <div className="mt-3 p-4 bg-purple-50 border border-purple-200 rounded-xl">
-                                  <div className="text-xs font-bold text-purple-700 flex items-center gap-2">
-                                    <Loader2 size={14} className="animate-spin" /> {t('a2a.creatingBlackboard')}
-                                  </div>
-                                </div>
-                              )}
-
                               {/* Tool Calls for this step */}
                               {msg.stepId && toolCallsByStepId[msg.stepId] && toolCallsByStepId[msg.stepId].length > 0 && (
                                 <ToolCallList toolCalls={toolCallsByStepId[msg.stepId]} />
-                              )}
-
-                              {msg.blackboardState && (
-                                <div className="mt-3 p-4 bg-purple-50 border border-purple-200 rounded-xl overflow-hidden">
-                                  <div className="text-xs font-bold text-purple-900 mb-2 flex items-center gap-2">
-                                    <Database size={14} /> {t('a2a.blackboardState')}
-                                  </div>
-                                  <div className="space-y-2 text-sm">
-                                    {msg.blackboardState.goal && (
-                                      <div>
-                                        <span className="text-gray-700 font-medium">{t('a2a.goal')}:</span>
-                                        <div className="text-gray-900 ml-2 break-words text-xs">
-                                          {msg.blackboardState.goal}
-                                        </div>
-                                      </div>
-                                    )}
-                                    {msg.blackboardState.constraints && msg.blackboardState.constraints.length > 0 && (
-                                      <div>
-                                        <span className="text-gray-700 font-medium">{t('a2a.constraints')}:</span>
-                                        <ul className="ml-6 mt-1 space-y-1">
-                                          {msg.blackboardState.constraints.map((item: string, i: number) => (
-                                            <li key={i} className="text-gray-800 list-disc text-xs break-words">
-                                              {item}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      </div>
-                                    )}
-                                    {msg.blackboardState.stages && msg.blackboardState.stages.length > 0 && (
-                                      <div>
-                                        <span className="text-gray-700 font-medium">{t('a2a.stages')}:</span>
-                                        <div className="ml-2 mt-1 space-y-1">
-                                          {msg.blackboardState.stages.map((stage: any, i: number) => (
-                                            <div key={i} className="flex items-start gap-2 text-xs">
-                                              <div className="shrink-0 mt-0.5">
-                                                {stage.status === 'DONE' && <CheckCircle size={12} className="text-green-600" />}
-                                                {stage.status === 'DOING' && <Loader2 size={12} className="text-purple-600 animate-spin" />}
-                                                {stage.status === 'BLOCKED' && <X size={12} className="text-red-600" />}
-                                                {stage.status === 'TODO' && <span className="w-3 h-3 rounded-full border border-gray-500 block" />}
-                                              </div>
-                                              <span className={clsx(
-                                                "font-medium break-words",
-                                                stage.status === 'DONE' && "text-green-700",
-                                                stage.status === 'DOING' && "text-purple-700",
-                                                stage.status === 'BLOCKED' && "text-red-700",
-                                                stage.status === 'TODO' && "text-gray-500"
-                                              )}>
-                                                {stage.id}: {stage.name}
-                                              </span>
-                                              {stage.id === msg.blackboardState.current_stage_id && (
-                                                <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] shrink-0 font-medium">{t('a2a.current')}</span>
-                                              )}
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-                                    {msg.blackboardState.assignment && (
-                                      <div>
-                                        <span className="text-gray-700 font-medium">{t('a2a.assignment')}:</span>
-                                        <div className="ml-2 mt-1 text-gray-800 space-y-1 text-xs">
-                                          {msg.blackboardState.assignment.next_agent_id && (
-                                            <div className="break-words">
-                                              <span className="text-purple-700 font-medium">{t('a2a.nextAgent')}:</span> {msg.blackboardState.assignment.next_agent_id}
-                                            </div>
-                                          )}
-                                          {msg.blackboardState.assignment.next_capability && (
-                                            <div className="break-words">
-                                              <span className="text-purple-700 font-medium">{t('a2a.capability')}:</span> {msg.blackboardState.assignment.next_capability}
-                                            </div>
-                                          )}
-                                          {msg.blackboardState.assignment.instruction && (
-                                            <div className="break-words">
-                                              <span className="text-gray-700 font-medium">{t('a2a.instruction')}:</span> <span>{msg.blackboardState.assignment.instruction}</span>
-                                            </div>
-                                          )}
-                                          {!msg.blackboardState.assignment.next_agent_id && msg.blackboardState.assignment.task && (
-                                            <div className="break-words">
-                                              <span className="text-gray-700 font-medium">{t('a2a.task')}:</span> <span>{msg.blackboardState.assignment.task}</span>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )}
-                                    {msg.blackboardState.open_questions && msg.blackboardState.open_questions.length > 0 && (
-                                      <div>
-                                        <span className="text-amber-700 font-medium">{t('a2a.openQuestions')}:</span>
-                                        <ul className="ml-6 mt-1 space-y-1">
-                                          {msg.blackboardState.open_questions.map((q: string, i: number) => (
-                                            <li key={i} className="text-amber-800 list-disc text-xs break-words">
-                                              {q}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      </div>
-                                    )}
-                                    {msg.blackboardState.decisions && msg.blackboardState.decisions.length > 0 && (
-                                      <div>
-                                        <span className="text-gray-700 font-medium">{t('a2a.decisions')}:</span>
-                                        <ul className="ml-6 mt-1 space-y-1">
-                                          {msg.blackboardState.decisions.slice(-3).map((d: string, i: number) => (
-                                            <li key={i} className="text-gray-800 list-disc text-xs break-words">
-                                              {d}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
                               )}
                             </div>
                           </div>

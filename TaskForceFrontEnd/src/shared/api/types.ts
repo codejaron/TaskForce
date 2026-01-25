@@ -149,15 +149,14 @@ export interface A2AMessage {
 
   // 新增字段：步骤和计划信息
   stepId?: string;
+  /**
+   * 原始 stepId（当 stepId 因去重被追加后缀时，用它来与后续事件/tool call 关联）
+   */
+  originalStepId?: string;
   stepIndex?: number;
   stepDescription?: string;
   planId?: string;
   goal?: string;
-
-  // 保留旧字段
-  blackboardState?: any;
-  waitingUser?: boolean;
-  isLoadingBlackboard?: boolean;
 }
 
 // ============= Token统计相关类型 =============
