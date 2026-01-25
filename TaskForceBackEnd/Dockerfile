@@ -63,13 +63,14 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     mv /root/.local/bin/uv /usr/local/bin/ && \
     mv /root/.local/bin/uvx /usr/local/bin/
 
-# 4. 安装 Node.js 20.x (加速下载)
+# 4. 安装 Node.js 20.x (使用官方源，带重试机制)
 ENV NODE_VERSION=20.11.0
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi && \
     if [ "$ARCH" = "x86_64" ]; then ARCH="x64"; fi && \
     echo "Detected architecture: $ARCH" && \
-    curl -fsSL https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.xz -o node.tar.xz && \
+    (curl -fsSL --retry 3 --retry-delay 5 https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.xz -o node.tar.xz || \
+     curl -fsSL --retry 3 --retry-delay 5 https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.xz -o node.tar.xz) && \
     tar -xJf node.tar.xz -C /usr/local --strip-components=1 && \
     rm node.tar.xz && \
     node --version && npm --version
