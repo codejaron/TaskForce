@@ -34,10 +34,16 @@ FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
 
-# 1. 替换 apt 源为阿里云镜像 (加速系统包安装)
-RUN sed -i 's/ports.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list && \
-    sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list && \
-    sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+# 1. 根据架构配置 apt 源（x86 使用阿里云加速，ARM 使用官方源）
+RUN ARCH=$(dpkg --print-architecture) && \
+    echo "Detected architecture: $ARCH" && \
+    if [ "$ARCH" = "amd64" ]; then \
+        echo "Using Aliyun mirrors for x86_64..." && \
+        sed -i 's|http://archive.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list && \
+        sed -i 's|http://security.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list; \
+    else \
+        echo "Using official Ubuntu Ports for ARM..."; \
+    fi
 
 # 2. 安装基础环境 (Python3, Git, Curl)
 RUN apt-get update && \
