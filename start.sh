@@ -64,7 +64,8 @@ $COMPOSE_CMD up -d --build
 # 从 .env 读取端口（不存在则用默认值）
 FRONTEND_PORT_VAL=${FRONTEND_PORT:-3000}
 BACKEND_PORT_VAL=${BACKEND_PORT:-8080}
-QDRANT_PORT_VAL=${QDRANT_PORT:-6333}
+REDIS_PORT_VAL=${REDIS_PORT:-6379}
+ROCKETMQ_DASHBOARD_PORT_VAL=${ROCKETMQ_DASHBOARD_PORT:-18080}
 
 echo ""
 echo -e "${GREEN}=========================================="
@@ -72,8 +73,13 @@ echo "  部署完成！"
 echo "==========================================${NC}"
 echo ""
 echo "服务访问地址："
-echo -e "  前端应用: ${GREEN}http://localhost:${FRONTEND_PORT_VAL}${NC}"
-echo -e "  后端 API: ${GREEN}http://localhost:${BACKEND_PORT_VAL}${NC}"
+echo -e "  前端应用:          ${GREEN}http://localhost:${FRONTEND_PORT_VAL}${NC}"
+echo -e "  后端 API:          ${GREEN}http://localhost:${BACKEND_PORT_VAL}${NC}"
+echo -e "  RocketMQ Dashboard: ${GREEN}http://localhost:${ROCKETMQ_DASHBOARD_PORT_VAL}${NC}"
+echo ""
+echo "内部服务端口："
+echo -e "  Redis:             ${GREEN}localhost:${REDIS_PORT_VAL}${NC}"
+echo -e "  MySQL:             ${GREEN}localhost:${MYSQL_PORT:-3306}${NC}"
 echo ""
 echo "查看服务状态："
 echo -e "  ${YELLOW}$COMPOSE_CMD ps${NC}"

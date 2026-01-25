@@ -25,7 +25,8 @@
 TaskForce/
 ├── TaskForceBackEnd/          # Spring Boot backend
 ├── TaskForceFrontEnd/         # React + Vite frontend
-├── docker-compose.yml         # Compose (MySQL/backend/frontend)
+├── docker-compose.yml         # Compose (MySQL/Redis/RocketMQ/backend/frontend)
+├── broker.conf                # RocketMQ Broker configuration
 ├── mcp-config.json            # MCP config (mounted into backend container)
 ├── mcp-tools/                 # MCP tools directory (mounted into backend container)
 ├── start.sh                   # One-command startup (auto-generates .env)
@@ -52,6 +53,7 @@ Common URLs after startup:
 
 - Frontend: http://localhost:3000 (default)
 - Backend: http://localhost:8080 (default)
+- RocketMQ Dashboard: http://localhost:18080 (default)
 
 ### Stop
 
@@ -76,11 +78,15 @@ cp .env.example .env
 |---|---|---|---|
 | `MYSQL_ROOT_PASSWORD` | MySQL root password | `TaskForce123456` (example) | MySQL container + backend DB password |
 | `MYSQL_PORT` | MySQL port mapped to host | `3306` | Port mapping only |
+| `REDIS_PORT` | Redis port mapped to host | `6379` | Port mapping only |
+| `ROCKETMQ_NAMESRV_PORT` | RocketMQ NameServer port | `9876` | Port mapping only |
+| `ROCKETMQ_BROKER_PORT` | RocketMQ Broker port | `10911` | Port mapping only |
+| `ROCKETMQ_DASHBOARD_PORT` | RocketMQ Dashboard port | `18080` | Port mapping only |
 | `BACKEND_PORT` | Backend port mapped to host | `8080` | Port mapping |
 | `SPRING_PROFILES_ACTIVE` | Spring profile | `local` | Backend runtime config |
 | `JAVA_OPTS` | JVM args | `-Xms512m -Xmx1024m` | Backend container JVM |
-| `FRONTEND_PORT` | Frontend port mapped to host | `3000` | Port mapping (nginx:80 in container) |
-| `VITE_API_BASE_URL` | API base URL used when building frontend | `http://localhost:8080` | Frontend build output |
+| `FRONTEND_PORT` | Frontend port mapped to host | `3000` | Port mapping (nginx:80 inside container) |
+| `VITE_API_BASE_URL` | API Base URL during frontend build | `http://localhost:8080` | Frontend build artifact |
 
 ## Local Development (Without Docker)
 

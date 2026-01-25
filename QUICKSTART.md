@@ -9,7 +9,8 @@
 TaskForce/
 ├── TaskForceBackEnd/          # Spring Boot 后端
 ├── TaskForceFrontEnd/         # React + Vite 前端
-├── docker-compose.yml         # Compose 编排（MySQL/后端/前端）
+├── docker-compose.yml         # Compose 编排（MySQL/Redis/RocketMQ/后端/前端）
+├── broker.conf                # RocketMQ Broker 配置文件
 ├── mcp-config.json            # MCP 配置（会挂载进后端容器）
 ├── mcp-tools/                 # MCP 工具目录（会挂载进后端容器）
 ├── start.sh                   # 一键启动（自动生成 .env）
@@ -36,6 +37,7 @@ TaskForce/
 
 - 前端：http://localhost:3000 （默认）
 - 后端：http://localhost:8080 （默认）
+- RocketMQ Dashboard：http://localhost:18080 （默认）
 
 ### 2.3 停止
 
@@ -60,6 +62,10 @@ cp .env.example .env
 |---|---|---|---|
 | `MYSQL_ROOT_PASSWORD` | MySQL root 密码 | `TaskForce123456`（示例） | MySQL 容器 + 后端连接密码 |
 | `MYSQL_PORT` | MySQL 映射到宿主机的端口 | `3306` | 仅端口映射 |
+| `REDIS_PORT` | Redis 映射到宿主机的端口 | `6379` | 仅端口映射 |
+| `ROCKETMQ_NAMESRV_PORT` | RocketMQ NameServer 端口 | `9876` | 仅端口映射 |
+| `ROCKETMQ_BROKER_PORT` | RocketMQ Broker 端口 | `10911` | 仅端口映射 |
+| `ROCKETMQ_DASHBOARD_PORT` | RocketMQ Dashboard 端口 | `18080` | 仅端口映射 |
 | `BACKEND_PORT` | 后端映射到宿主机端口 | `8080` | 端口映射 |
 | `SPRING_PROFILES_ACTIVE` | Spring profile | `local` | 后端运行配置 |
 | `JAVA_OPTS` | JVM 启动参数 | `-Xms512m -Xmx1024m` | 后端容器 JVM |
