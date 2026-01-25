@@ -53,6 +53,8 @@ services:
 
   # ========== Redis ==========
   redis:
+    # 使用阿里云镜像（如果 Docker Hub 访问有问题）
+    # image: registry.cn-hangzhou.aliyuncs.com/library/redis:7-alpine
     image: redis:7-alpine
     container_name: taskforce-redis
     restart: always
