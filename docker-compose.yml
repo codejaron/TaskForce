@@ -29,6 +29,8 @@ services:
     environment:
       NAMESRV_ADDR: namesrv:9876
       JAVA_OPT_EXT: "-Xms512m -Xmx512m"
+      ROCKETMQ_HOME: /home/rocketmq/rocketmq-5.1.0
+      HOME: /home/rocketmq
     command: sh mqbroker -c /home/rocketmq/rocketmq-5.1.0/conf/broker.conf
     depends_on:
       namesrv:
