@@ -7,7 +7,8 @@ WORKDIR /app
 COPY package*.json ./
 
 # 安装依赖
-RUN npm ci --only=production=false
+RUN npm ci --only=production=false && \
+    echo "✓ Dependencies installed successfully"
 
 # 复制源代码
 COPY . .
@@ -16,7 +17,11 @@ COPY . .
 ARG VITE_API_BASE_URL=http://localhost:8080
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
-RUN npm run build
+# 构建时显示详细信息
+RUN echo "Building with VITE_API_BASE_URL=${VITE_API_BASE_URL}" && \
+    npm run build && \
+    echo "✓ Build completed successfully" && \
+    ls -la dist/
 
 # 第二阶段：运行阶段
 FROM nginx:alpine
