@@ -23,6 +23,7 @@ services:
     image: apache/rocketmq:5.1.0
     platform: linux/amd64
     container_name: taskforce-broker
+    user: "0:0"
     restart: always
     ports:
       - "${ROCKETMQ_BROKER_PORT:-10911}:10911"
@@ -31,7 +32,11 @@ services:
       JAVA_OPT_EXT: "-Xms512m -Xmx512m"
       ROCKETMQ_HOME: /home/rocketmq/rocketmq-5.1.0
       HOME: /home/rocketmq
-    command: sh mqbroker -c /home/rocketmq/rocketmq-5.1.0/conf/broker.conf
+    command: >
+      sh -c "
+        mkdir -p /home/rocketmq/store/config /home/rocketmq/store/commitlog /home/rocketmq/logs &&
+        sh mqbroker -c /home/rocketmq/rocketmq-5.1.0/conf/broker.conf
+      "
     depends_on:
       namesrv:
         condition: service_healthy
@@ -109,7 +114,7 @@ services:
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-TaskForce123456}
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+      SPRING_PROFILES_ACTIVE: docker
       JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx1024m}
       # RocketMQ
       ROCKETMQ_NAMESRV: namesrv:9876
