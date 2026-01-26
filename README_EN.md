@@ -4,7 +4,7 @@
 
 ## 🚧 Disclaimer
 
-This project is in early development stage, primarily for personal learning and technical exploration. The code may contain bugs, and interfaces may change. Welcome to learn and exchange ideas, but please do not use in production environments.
+This project is in the early stages of development and is intended primarily for personal study and technical exploration. The code may have bugs, welcome to learn and communicate.
 
 ## Introduction
 TaskForce is an AI Agent platform based on Plan-Execute architecture, supporting MCP tool integration.
