@@ -76,14 +76,18 @@ public class StateManager {
     }
 
     /**
-     * 保存计划（双写：DB + Redis）
+     * 保存计划（更新DB + 删除缓存）
      */
     public void savePlan(ExecutionPlan plan) {
         plan.setUpdatedAt(LocalDateTime.now());
         planRepository.save(plan);
 
-        // 再更新 Redis，保证读一致
-        cachePlan(plan.getSessionId(), plan);
+        // 删除 Redis 缓存，让下次读取时从 DB 加载最新数据
+        try {
+            redisTemplate.delete(planCacheKey(plan.getSessionId()));
+        } catch (Exception e) {
+            log.warn("[StateManager] Failed to evict plan cache: sessionId={}", plan.getSessionId(), e);
+        }
     }
 
     /**
