@@ -60,18 +60,6 @@ public class ToolProviderConfig {
      */
     private String env;
 
-    // ========== NATIVE 类型配置 ==========
-
-    /**
-     * Spring Bean 名称
-     */
-    private String beanName;
-
-    /**
-     * 工具类全限定名
-     */
-    private String className;
-
     // ========== REMOTE_SSE 类型配置 ==========
 
     /**
@@ -128,11 +116,6 @@ public class ToolProviderConfig {
          * STDIO 模式（npx 子进程）
          */
         STDIO,
-
-        /**
-         * 原生 Java 工具
-         */
-        NATIVE,
 
         /**
          * 远程 SSE 服务

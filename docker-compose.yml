@@ -121,11 +121,11 @@ services:
       # Redis
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # MCP Server
+      MCP_SERVER_URL: http://mcp-server:8082
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     volumes:
-      - ./mcp-config.json:/app/mcp-config.json
-      - ./mcp-tools:/app/mcp-tools:ro
       - ./workspace:/app/workspace
     depends_on:
       mysql:
@@ -136,6 +136,29 @@ services:
         condition: service_healthy
       broker:
         condition: service_started
+      mcp-server:
+        condition: service_healthy
+    networks:
+      - taskforce-network
+
+  mcp-server:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    container_name: taskforce-mcp-server
+    restart: always
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/mcp_server?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-TaskForce123456}
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
+      SPRING_PROFILES_ACTIVE: docker
+      JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx512m}
+    ports:
+      - "${MCP_SERVER_PORT:-8082}:8082"
+    depends_on:
+      mysql:
+        condition: service_healthy
     networks:
       - taskforce-network
 

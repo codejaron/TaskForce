@@ -1,10 +1,12 @@
 package com.agent.mcpserver.controller;
 
 import com.agent.mcpserver.dto.ApiResponse;
+import com.agent.mcpserver.dto.ProviderConfigRequest;
 import com.agent.mcpserver.dto.ToolDefinition;
 import com.agent.mcpserver.entity.ToolProviderConfig;
 import com.agent.mcpserver.service.ToolProviderConfigService;
 import com.agent.mcpserver.service.ToolRouter;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -24,6 +26,7 @@ public class ProviderController {
 
     private final ToolRouter toolRouter;
     private final ToolProviderConfigService configService;
+    private final ObjectMapper objectMapper;
 
     /**
      * 获取所有提供者列表
@@ -57,23 +60,51 @@ public class ProviderController {
      * 添加新的提供者
      */
     @PostMapping
-    public ApiResponse<Map<String, Object>> addProvider(@RequestBody ToolProviderConfig config) {
+    public ApiResponse<Map<String, Object>> addProvider(@RequestBody ProviderConfigRequest request) {
+        ToolProviderConfig savedConfig = null;
         try {
-            log.info("[ProviderController] Adding provider: {} ({})", config.getName(), config.getType());
+            log.info("[ProviderController] Adding provider: {} ({})", request.getName(), request.getType());
             
-            // 保存配置
-            ToolProviderConfig savedConfig = configService.addConfig(config);
+            // 转换为实体类
+            ToolProviderConfig config = request.toEntity(objectMapper);
             
-            // 注册到路由器
-            toolRouter.registerProvider(savedConfig);
-
-            return ApiResponse.success(Map.of(
-                    "success", true,
-                    "providerId", savedConfig.getId(),
-                    "toolCount", toolRouter.listToolsByProvider(savedConfig.getId()).size()
-            ));
+            // 保存配置到数据库
+            savedConfig = configService.addConfig(config);
+            
+            // 尝试注册到路由器
+            try {
+                toolRouter.registerProvider(savedConfig);
+                
+                int toolCount = toolRouter.listToolsByProvider(savedConfig.getId()).size();
+                return ApiResponse.success(Map.of(
+                        "success", true,
+                        "providerId", savedConfig.getId(),
+                        "toolCount", toolCount
+                ));
+            } catch (Exception e) {
+                // 注册失败，更新数据库状态
+                log.error("[ProviderController] Failed to register provider: {}", request.getName(), e);
+                configService.updateConnectionStatus(
+                        savedConfig.getId(), 
+                        false, 
+                        0, 
+                        "Failed to initialize: " + e.getMessage()
+                );
+                
+                return ApiResponse.error("Provider saved but failed to connect: " + e.getMessage());
+            }
         } catch (Exception e) {
             log.error("[ProviderController] Add provider failed", e);
+            
+            // 如果已保存到数据库，尝试清理
+            if (savedConfig != null) {
+                try {
+                    configService.deleteConfig(savedConfig.getId());
+                } catch (Exception cleanupEx) {
+                    log.error("[ProviderController] Failed to cleanup after error", cleanupEx);
+                }
+            }
+            
             return ApiResponse.error(e.getMessage());
         }
     }
@@ -105,9 +136,12 @@ public class ProviderController {
      * 测试提供者连接
      */
     @PostMapping("/test")
-    public ApiResponse<Map<String, Object>> testConnection(@RequestBody ToolProviderConfig config) {
+    public ApiResponse<Map<String, Object>> testConnection(@RequestBody ProviderConfigRequest request) {
         try {
-            log.info("[ProviderController] Testing provider: {} ({})", config.getName(), config.getType());
+            log.info("[ProviderController] Testing provider: {} ({})", request.getName(), request.getType());
+            
+            // 转换为实体类
+            ToolProviderConfig config = request.toEntity(objectMapper);
             
             // 创建临时 ID 用于测试
             String testId = "test_" + System.currentTimeMillis();

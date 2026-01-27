@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS tool_provider_config (
     id VARCHAR(64) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
-    type VARCHAR(32) NOT NULL COMMENT 'STDIO, NATIVE, REMOTE_SSE',
+    type VARCHAR(32) NOT NULL COMMENT 'STDIO, REMOTE_SSE',
     enabled BOOLEAN DEFAULT TRUE,
     description TEXT,
     
@@ -12,10 +12,6 @@ CREATE TABLE IF NOT EXISTS tool_provider_config (
     command VARCHAR(255) COMMENT '启动命令',
     args TEXT COMMENT '命令参数 (JSON 数组)',
     env TEXT COMMENT '环境变量 (JSON 对象)',
-    
-    -- NATIVE 类型配置
-    bean_name VARCHAR(255) COMMENT 'Spring Bean 名称',
-    class_name VARCHAR(512) COMMENT '工具类全限定名',
     
     -- REMOTE_SSE 类型配置
     sse_url VARCHAR(1024) COMMENT '远程 SSE 服务 URL',

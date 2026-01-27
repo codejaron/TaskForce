@@ -26,20 +26,15 @@ WORKDIR /app
 # Copy the built jar
 COPY --from=build /app/target/*.jar app.jar
 
-# Copy config file
-COPY mcp-server-config.json ./mcp-server-config.json
-
 # Environment variables
 ENV JAVA_OPTS="-Xms256m -Xmx512m"
-ENV MCP_CONFIG_SOURCE=file
-ENV MCP_CONFIG_PATH=./mcp-server-config.json
 
 # Expose port
-EXPOSE 8081
+EXPOSE 8082
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:8081/actuator/health || exit 1
+  CMD curl -f http://localhost:8082/actuator/health || exit 1
 
 # Run the application
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

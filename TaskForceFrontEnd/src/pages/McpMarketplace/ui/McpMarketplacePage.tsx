@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMcpStore } from '../../../features/mcp/model/store';
+import { api } from '../../../shared/api';
 import {
   Server,
   Database,
@@ -60,8 +61,8 @@ export const McpMarketplacePage: React.FC = () => {
 
   const TEMPLATE_NPX = `{
   "command": "npx",
-  "args": ["-y", "@modelcontextprotocol/server-name", "/path"],
-  "description": "NPX MCP 工具描述",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+  "description": "Filesystem MCP Server",
   "enabled": true
 }`;
 
@@ -76,13 +77,12 @@ export const McpMarketplacePage: React.FC = () => {
 }`;
 
   const TEMPLATE_ENV_VARS = `{
-  "command": "python3",
-  "args": ["-m", "mcp_server_github"],
-  "description": "GitHub API 工具",
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-github"],
+  "description": "GitHub MCP Server",
   "enabled": true,
   "env": {
-    "GITHUB_TOKEN": "\${GITHUB_TOKEN}",
-    "API_KEY": "\${API_KEY}"
+    "GITHUB_TOKEN": "\${GITHUB_TOKEN}"
   }
 }`;
 
@@ -100,27 +100,56 @@ export const McpMarketplacePage: React.FC = () => {
       }
 
       // Validate required fields
-      if (!config.command) {
-        setJsonError('缺少必填字段: command');
+      if (!config.command && !config.sseUrl) {
+        setJsonError('缺少必填字段: command 或 sseUrl');
         return;
       }
 
-      // Send to backend
-      const response = await fetch('/api/mcp/json-config/add', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          toolKey: toolKeyInput.trim(),
-          config: config
-        })
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to add tool');
+      // Auto-detect type based on config (compatible with common formats)
+      const type = config.sseUrl ? 'SSE' : 'STDIO';
+      
+      // Generate name from toolKey or command
+      let serverName = toolKeyInput.trim();
+      if (!serverName) {
+        // Auto-generate name from command or description
+        if (config.command) {
+          const cmdParts = config.command.split('/');
+          serverName = cmdParts[cmdParts.length - 1];
+          if (config.args && config.args.length > 0) {
+            const firstArg = config.args[0];
+            if (firstArg.startsWith('-m')) {
+              serverName = config.args[1] || serverName;
+            } else if (firstArg.includes('server')) {
+              serverName = firstArg.replace(/[@\/]/g, '-');
+            }
+          }
+        } else if (config.sseUrl) {
+          const url = new URL(config.sseUrl);
+          serverName = url.hostname.split('.')[0];
+        }
+        serverName = serverName || 'unnamed-server';
       }
+      
+      // Build server config for new API (only include fields that exist in original config)
+      const serverConfig: any = {
+        name: serverName,
+        type: type,
+        enabled: config.enabled !== false,
+        description: config.description || ''
+      };
+
+      if (type === 'STDIO') {
+        serverConfig.command = config.command;
+        if (config.args) serverConfig.args = config.args;
+        if (config.env) serverConfig.env = config.env;
+      } else {
+        serverConfig.sseUrl = config.sseUrl;
+        if (config.headers) serverConfig.headers = config.headers;
+        if (config.timeout) serverConfig.timeout = config.timeout;
+      }
+
+      // Use the new API
+      await api.mcp.registerServer(serverConfig);
 
       // Close modal and reset
       setShowJsonEditor(false);
@@ -128,23 +157,9 @@ export const McpMarketplacePage: React.FC = () => {
       setToolKeyInput('');
       setJsonError('');
 
-      // Poll for the new tool to appear (backend needs time to reload config)
-      const pollInterval = 300; // Check every 300ms
-      const maxAttempts = 10; // Try for up to 3 seconds
-      let attempts = 0;
-
-      const checkForNewTool = async () => {
-        await fetchServers();
-        await fetchTools();
-        attempts++;
-
-        if (attempts < maxAttempts) {
-          setTimeout(checkForNewTool, pollInterval);
-        }
-      };
-
-      // Start polling after a short delay
-      setTimeout(checkForNewTool, 500);
+      // Refresh data
+      await fetchServers();
+      await fetchTools();
 
     } catch (error: unknown) {
       const err = error as Error;
@@ -429,13 +444,10 @@ export const McpMarketplacePage: React.FC = () => {
                     setJsonError('');
                   }}
                   placeholder={`{
-  "command": "python3",
-  "args": ["-m", "mcp_server_github"],
-  "description": "GitHub API 工具",
-  "enabled": true,
-  "env": {
-    "GITHUB_TOKEN": "\${GITHUB_TOKEN}"
-  }
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+  "description": "Filesystem MCP Server",
+  "enabled": true
 }`}
                   className="w-full bg-white border border-gray-300 rounded-lg px-4 py-3 text-gray-900 font-mono text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none shadow-sm"
                   rows={15}

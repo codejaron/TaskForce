@@ -1,35 +1,41 @@
 server:
-  port: 8081
+  port: 8082
 
 spring:
   application:
     name: mcp-server
-  
-  # 数据源配置
+  profiles:
+    active: local
+
+  # ========== 数据源配置 ==========
   datasource:
-    # 默认使用 H2 内存数据库（开发环境）
-    url: ${DB_URL:jdbc:h2:mem:mcpserver;DB_CLOSE_DELAY=-1;MODE=MySQL}
-    driver-class-name: ${DB_DRIVER:org.h2.Driver}
-    username: ${DB_USERNAME:sa}
-    password: ${DB_PASSWORD:}
-  
-  # H2 控制台（开发环境）
-  h2:
-    console:
-      enabled: ${H2_CONSOLE_ENABLED:true}
-      path: /h2-console
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/mcp_server?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    druid:
+      initial-size: 5
+      min-idle: 5
+      max-active: 20
+      max-wait: 60000
+      validation-query: SELECT 1
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
 
-  # JPA 配置
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: false
+  # ========== SQL 初始化 ==========
+  sql:
+    init:
+      mode: always  # 改为never，只在首次部署时手动执行schema.sql
+      schema-locations: classpath:schema.sql
+      continue-on-error: true
 
-# MyBatis-Plus 配置
+# ========== MyBatis-Plus 配置 ==========
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
   global-config:
     db-config:
       id-type: assign_uuid
@@ -37,21 +43,20 @@ mybatis-plus:
       logic-delete-value: 1
       logic-not-delete-value: 0
 
-# MCP Server 配置
+# ========== MCP Server 配置 ==========
 mcp:
-  # 配置来源：database, file, both
-  config-source: ${MCP_CONFIG_SOURCE:file}
-  # 配置文件路径
-  config-path: ${MCP_CONFIG_PATH:./mcp-server-config.json}
+  # Native 工具扫描包路径
+  native:
+    scan-packages: ${MCP_NATIVE_SCAN_PACKAGES:com.agent.mcpserver.tool}
 
-# 日志配置
+# ========== 日志配置 ==========
 logging:
   level:
     root: INFO
     com.agent.mcpserver: DEBUG
     io.modelcontextprotocol: DEBUG
 
-# Actuator 健康检查
+# ========== Actuator 健康检查 ==========
 management:
   endpoints:
     web:

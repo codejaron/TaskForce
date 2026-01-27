@@ -2,10 +2,10 @@ package com.agent.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.agent.client.RemoteMcpClient;
 import com.agent.dto.AgentToolDetail;
 import com.agent.entity.AgentTool;
 import com.agent.mapper.AgentToolMapper;
-import com.agent.mcp.McpToolRegistry;
 import com.agent.model.ToolInfo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
  * 职责：
  * 1. 管理Agent与MCP工具的多对多关联
  * 2. 支持工具的启用/禁用
- * 3. 验证工具有效性（工具必须在McpToolRegistry中存在）
+ * 3. 验证工具有效性（工具必须在远程 mcp-server 中存在）
  */
 @Slf4j
 @Service
@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
 public class AgentToolService {
 
     private final AgentToolMapper agentToolMapper;
-    private final McpToolRegistry mcpToolRegistry;
+    private final RemoteMcpClient remoteMcpClient;
 
     /**
      * 为Agent添加工具
@@ -41,9 +41,13 @@ public class AgentToolService {
      */
     @Transactional
     public AgentTool addToolToAgent(Long agentId, String toolId) {
-        // 1. 验证工具是否存在
-        if (mcpToolRegistry.getToolCallback(toolId).isEmpty()) {
-            throw new RuntimeException("Tool not found in registry: " + toolId);
+        // 1. 验证工具是否存在（从远程 mcp-server 获取）
+        List<ToolInfo> availableTools = remoteMcpClient.listTools();
+        boolean toolExists = availableTools.stream()
+                .anyMatch(tool -> tool.getId().equals(toolId));
+        
+        if (!toolExists) {
+            throw new RuntimeException("Tool not found in mcp-server: " + toolId);
         }
 
         // 2. 检查是否已存在
@@ -89,14 +93,17 @@ public class AgentToolService {
         }
 
         // 3. 验证并插入新工具
+        List<ToolInfo> availableTools = remoteMcpClient.listTools();
         int validCount = 0;
         for (String toolId : toolIds) {
             log.debug("Checking tool: {}", toolId);
 
             // 验证工具是否存在
-            var callbackOpt = mcpToolRegistry.getToolCallback(toolId);
-            if (callbackOpt.isEmpty()) {
-                log.warn("Tool not found in registry, skipping: {} (agentId={})", toolId, agentId);
+            boolean toolExists = availableTools.stream()
+                    .anyMatch(tool -> tool.getId().equals(toolId));
+            
+            if (!toolExists) {
+                log.warn("Tool not found in mcp-server, skipping: {} (agentId={})", toolId, agentId);
                 continue; // 跳过不存在的工具，而不是抛异常
             }
 
@@ -176,8 +183,8 @@ public class AgentToolService {
 
         List<AgentTool> agentTools = agentToolMapper.selectList(wrapper);
 
-        // 获取所有可用工具的完整信息
-        List<ToolInfo> availableTools = mcpToolRegistry.listAvailableTools();
+        // 获取所有可用工具的完整信息（从远程 mcp-server）
+        List<ToolInfo> availableTools = remoteMcpClient.listTools();
 
         return agentTools.stream()
                 .map(at -> {
@@ -211,9 +218,13 @@ public class AgentToolService {
                 new LambdaQueryWrapper<AgentTool>().eq(AgentTool::getAgentId, agentId)
         );
 
+        List<ToolInfo> availableTools = remoteMcpClient.listTools();
         int cleaned = 0;
         for (AgentTool agentTool : agentTools) {
-            if (mcpToolRegistry.getToolCallback(agentTool.getToolId()).isEmpty()) {
+            boolean toolExists = availableTools.stream()
+                    .anyMatch(tool -> tool.getId().equals(agentTool.getToolId()));
+            
+            if (!toolExists) {
                 agentToolMapper.deleteById(agentTool.getId());
                 cleaned++;
                 log.warn("Cleaned invalid tool: agentId={}, toolId={}", agentId, agentTool.getToolId());

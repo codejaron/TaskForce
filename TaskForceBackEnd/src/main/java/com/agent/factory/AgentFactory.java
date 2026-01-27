@@ -1,5 +1,6 @@
 package com.agent.factory;
 
+import com.agent.client.RemoteMcpClient;
 import com.agent.config.AutoToolConfiguration;
 import com.agent.config.EventPublishingFunctionCallback;
 import com.agent.config.EventPublishingToolCallback;
@@ -8,7 +9,6 @@ import com.agent.service.AgentToolService;
 import com.agent.entity.Agent;
 import com.agent.mapper.AgentMapper;
 import com.agent.mapper.LLMProviderMapper;
-import com.agent.mcp.McpToolRegistry;
 import com.agent.service.ToolCallService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Service
 public class AgentFactory {
 
-    private final McpToolRegistry mcpToolRegistry;
+    private final RemoteMcpClient remoteMcpClient;
     private final AutoToolConfiguration autoToolConfiguration; // 原生工具配置
     private final ChatModelFactory chatModelFactory; // 动态模型工厂
     private final AgentMapper agentMapper;
@@ -53,7 +53,7 @@ public class AgentFactory {
 
     // 使用构造函数注入，对 AutoToolConfiguration 使用 @Lazy 打破循环依赖
     public AgentFactory(
-            McpToolRegistry mcpToolRegistry,
+            RemoteMcpClient remoteMcpClient,
             @Lazy AutoToolConfiguration autoToolConfiguration,
             ChatModelFactory chatModelFactory,
             AgentMapper agentMapper,
@@ -61,7 +61,7 @@ public class AgentFactory {
             AgentToolService agentToolService,
             EventBus eventBus,
             @Lazy ToolCallService toolCallService) {
-        this.mcpToolRegistry = mcpToolRegistry;
+        this.remoteMcpClient = remoteMcpClient;
         this.autoToolConfiguration = autoToolConfiguration;
         this.chatModelFactory = chatModelFactory;
         this.agentMapper = agentMapper;
@@ -132,23 +132,23 @@ public class AgentFactory {
         List<FunctionCallback> allTools = new ArrayList<>();
         AtomicInteger sequenceCounter = new AtomicInteger(0);
 
-        // 8.1 添加 MCP 工具（从数据库加载）
+        // 8.1 添加远程 MCP 工具（从 mcp-server 获取）
         List<String> enabledToolIds = agentToolService.getEnabledToolIds(agentId);
         if (!enabledToolIds.isEmpty()) {
-            ToolCallback[] mcpCallbacks = mcpToolRegistry.getToolCallbacks(enabledToolIds);
-            if (mcpCallbacks.length > 0) {
-                for (ToolCallback callback : mcpCallbacks) {
-                    // 获取 serverName
-                    String serverName = getServerNameForTool(callback.getName(), enabledToolIds);
+            ToolCallback[] remoteTools = remoteMcpClient.getToolCallbacks(enabledToolIds);
+            if (remoteTools.length > 0) {
+                for (ToolCallback callback : remoteTools) {
+                    // 获取 serverName（从 toolId 中提取 providerName）
+                    String serverName = extractProviderName(callback.getName());
                     // 包装为事件发布回调
                     ToolCallback wrapped = wrapWithEventPublishing(
                             callback, sessionId, stepId, agentId, serverName, sequenceCounter
                     );
                     allTools.add(wrapped);
                 }
-                log.info("  Attached {} MCP tools (with event publishing)", mcpCallbacks.length);
+                log.info("  Attached {} remote MCP tools (with event publishing)", remoteTools.length);
             } else {
-                log.warn("  No valid MCP tools found (tools may have been removed)");
+                log.warn("  No valid remote MCP tools found");
             }
         }
 
@@ -219,19 +219,13 @@ public class AgentFactory {
     }
 
     /**
-     * 根据工具名称从 enabledToolIds 中获取 serverName
+     * 从工具 ID 中提取 Provider 名称
+     * 格式: {providerName}::{toolName}
      */
-    private String getServerNameForTool(String toolName, List<String> enabledToolIds) {
-        for (String toolId : enabledToolIds) {
-            // toolId 格式: serverId::toolName
-            if (toolId.endsWith("::" + toolName)) {
-                String serverId = toolId.substring(0, toolId.indexOf("::"));
-                // 从 McpToolRegistry 获取 serverName
-                return mcpToolRegistry.getServer(serverId)
-                        .map(def -> def.getName())
-                        .orElse(serverId);
-            }
+    private String extractProviderName(String toolId) {
+        if (toolId != null && toolId.contains("::")) {
+            return toolId.substring(0, toolId.indexOf("::"));
         }
-        return null;
+        return "unknown";
     }
 }

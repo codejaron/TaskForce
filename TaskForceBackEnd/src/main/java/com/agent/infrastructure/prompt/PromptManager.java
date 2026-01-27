@@ -6,7 +6,7 @@ import com.agent.entity.Message;
 import com.agent.model.AgentProfile;
 import com.agent.model.ToolInfo;
 import com.agent.service.AgentToolService;
-import com.agent.mcp.McpToolRegistry;
+import com.agent.client.RemoteMcpClient;
 import com.agent.util.ArtifactParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,7 +27,7 @@ import java.util.stream.Collectors;
 public class PromptManager {
 
     private final AgentToolService agentToolService;
-    private final McpToolRegistry mcpToolRegistry;
+    private final RemoteMcpClient remoteMcpClient;
 
 
     /**
@@ -392,9 +392,10 @@ public class PromptManager {
                 return List.of();
             }
 
-            // 从 McpToolRegistry 获取工具信息
+            // 从远程 mcp-server 获取工具信息
+            List<ToolInfo> availableTools = remoteMcpClient.listTools();
             return toolIds.stream()
-                .map(toolId -> mcpToolRegistry.listAvailableTools().stream()
+                .map(toolId -> availableTools.stream()
                     .filter(tool -> tool.getId().equals(toolId))
                     .findFirst()
                     .orElse(null))

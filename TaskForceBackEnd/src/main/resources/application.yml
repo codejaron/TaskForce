@@ -94,10 +94,8 @@ management:
 
 # ========== MCP 工具配置 ==========
 mcp:
-  json:
-    config-path: ./mcp-config.json     # JSON 配置文件路径
-    auto-reload: true                   # 是否自动热加载
-    polling-interval: 5000              # 轮询间隔（毫秒），仅在 Docker 环境生效
+  server:
+    url: ${MCP_SERVER_URL:http://localhost:8082}  # mcp-server 服务地址
 
 # ========== RocketMQ 配置 ==========
 rocketmq:

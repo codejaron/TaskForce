@@ -101,7 +101,6 @@ public abstract class AbstractToolProvider implements ToolProvider {
     private ToolDefinition.ToolSourceType convertProviderType(ToolProviderConfig.ProviderType type) {
         return switch (type) {
             case STDIO -> ToolDefinition.ToolSourceType.STDIO;
-            case NATIVE -> ToolDefinition.ToolSourceType.NATIVE;
             case REMOTE_SSE -> ToolDefinition.ToolSourceType.REMOTE_SSE;
         };
     }

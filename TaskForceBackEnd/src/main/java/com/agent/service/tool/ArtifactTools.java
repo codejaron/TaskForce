@@ -30,7 +30,7 @@ public class ArtifactTools {
      * 查询指定 key 的 Artifact 完整内容
      */
     @Tool(
-        name = "query_artifact",
+        name = "native::query_artifact",
         description = "查询指定 key 的 Artifact 完整内容。当你需要查看某个 Artifact 的详细内容时使用此工具。参数: key (string, required) - Artifact 的键名"
     )
     public Map<String, Object> queryArtifact(@JsonProperty(value = "key", required = true) String key) {
@@ -81,7 +81,7 @@ public class ArtifactTools {
      * 列出当前会话中所有可用的 Artifact
      */
     @Tool(
-        name = "list_artifacts",
+        name = "native::list_artifacts",
         description = "列出当前会话中所有可用的 Artifact keys 和摘要。用于了解有哪些数据可用。无需参数。"
     )
     public Map<String, Object> listArtifacts() {
@@ -138,7 +138,7 @@ public class ArtifactTools {
      * 根据关键词搜索 Artifact
      */
     @Tool(
-        name = "search_artifacts",
+        name = "native::search_artifacts",
         description = "根据关键词搜索 Artifact。返回包含关键词的 Artifact keys。参数: keyword (string, required) - 搜索关键词。"
     )
     public Map<String, Object> searchArtifacts(@JsonProperty(value = "keyword", required = true) String keyword) {
