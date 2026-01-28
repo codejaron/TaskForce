@@ -176,6 +176,9 @@ export default {
     current: '当前',
     stop: '停止',
     stopGeneration: '停止生成',
+    deleteSession: '删除会话',
+    confirmDelete: '确认删除',
+    deleteMessage: '确定要删除这个会话吗？此操作无法撤销。',
   },
   sessionModal: {
     title: '创建会话',

@@ -9,6 +9,7 @@ import com.agent.mcpserver.service.ToolRouter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -27,6 +28,7 @@ public class ProviderController {
     private final ToolRouter toolRouter;
     private final ToolProviderConfigService configService;
     private final ObjectMapper objectMapper;
+    private final RocketMQTemplate rocketMQTemplate;
 
     /**
      * 获取所有提供者列表
@@ -75,6 +77,9 @@ public class ProviderController {
             try {
                 toolRouter.registerProvider(savedConfig);
                 
+                // 通知其他实例同步
+                rocketMQTemplate.syncSend("mcp-provider-sync", "add:" + savedConfig.getId());
+
                 int toolCount = toolRouter.listToolsByProvider(savedConfig.getId()).size();
                 return ApiResponse.success(Map.of(
                         "success", true,
@@ -124,6 +129,9 @@ public class ProviderController {
             if (!providerId.startsWith("file::")) {
                 configService.deleteConfig(providerId);
             }
+
+            // 通知其他实例同步
+            rocketMQTemplate.syncSend("mcp-provider-sync", "delete:" + providerId);
 
             return ApiResponse.success(Map.of("success", true));
         } catch (Exception e) {

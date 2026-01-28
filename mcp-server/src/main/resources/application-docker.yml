@@ -26,6 +26,10 @@ spring:
       schema-locations: classpath:schema.sql
       continue-on-error: true
 
+# ========== RocketMQ 配置 ==========
+rocketmq:
+  name-server: namesrv:9876
+
 # ========== 日志配置 ==========
 logging:
   level:

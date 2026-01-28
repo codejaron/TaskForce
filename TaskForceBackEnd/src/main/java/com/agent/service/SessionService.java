@@ -77,16 +77,6 @@ public class SessionService {
     }
     
     /**
-     * 增加会话轮次
-     */
-    @Transactional
-    public void incrementRound(String sessionId) {
-        Session session = getSessionById(sessionId);
-        session.setCurrentRound(session.getCurrentRound() + 1);
-        sessionMapper.updateById(session);
-    }
-    
-    /**
      * 查询所有会话
      */
     public List<Session> getAllSessions() {

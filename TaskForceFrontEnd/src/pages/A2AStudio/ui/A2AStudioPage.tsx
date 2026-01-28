@@ -22,7 +22,8 @@ import {
   StopCircle,
   ClipboardList,
   AlertCircle,
-  MapPin
+  MapPin,
+  Trash2
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
@@ -32,7 +33,7 @@ import remarkGfm from 'remark-gfm';
 import type { Session } from '../../../shared/api/types';
 
 export const A2AStudioPage: React.FC = () => {
-  const { sessions, currentSession, messages, toolCallsByStepId, workflowStatus, fetchSessions, selectSession, startGroupChatV2, disconnectStream, stopStream } = useA2AStore();
+  const { sessions, currentSession, messages, toolCallsByStepId, workflowStatus, fetchSessions, selectSession, startGroupChatV2, disconnectStream, stopStream, deleteSession } = useA2AStore();
   const { agents, fetchAgents } = useAgentStore();
   const { t } = useTranslation();
 
@@ -157,6 +158,19 @@ export const A2AStudioPage: React.FC = () => {
     await stopStream();
   };
 
+  const handleDelete = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent triggering the session selection
+
+    if (window.confirm(t('a2a.deleteMessage'))) {
+      try {
+        await deleteSession(sessionId);
+      } catch (error) {
+        console.error('Failed to delete session:', error);
+        alert('Failed to delete session');
+      }
+    }
+  };
+
   const toggleAgentSelection = (agentId: string) => {
     setSelectedAgentIds(prev =>
       prev.includes(agentId)
@@ -208,18 +222,29 @@ export const A2AStudioPage: React.FC = () => {
               </div>
             ) : (
               sessions.map((session: Session) => (
-                <button
+                <div
                   key={session.id}
-                  onClick={() => selectSession(session)}
                   className={clsx(
-                    "w-full px-3 py-2 rounded-lg text-left transition-colors duration-200 cursor-pointer",
+                    "relative group w-full rounded-lg transition-colors duration-200",
                     currentSession?.id === session.id
                       ? "bg-purple-50 border border-purple-200"
                       : "hover:bg-gray-100 border border-transparent"
                   )}
                 >
-                  <span className="font-medium text-gray-900 text-sm truncate block">{session.name}</span>
-                </button>
+                  <button
+                    onClick={() => selectSession(session)}
+                    className="w-full px-3 py-2 text-left cursor-pointer"
+                  >
+                    <span className="font-medium text-gray-900 text-sm truncate block pr-8">{session.name}</span>
+                  </button>
+                  <button
+                    onClick={(e) => handleDelete(session.id, e)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 text-gray-400 rounded transition-all duration-200 cursor-pointer"
+                    title={t('a2a.deleteSession')}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               ))
             )}
           </div>

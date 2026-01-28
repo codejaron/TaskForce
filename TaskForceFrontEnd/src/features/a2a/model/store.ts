@@ -14,6 +14,7 @@ interface A2AState {
   fetchSessions: () => Promise<void>;
   selectSession: (session: Session) => Promise<void>;
   clearSession: () => void;
+  deleteSession: (sessionId: string) => Promise<void>;
 
   startGroupChatV2: (sessionId: string, userMessage: string | null) => void;
   disconnectStream: () => void;
@@ -516,6 +517,24 @@ export const useA2AStore = create<A2AState>((set, get) => ({
     }
     get().disconnectStream();
     set({ currentSession: null, messages: [], workflowStatus: null });
+  },
+
+  deleteSession: async (sessionId: string) => {
+    try {
+      await api.sessions.delete(sessionId);
+      const currentSession = get().currentSession;
+
+      // If the deleted session is the current one, clear it
+      if (currentSession?.id === sessionId) {
+        get().clearSession();
+      }
+
+      // Remove the session from the list
+      set({ sessions: get().sessions.filter(s => s.id !== sessionId) });
+    } catch (error: unknown) {
+      console.error('Failed to delete session:', error);
+      throw error;
+    }
   },
 
   startGroupChatV2: async (sessionId, userMessage) => {

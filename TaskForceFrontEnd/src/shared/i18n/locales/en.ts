@@ -177,6 +177,9 @@ export default {
     current: 'CURRENT',
     stop: 'Stop',
     stopGeneration: 'Stop Generation',
+    deleteSession: 'Delete Session',
+    confirmDelete: 'Confirm Delete',
+    deleteMessage: 'Are you sure you want to delete this session? This action cannot be undone.',
   },
   sessionModal: {
     title: 'Create Session',

@@ -145,8 +145,10 @@ services:
     build:
       context: ./mcp-server
       dockerfile: Dockerfile
-    container_name: taskforce-mcp-server
+    # container_name: taskforce-mcp-server  # 删除固定名字，支持多实例
     restart: always
+    deploy:
+      replicas: 1  # 先保持 1，以后改成 3
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/mcp_server?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
       SPRING_DATASOURCE_USERNAME: root
@@ -154,13 +156,22 @@ services:
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
       SPRING_PROFILES_ACTIVE: docker
       JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx512m}
+      ROCKETMQ_NAMESRV: namesrv:9876  # 新增
     ports:
       - "${MCP_SERVER_PORT:-8082}:8082"
     depends_on:
       mysql:
         condition: service_healthy
+      namesrv:
+        condition: service_healthy  # 新增依赖
     networks:
       - taskforce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   frontend:
     build:

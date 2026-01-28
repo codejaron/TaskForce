@@ -69,6 +69,8 @@ export const api = {
       fetchJson<Session>('/sessions/create', { method: 'POST', body: JSON.stringify(data) }),
     stop: (sessionId: string) =>
       fetchJson<{success: boolean}>(`/sessions/${sessionId}/stop`, { method: 'POST' }),
+    delete: (sessionId: string) =>
+      fetchJson<void>(`/sessions/${sessionId}`, { method: 'DELETE' }),
   },
   messages: {
     getBySession: (sessionId: string) => fetchJson<Message[]>(`/messages/session/${sessionId}`),
