@@ -9,9 +9,14 @@ import lombok.Getter;
 @Getter
 public class StepCompletedEvent extends OrchestrationEvent {
 
-    private final String stepId;
-    private final int stepIndex;
-    private final String result;
+    private String stepId;
+    private int stepIndex;
+    private String result;
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public StepCompletedEvent() {
+        super();
+    }
 
     public StepCompletedEvent(String sessionId, String stepId, int stepIndex, String result) {
         super(sessionId);

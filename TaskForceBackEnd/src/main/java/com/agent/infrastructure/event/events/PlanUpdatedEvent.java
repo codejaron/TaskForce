@@ -9,9 +9,14 @@ import lombok.Getter;
 @Getter
 public class PlanUpdatedEvent extends OrchestrationEvent {
 
-    private final String planId;
-    private final int newTotalSteps;
-    private final int replanCount;
+    private String planId;
+    private int newTotalSteps;
+    private int replanCount;
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public PlanUpdatedEvent() {
+        super();
+    }
 
     public PlanUpdatedEvent(String sessionId, String planId, int newTotalSteps, int replanCount) {
         super(sessionId);

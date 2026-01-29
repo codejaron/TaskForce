@@ -9,9 +9,14 @@ import lombok.Getter;
 @Getter
 public class StepBlockedEvent extends OrchestrationEvent {
 
-    private final String stepId;
-    private final int stepIndex;
-    private final String blockedReason;
+    private String stepId;
+    private int stepIndex;
+    private String blockedReason;
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public StepBlockedEvent() {
+        super();
+    }
 
     public StepBlockedEvent(String sessionId, String stepId, int stepIndex, String blockedReason) {
         super(sessionId);

@@ -9,6 +9,11 @@ import lombok.Getter;
 @Getter
 public class PlanningStartEvent extends OrchestrationEvent {
 
+    // 无参构造函数（Jackson 反序列化需要）
+    public PlanningStartEvent() {
+        super();
+    }
+
     public PlanningStartEvent(String sessionId) {
         super(sessionId);
     }

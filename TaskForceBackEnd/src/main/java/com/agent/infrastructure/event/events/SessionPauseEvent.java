@@ -9,8 +9,13 @@ import lombok.Getter;
 @Getter
 public class SessionPauseEvent extends OrchestrationEvent {
 
-    private final String reason;
-    private final String pendingQuestion;
+    private String reason;
+    private String pendingQuestion;
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public SessionPauseEvent() {
+        super();
+    }
 
     public SessionPauseEvent(String sessionId, String reason, String pendingQuestion) {
         super(sessionId);

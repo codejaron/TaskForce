@@ -10,10 +10,15 @@ import lombok.Getter;
 @Getter
 public class PlanGeneratedEvent extends OrchestrationEvent {
 
-    private final String planId;
-    private final String goal;
-    private final int totalSteps;
-    private final String formattedPlan;  // 完整的格式化计划内容
+    private String planId;
+    private String goal;
+    private int totalSteps;
+    private String formattedPlan;  // 完整的格式化计划内容
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public PlanGeneratedEvent() {
+        super();
+    }
 
     public PlanGeneratedEvent(String sessionId, String planId, String goal, int totalSteps, String formattedPlan) {
         super(sessionId);

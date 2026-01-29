@@ -9,13 +9,18 @@ import lombok.Getter;
 @Getter
 public class ToolCallCompleteEvent extends OrchestrationEvent {
 
-    private final String stepId;
-    private final String toolCallId;
-    private final String toolName;
-    private final String toolResult;
-    private final String status;  // SUCCESS/FAILED
-    private final String errorMessage;
-    private final Long durationMs;
+    private String stepId;
+    private String toolCallId;
+    private String toolName;
+    private String toolResult;
+    private String status;  // SUCCESS/FAILED
+    private String errorMessage;
+    private Long durationMs;
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public ToolCallCompleteEvent() {
+        super();
+    }
 
     public ToolCallCompleteEvent(String sessionId, String stepId, String toolCallId,
                                  String toolName, String toolResult, String status,

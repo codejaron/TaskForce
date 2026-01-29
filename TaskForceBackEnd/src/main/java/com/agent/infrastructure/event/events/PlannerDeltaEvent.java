@@ -9,7 +9,12 @@ import lombok.Getter;
 @Getter
 public class PlannerDeltaEvent extends OrchestrationEvent {
 
-    private final String delta;
+    private String delta;
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public PlannerDeltaEvent() {
+        super();
+    }
 
     public PlannerDeltaEvent(String sessionId, String delta) {
         super(sessionId);

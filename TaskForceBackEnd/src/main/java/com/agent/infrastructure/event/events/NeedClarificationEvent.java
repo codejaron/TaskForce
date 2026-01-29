@@ -9,10 +9,15 @@ import lombok.Getter;
 @Getter
 public class NeedClarificationEvent extends OrchestrationEvent {
 
-    private final String question;
-    private final String source;   // PLANNER / WORKER
-    private final String stepId;   // Worker澄清时有值
-    private final String agentId;  // Worker澄清时有值
+    private String question;
+    private String source;   // PLANNER / WORKER
+    private String stepId;   // Worker澄清时有值
+    private String agentId;  // Worker澄清时有值
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public NeedClarificationEvent() {
+        super();
+    }
 
     // 兼容旧构造函数（不带source）
     public NeedClarificationEvent(String sessionId, String question) {

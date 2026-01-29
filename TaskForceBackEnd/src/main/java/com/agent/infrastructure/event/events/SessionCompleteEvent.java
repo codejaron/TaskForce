@@ -9,8 +9,13 @@ import lombok.Getter;
 @Getter
 public class SessionCompleteEvent extends OrchestrationEvent {
 
-    private final String reason;
-    private final int totalStepsExecuted;
+    private String reason;
+    private int totalStepsExecuted;
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public SessionCompleteEvent() {
+        super();
+    }
 
     public SessionCompleteEvent(String sessionId, String reason, int totalStepsExecuted) {
         super(sessionId);

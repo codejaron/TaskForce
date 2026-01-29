@@ -9,8 +9,13 @@ import lombok.Getter;
 @Getter
 public class ErrorEvent extends OrchestrationEvent {
 
-    private final String errorCode;
-    private final String errorMessage;
+    private String errorCode;
+    private String errorMessage;
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public ErrorEvent() {
+        super();
+    }
 
     public ErrorEvent(String sessionId, String errorCode, String errorMessage) {
         super(sessionId);

@@ -9,8 +9,13 @@ import lombok.Getter;
 @Getter
 public class WorkerDeltaEvent extends OrchestrationEvent {
 
-    private final String stepId;
-    private final String delta;
+    private String stepId;
+    private String delta;
+
+    // 无参构造函数（Jackson 反序列化需要）
+    public WorkerDeltaEvent() {
+        super();
+    }
 
     public WorkerDeltaEvent(String sessionId, String stepId, String delta) {
         super(sessionId);
