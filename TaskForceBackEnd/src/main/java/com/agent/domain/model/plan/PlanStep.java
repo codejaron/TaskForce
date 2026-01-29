@@ -64,11 +64,6 @@ public class PlanStep {
     private StepStatus status = StepStatus.PENDING;
 
     /**
-     * 执行结果
-     */
-    private String result;
-
-    /**
      * 阻塞原因（当 status == BLOCKED 时有值）
      */
     private String blockedReason;
@@ -85,9 +80,8 @@ public class PlanStep {
     /**
      * 完成步骤
      */
-    public void complete(String result) {
+    public void complete() {
         this.status = StepStatus.DONE;
-        this.result = result;
     }
 
     /**
@@ -117,7 +111,6 @@ public class PlanStep {
      */
     public void resetToPending() {
         this.status = StepStatus.PENDING;
-        this.result = null;
         this.blockedReason = null;
     }
 }

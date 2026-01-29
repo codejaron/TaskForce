@@ -324,7 +324,7 @@ public class WorkflowProcessor {
      * 处理步骤成功
      */
     private void handleStepSuccess(String sessionId, ExecutionPlan plan, PlanStep step, StepResult result) {
-        step.complete(result.getOutput());
+        step.complete();
 
         boolean isLastStep = (step.getStepIndex() == plan.getSteps().size());
 
