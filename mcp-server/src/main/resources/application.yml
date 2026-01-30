@@ -6,6 +6,14 @@ spring:
     name: mcp-server
   profiles:
     active: local
+  
+  # ========== Nacos 服务发现 ==========
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        enabled: true
 
   # ========== 数据源配置 ==========
   datasource:

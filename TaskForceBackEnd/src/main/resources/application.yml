@@ -10,6 +10,14 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.ai.autoconfigure.openai.OpenAiAutoConfiguration
+  
+  # ========== Nacos 服务发现 ==========
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        enabled: true
 
   # ========== Redis 配置 ==========
   data:
