@@ -102,6 +102,7 @@ public abstract class AbstractToolProvider implements ToolProvider {
         return switch (type) {
             case STDIO -> ToolDefinition.ToolSourceType.STDIO;
             case REMOTE_SSE -> ToolDefinition.ToolSourceType.REMOTE_SSE;
+            case STREAMABLE_HTTP -> ToolDefinition.ToolSourceType.STREAMABLE_HTTP;
         };
     }
 }

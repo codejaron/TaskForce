@@ -8,8 +8,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.loadbalancer.LoadBalancerClient;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -20,7 +23,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import java.util.stream.Collectors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * 远程 MCP 客户端
@@ -30,232 +35,350 @@ import java.util.stream.Collectors;
 @Service
 public class RemoteMcpClient {
 
-    @Value("${mcp.server.url:http://localhost:8081}")
-    private String mcpServerUrl;
+    private static final String MCP_SERVICE_NAME = "mcp-server";
+    private static final int MAX_RETRY_ATTEMPTS = 3;
+    private static final long RETRY_DELAY_MS = 1000;
+    
+    // 专用于执行阻塞操作的线程池
+    private static final ExecutorService blockingExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r);
+        t.setName("mcp-client-blocking-" + t.getId());
+        t.setDaemon(true);
+        return t;
+    });
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private final LoadBalancerClient loadBalancerClient;
 
-    public RemoteMcpClient(ObjectMapper objectMapper) {
+    public RemoteMcpClient(ObjectMapper objectMapper, LoadBalancerClient loadBalancerClient) {
         this.objectMapper = objectMapper;
+        this.loadBalancerClient = loadBalancerClient;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
     }
 
     /**
+     * 通过 Nacos 服务发现获取 mcp-server 的 URL
+     * 支持重试机制
+     * 使用 boundedElastic 线程池避免在 Reactor 事件循环中阻塞
+     */
+    private String getMcpServerUrl() {
+        int attempts = 0;
+        Exception lastException = null;
+        
+        while (attempts < MAX_RETRY_ATTEMPTS) {
+            try {
+                ServiceInstance instance = loadBalancerClient.choose(MCP_SERVICE_NAME);
+                if (instance == null) {
+                    throw new RuntimeException("No available instance found for service: " + MCP_SERVICE_NAME);
+                }
+                String url = instance.getUri().toString();
+                log.debug("Discovered mcp-server instance: {} (attempt {})", url, attempts + 1);
+                return url;
+            } catch (Exception e) {
+                lastException = e;
+                attempts++;
+                if (attempts < MAX_RETRY_ATTEMPTS) {
+                    log.warn("Failed to discover mcp-server (attempt {}/{}), retrying...", attempts, MAX_RETRY_ATTEMPTS);
+                    try {
+                        Thread.sleep(RETRY_DELAY_MS);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        
+        String errorMsg = String.format(
+            "Failed to discover mcp-server after %d attempts. Please ensure mcp-server is running and registered in Nacos.",
+            MAX_RETRY_ATTEMPTS
+        );
+        log.error(errorMsg, lastException);
+        throw new RuntimeException(errorMsg, lastException);
+    }
+
+    /**
+     * 辅助方法：在专用线程池中执行阻塞操作
+     * 用于避免在 Reactor 事件循环线程中执行阻塞调用
+     */
+    @SuppressWarnings("unchecked")
+    private <T> T executeBlocking(BlockingOperation<T> operation) {
+        try {
+            // 在专用线程池中执行阻塞操作
+            Future<T> future = blockingExecutor.submit(() -> {
+                try {
+                    return operation.execute();
+                } catch (RuntimeException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            return future.get(); // 阻塞等待结果，但是在专用线程池中执行
+        } catch (java.util.concurrent.ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            }
+            throw new RuntimeException(cause);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Operation interrupted", e);
+        }
+    }
+
+    /**
+     * 函数式接口，用于支持抛出异常的阻塞操作
+     */
+    @FunctionalInterface
+    private interface BlockingOperation<T> {
+        T execute() throws Exception;
+    }
+
+    /**
      * 获取所有可用工具列表
      */
     public List<ToolInfo> listTools() {
-        try {
-            String url = mcpServerUrl + "/api/tools";
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .GET()
-                    .timeout(Duration.ofSeconds(30))
-                    .build();
+        return executeBlocking(() -> {
+            try {
+                String url = getMcpServerUrl() + "/api/tools";
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .GET()
+                        .timeout(Duration.ofSeconds(30))
+                        .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-            if (response.statusCode() != 200) {
-                throw new RuntimeException("Failed to list tools: HTTP " + response.statusCode());
-            }
+                if (response.statusCode() != 200) {
+                    throw new RuntimeException("Failed to list tools: HTTP " + response.statusCode());
+                }
 
-            ApiResponse<List<ToolDefinitionDTO>> apiResponse = objectMapper.readValue(
-                    response.body(),
-                    new TypeReference<ApiResponse<List<ToolDefinitionDTO>>>() {}
-            );
+                ApiResponse<List<ToolDefinitionDTO>> apiResponse = objectMapper.readValue(
+                        response.body(),
+                        new TypeReference<ApiResponse<List<ToolDefinitionDTO>>>() {}
+                );
 
-            if (!apiResponse.isSuccess()) {
-                throw new RuntimeException("Failed to list tools: " + apiResponse.getMessage());
-            }
+                if (!apiResponse.isSuccess()) {
+                    throw new RuntimeException("Failed to list tools: " + apiResponse.getMessage());
+                }
 
-            // 转换为 ToolInfo
-            return apiResponse.getData().stream()
-                    .map(dto -> {
-                        // 从工具名称中提取 provider name (格式: providerName::toolName)
-                        String serverName = dto.getProviderId();
-                        if (dto.getName() != null && dto.getName().contains("::")) {
-                            serverName = dto.getName().split("::")[0];
-                        }
-                        
-                        // 将 inputSchema 对象转为 JSON 字符串
-                        String inputSchemaJson = "{}";
-                        if (dto.getInputSchema() != null) {
-                            try {
-                                inputSchemaJson = objectMapper.writeValueAsString(dto.getInputSchema());
-                            } catch (Exception e) {
-                                log.warn("Failed to serialize inputSchema for tool: {}", dto.getName(), e);
+                // 转换为 ToolInfo
+                return apiResponse.getData().stream()
+                        .map(dto -> {
+                            // 从工具名称中提取 provider name (格式: providerName::toolName)
+                            String serverName = dto.getProviderId();
+                            if (dto.getName() != null && dto.getName().contains("::")) {
+                                serverName = dto.getName().split("::")[0];
                             }
-                        }
-                        
-                        return ToolInfo.builder()
-                                .id(dto.getName())
-                                .name(dto.getName())
-                                .description(dto.getDescription())
-                                .serverId(dto.getProviderId())
-                                .serverName(serverName)
-                                .inputSchema(inputSchemaJson)
-                                .build();
-                    })
-                    .collect(Collectors.toList());
+                            
+                            // 将 inputSchema 对象转为 JSON 字符串
+                            String inputSchemaJson = "{}";
+                            if (dto.getInputSchema() != null) {
+                                try {
+                                    inputSchemaJson = objectMapper.writeValueAsString(dto.getInputSchema());
+                                } catch (Exception e) {
+                                    log.warn("Failed to serialize inputSchema for tool: {}", dto.getName(), e);
+                                }
+                            }
+                            
+                            return ToolInfo.builder()
+                                    .id(dto.getName())
+                                    .name(dto.getName())
+                                    .description(dto.getDescription())
+                                    .serverId(dto.getProviderId())
+                                    .serverName(serverName)
+                                    .inputSchema(inputSchemaJson)
+                                    .build();
+                        })
+                        .collect(Collectors.toList());
 
-        } catch (Exception e) {
-            log.error("Failed to list tools from mcp-server", e);
-            throw new RuntimeException("Failed to list tools from mcp-server", e);
-        }
+            } catch (Exception e) {
+                log.error("Failed to list tools from mcp-server", e);
+                throw new RuntimeException("Failed to list tools from mcp-server", e);
+            }
+        });
     }
 
     /**
      * 获取所有 Provider 列表
      */
     public List<Map<String, Object>> listProviders() {
-        try {
-            String url = mcpServerUrl + "/api/providers";
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .GET()
-                    .timeout(Duration.ofSeconds(30))
-                    .build();
+        return executeBlocking(() -> {
+            try {
+                String url = getMcpServerUrl() + "/api/providers";
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .GET()
+                        .timeout(Duration.ofSeconds(30))
+                        .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-            if (response.statusCode() != 200) {
-                throw new RuntimeException("Failed to list providers: HTTP " + response.statusCode());
+                if (response.statusCode() != 200) {
+                    throw new RuntimeException("Failed to list providers: HTTP " + response.statusCode());
+                }
+
+                ApiResponse<List<Map<String, Object>>> apiResponse = objectMapper.readValue(
+                        response.body(),
+                        new TypeReference<ApiResponse<List<Map<String, Object>>>>() {}
+                );
+
+                if (!apiResponse.isSuccess()) {
+                    throw new RuntimeException("Failed to list providers: " + apiResponse.getMessage());
+                }
+
+                return apiResponse.getData();
+
+            } catch (Exception e) {
+                log.error("Failed to list providers from mcp-server", e);
+                throw new RuntimeException("Failed to list providers from mcp-server", e);
             }
-
-            ApiResponse<List<Map<String, Object>>> apiResponse = objectMapper.readValue(
-                    response.body(),
-                    new TypeReference<ApiResponse<List<Map<String, Object>>>>() {}
-            );
-
-            if (!apiResponse.isSuccess()) {
-                throw new RuntimeException("Failed to list providers: " + apiResponse.getMessage());
-            }
-
-            return apiResponse.getData();
-
-        } catch (Exception e) {
-            log.error("Failed to list providers from mcp-server", e);
-            throw new RuntimeException("Failed to list providers from mcp-server", e);
-        }
+        });
     }
 
     /**
      * 注册新的 Provider
      */
     public Map<String, Object> registerProvider(Map<String, Object> config) {
-        try {
-            String url = mcpServerUrl + "/api/providers";
-            String jsonBody = objectMapper.writeValueAsString(config);
+        return executeBlocking(() -> {
+            try {
+                String url = getMcpServerUrl() + "/api/providers";
+                String jsonBody = objectMapper.writeValueAsString(config);
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                    .timeout(Duration.ofSeconds(60))
-                    .build();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                        .timeout(Duration.ofSeconds(60))
+                        .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-            if (response.statusCode() != 200) {
-                throw new RuntimeException("Failed to register provider: HTTP " + response.statusCode());
+                if (response.statusCode() != 200) {
+                    throw new RuntimeException("Failed to register provider: HTTP " + response.statusCode());
+                }
+
+                ApiResponse<Map<String, Object>> apiResponse = objectMapper.readValue(
+                        response.body(),
+                        new TypeReference<ApiResponse<Map<String, Object>>>() {}
+                );
+
+                if (!apiResponse.isSuccess()) {
+                    throw new RuntimeException("Failed to register provider: " + apiResponse.getMessage());
+                }
+
+                return apiResponse.getData();
+
+            } catch (Exception e) {
+                log.error("Failed to register provider", e);
+                throw new RuntimeException("Failed to register provider", e);
             }
-
-            ApiResponse<Map<String, Object>> apiResponse = objectMapper.readValue(
-                    response.body(),
-                    new TypeReference<ApiResponse<Map<String, Object>>>() {}
-            );
-
-            if (!apiResponse.isSuccess()) {
-                throw new RuntimeException("Failed to register provider: " + apiResponse.getMessage());
-            }
-
-            return apiResponse.getData();
-
-        } catch (Exception e) {
-            log.error("Failed to register provider", e);
-            throw new RuntimeException("Failed to register provider", e);
-        }
+        });
     }
 
     /**
      * 删除 Provider
      */
     public Map<String, Object> deleteProvider(String providerId) {
-        try {
-            String url = mcpServerUrl + "/api/providers/" + providerId;
+        return executeBlocking(() -> {
+            try {
+                String url = getMcpServerUrl() + "/api/providers/" + providerId;
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .DELETE()
-                    .timeout(Duration.ofSeconds(30))
-                    .build();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .DELETE()
+                        .timeout(Duration.ofSeconds(30))
+                        .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-            if (response.statusCode() != 200) {
-                throw new RuntimeException("Failed to delete provider: HTTP " + response.statusCode());
+                if (response.statusCode() != 200) {
+                    throw new RuntimeException("Failed to delete provider: HTTP " + response.statusCode());
+                }
+
+                ApiResponse<Map<String, Object>> apiResponse = objectMapper.readValue(
+                        response.body(),
+                        new TypeReference<ApiResponse<Map<String, Object>>>() {}
+                );
+
+                if (!apiResponse.isSuccess()) {
+                    throw new RuntimeException("Failed to delete provider: " + apiResponse.getMessage());
+                }
+
+                return apiResponse.getData();
+
+            } catch (Exception e) {
+                log.error("Failed to delete provider: {}", providerId, e);
+                throw new RuntimeException("Failed to delete provider: " + providerId, e);
             }
-
-            ApiResponse<Map<String, Object>> apiResponse = objectMapper.readValue(
-                    response.body(),
-                    new TypeReference<ApiResponse<Map<String, Object>>>() {}
-            );
-
-            if (!apiResponse.isSuccess()) {
-                throw new RuntimeException("Failed to delete provider: " + apiResponse.getMessage());
-            }
-
-            return apiResponse.getData();
-
-        } catch (Exception e) {
-            log.error("Failed to delete provider: {}", providerId, e);
-            throw new RuntimeException("Failed to delete provider: " + providerId, e);
-        }
+        });
     }
 
     /**
-     * 调用远程工具
+     * 调用远程工具（使用 JSON-RPC 协议）
      */
     public ToolCallResultDTO callTool(String toolId, Map<String, Object> args) {
-        try {
-            String url = mcpServerUrl + "/api/tools/call";
+        return executeBlocking(() -> {
+            try {
+                String url = getMcpServerUrl() + "/mcp";
 
-            ToolCallRequestDTO requestBody = new ToolCallRequestDTO();
-            requestBody.setName(toolId);
-            requestBody.setArguments(args);
+                // 构建 JSON-RPC 请求
+                JsonRpcRequest rpcRequest = new JsonRpcRequest();
+                rpcRequest.setJsonrpc("2.0");
+                rpcRequest.setMethod("tools/call");
+                rpcRequest.setId(java.util.UUID.randomUUID().toString());
+                
+                Map<String, Object> params = new java.util.HashMap<>();
+                params.put("name", toolId);
+                params.put("arguments", args != null ? args : new java.util.HashMap<>());
+                rpcRequest.setParams(params);
 
-            String jsonBody = objectMapper.writeValueAsString(requestBody);
+                String jsonBody = objectMapper.writeValueAsString(rpcRequest);
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                    .timeout(Duration.ofSeconds(120))
-                    .build();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                        .timeout(Duration.ofSeconds(120))
+                        .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-            if (response.statusCode() != 200) {
-                throw new RuntimeException("Failed to call tool: HTTP " + response.statusCode());
+                if (response.statusCode() != 200) {
+                    throw new RuntimeException("Failed to call tool: HTTP " + response.statusCode());
+                }
+
+                // 解析 JSON-RPC 响应
+                JsonRpcResponse rpcResponse = objectMapper.readValue(
+                        response.body(),
+                        JsonRpcResponse.class
+                );
+
+                // 检查错误
+                if (rpcResponse.getError() != null) {
+                    throw new RuntimeException("Tool call error: " + rpcResponse.getError().getMessage());
+                }
+
+                // 解析结果为 ToolCallResultDTO
+                if (rpcResponse.getResult() != null) {
+                    return objectMapper.convertValue(rpcResponse.getResult(), ToolCallResultDTO.class);
+                }
+
+                // 如果没有结果，返回空结果
+                ToolCallResultDTO emptyResult = new ToolCallResultDTO();
+                emptyResult.setContent(new java.util.ArrayList<>());
+                emptyResult.setIsError(false);
+                return emptyResult;
+
+            } catch (Exception e) {
+                log.error("Failed to call tool: {}", toolId, e);
+                throw new RuntimeException("Failed to call tool: " + toolId, e);
             }
-
-            ApiResponse<ToolCallResultDTO> apiResponse = objectMapper.readValue(
-                    response.body(),
-                    new TypeReference<ApiResponse<ToolCallResultDTO>>() {}
-            );
-
-            if (!apiResponse.isSuccess()) {
-                throw new RuntimeException("Failed to call tool: " + apiResponse.getMessage());
-            }
-
-            return apiResponse.getData();
-
-        } catch (Exception e) {
-            log.error("Failed to call tool: {}", toolId, e);
-            throw new RuntimeException("Failed to call tool: " + toolId, e);
-        }
+        });
     }
 
     /**
@@ -365,6 +488,31 @@ public class RemoteMcpClient {
         private String name;
         private Map<String, Object> arguments;
         private String sessionId;
+    }
+
+    // ==================== JSON-RPC 相关类 ====================
+
+    @Data
+    public static class JsonRpcRequest {
+        private String jsonrpc = "2.0";
+        private String method;
+        private Map<String, Object> params;
+        private Object id;
+    }
+
+    @Data
+    public static class JsonRpcResponse {
+        private String jsonrpc;
+        private Object id;
+        private Object result;
+        private JsonRpcError error;
+    }
+
+    @Data
+    public static class JsonRpcError {
+        private int code;
+        private String message;
+        private Object data;
     }
 
     @Data

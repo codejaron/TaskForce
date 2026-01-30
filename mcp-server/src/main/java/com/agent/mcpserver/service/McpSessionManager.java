@@ -7,6 +7,7 @@ import reactor.core.publisher.Sinks;
 
 import jakarta.annotation.PreDestroy;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -59,8 +60,8 @@ public class McpSessionManager {
     /**
      * 获取会话
      */
-    public SessionInfo getSession(String sessionId) {
-        return activeSessions.get(sessionId);
+    public Optional<SessionInfo> getSession(String sessionId) {
+        return Optional.ofNullable(activeSessions.get(sessionId));
     }
 
     /**

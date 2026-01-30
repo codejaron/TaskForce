@@ -59,6 +59,11 @@ public class ToolDefinition {
         /**
          * 远程 SSE 服务
          */
-        REMOTE_SSE
+        REMOTE_SSE,
+
+        /**
+         * Streamable HTTP 服务（JSON-RPC over HTTP）
+         */
+        STREAMABLE_HTTP
     }
 }

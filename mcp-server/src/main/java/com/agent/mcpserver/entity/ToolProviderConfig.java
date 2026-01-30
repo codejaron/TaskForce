@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 
 /**
  * 工具提供者配置实体
- * 支持三种类型：STDIO、NATIVE、REMOTE_SSE
+ * 支持三种类型：STDIO、REMOTE_SSE、STREAMABLE_HTTP
  */
 @Data
 @Builder
@@ -28,7 +28,7 @@ public class ToolProviderConfig {
     private String name;
 
     /**
-     * 提供者类型：STDIO, NATIVE, REMOTE_SSE
+     * 提供者类型：STDIO, REMOTE_SSE, STREAMABLE_HTTP
      */
     private ProviderType type;
 
@@ -78,6 +78,13 @@ public class ToolProviderConfig {
     @Builder.Default
     private Integer timeout = 30;
 
+    // ========== STREAMABLE_HTTP 类型配置 ==========
+
+    /**
+     * 远程 HTTP 服务 URL
+     */
+    private String httpUrl;
+
     // ========== 通用字段 ==========
 
     /**
@@ -120,6 +127,11 @@ public class ToolProviderConfig {
         /**
          * 远程 SSE 服务
          */
-        REMOTE_SSE
+        REMOTE_SSE,
+
+        /**
+         * Streamable HTTP 服务（JSON-RPC over HTTP）
+         */
+        STREAMABLE_HTTP
     }
 }

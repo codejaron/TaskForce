@@ -142,12 +142,13 @@ public class ToolRouter {
     }
 
     /**
-     * 创建 Provider 实例（只支持 STDIO 和 REMOTE_SSE）
+     * 创建 Provider 实例（支持 STDIO、REMOTE_SSE、STREAMABLE_HTTP）
      */
     private ToolProvider createProvider(ToolProviderConfig config) {
         return switch (config.getType()) {
             case STDIO -> new StdioToolProvider();
             case REMOTE_SSE -> new RemoteSseToolProvider();
+            case STREAMABLE_HTTP -> new StreamableHttpToolProvider();
         };
     }
 

@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS tool_provider_config (
     id VARCHAR(64) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
-    type VARCHAR(32) NOT NULL COMMENT 'STDIO, REMOTE_SSE',
+    type VARCHAR(32) NOT NULL COMMENT 'STDIO, REMOTE_SSE, STREAMABLE_HTTP',
     enabled BOOLEAN DEFAULT TRUE,
     description TEXT,
     
@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS tool_provider_config (
     sse_url VARCHAR(1024) COMMENT '远程 SSE 服务 URL',
     headers TEXT COMMENT '请求头 (JSON 对象)',
     timeout INT DEFAULT 30 COMMENT '超时时间（秒）',
+    
+    -- STREAMABLE_HTTP 类型配置
+    http_url VARCHAR(1024) COMMENT '远程 HTTP 服务 URL',
     
     -- 状态字段
     connected BOOLEAN DEFAULT FALSE COMMENT '连接状态',

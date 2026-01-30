@@ -18,6 +18,14 @@ spring:
         server-addr: ${NACOS_ADDR:localhost:8848}
         namespace: ${NACOS_NAMESPACE:}
         enabled: true
+    
+    # ========== LoadBalancer 配置 ==========
+    loadbalancer:
+      ribbon:
+        enabled: false  # 使用 Spring Cloud LoadBalancer 而非 Ribbon
+      cache:
+        enabled: true
+        ttl: 35s  # 缓存服务实例列表 35 秒
 
   # ========== Redis 配置 ==========
   data:
@@ -101,9 +109,8 @@ management:
 
 
 # ========== MCP 工具配置 ==========
-mcp:
-  server:
-    url: ${MCP_SERVER_URL:http://localhost:8082}  # mcp-server 服务地址
+# 注意: mcp-server 地址已改为通过 Nacos 服务发现自动获取,无需手动配置
+# 服务名: mcp-server (在 RemoteMcpClient 中通过 LoadBalancerClient 自动发现)
 
 # ========== RocketMQ 配置 ==========
 rocketmq:
