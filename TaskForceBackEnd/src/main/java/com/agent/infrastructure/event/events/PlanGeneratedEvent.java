@@ -16,6 +16,7 @@ public class PlanGeneratedEvent extends OrchestrationEvent {
     private String goal;
     private int totalSteps;
     private String formattedPlan;  // 完整的格式化计划内容
+    private String status = "EXECUTING";  // 前端需要的状态字段
 
     // 无参构造函数（Jackson 反序列化需要）
     public PlanGeneratedEvent() {

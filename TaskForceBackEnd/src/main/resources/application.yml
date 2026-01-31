@@ -107,11 +107,6 @@ management:
       enabled: true
 
 
-
-# ========== MCP 工具配置 ==========
-# 注意: mcp-server 地址已改为通过 Nacos 服务发现自动获取,无需手动配置
-# 服务名: mcp-server (在 RemoteMcpClient 中通过 LoadBalancerClient 自动发现)
-
 # ========== RocketMQ 配置 ==========
 rocketmq:
   name-server: ${ROCKETMQ_NAMESRV:localhost:9876}
@@ -124,4 +119,5 @@ rocketmq:
 app:
   idempotent:
     expire-hours: 24  # 幂等 key 过期时间（小时）
-
+  mq:
+    topic: orchestration-events

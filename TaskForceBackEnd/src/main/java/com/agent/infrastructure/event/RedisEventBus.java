@@ -17,7 +17,7 @@ import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
-@Component
+//@Component
 public class RedisEventBus implements EventBus {
 
     private static final String CHANNEL_PREFIX = "sse:session:";
