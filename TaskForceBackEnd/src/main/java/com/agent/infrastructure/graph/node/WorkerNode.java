@@ -47,6 +47,18 @@ public class WorkerNode implements NodeAction {
         
         // 检查是否还有步骤
         if (stepIndex >= plan.getSteps().size()) {
+            // 标记计划完成并发布事件
+            plan.markCompleted();
+            stateManager.savePlan(plan);
+            
+            log.info("[WorkerNode] All steps completed: sessionId={}, totalSteps={}", 
+                    sessionId, plan.getSteps().size());
+            eventBus.publish(sessionId, new SessionCompleteEvent(
+                sessionId,
+                "所有步骤已成功完成",
+                plan.getSteps().size()
+            ));
+            
             return Map.of("nextAction", "complete");
         }
         
@@ -102,6 +114,18 @@ public class WorkerNode implements NodeAction {
         // 继续下一步
         int nextIndex = stepIndex + 1;
         if (nextIndex >= plan.getSteps().size()) {
+            // 标记计划完成并发布事件
+            plan.markCompleted();
+            stateManager.savePlan(plan);
+            
+            log.info("[WorkerNode] All steps completed: sessionId={}, totalSteps={}", 
+                    sessionId, plan.getSteps().size());
+            eventBus.publish(sessionId, new SessionCompleteEvent(
+                sessionId,
+                "所有步骤已成功完成",
+                plan.getSteps().size()
+            ));
+            
             return Map.of("nextAction", "complete");
         }
         
