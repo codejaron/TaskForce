@@ -169,12 +169,59 @@ public class StateManager {
             msg.setAgentId(Long.parseLong(step.getAssignedAgentId()));
             msg.setAgentName(step.getAssignedAgentName());
             msg.setContent(response);
+            msg.setStatus("COMPLETED");
             msg.setCreatedAt(LocalDateTime.now());
             messageService.saveMessage(msg);
             return msg.getId();
         } catch (Exception e) {
             log.error("[StateManager] Failed to record step message", e);
             return null;
+        }
+    }
+    
+    /**
+     * 创建流式消息（Worker 开始执行时调用）
+     */
+    public Long createStreamingMessage(String sessionId, PlanStep step) {
+        try {
+            Message msg = new Message();
+            msg.setSessionId(sessionId);
+            msg.setRole("assistant");
+            msg.setMessageType("WORKER_MSG");
+            msg.setAgentId(Long.parseLong(step.getAssignedAgentId()));
+            msg.setAgentName(step.getAssignedAgentName());
+            msg.setContent("");  // 初始为空
+            msg.setStatus("STREAMING");
+            msg.setCreatedAt(LocalDateTime.now());
+            messageService.saveMessage(msg);
+            return msg.getId();
+        } catch (Exception e) {
+            log.error("[StateManager] Failed to create streaming message", e);
+            return null;
+        }
+    }
+
+    /**
+     * 追加流式内容（定期调用）
+     */
+    public void appendStreamingContent(Long messageId, String delta) {
+        if (messageId == null) return;
+        try {
+            messageService.appendContent(messageId, delta);
+        } catch (Exception e) {
+            log.error("[StateManager] Failed to append streaming content", e);
+        }
+    }
+
+    /**
+     * 完成流式消息
+     */
+    public void completeStreamingMessage(Long messageId, String finalContent) {
+        if (messageId == null) return;
+        try {
+            messageService.completeMessage(messageId, finalContent);
+        } catch (Exception e) {
+            log.error("[StateManager] Failed to complete streaming message", e);
         }
     }
 

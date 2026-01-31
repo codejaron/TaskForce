@@ -1,7 +1,7 @@
 -- ========================================
 -- TaskForce - Complete Database Schema
--- Version: 2.7
--- Date: 2026-01-12
+-- Version: 2.8 (Added status column to messages table)
+-- Date: 2026-01-31
 -- ========================================
 
 -- ========================================
@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_args JSON COMMENT '工具参数',
     tool_result TEXT COMMENT '工具执行结果',
     sequence INT COMMENT '消息序号',
+    status VARCHAR(20) DEFAULT 'COMPLETED' COMMENT '消息状态: STREAMING-流式输出中, COMPLETED-已完成',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_session_id (session_id),
     INDEX idx_agent_id (agent_id),

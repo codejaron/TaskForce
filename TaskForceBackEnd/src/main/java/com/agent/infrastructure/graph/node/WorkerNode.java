@@ -156,12 +156,35 @@ public class WorkerNode implements NodeAction {
                     worker.getName(), step.getStepId(), systemPrompt);
             
             StringBuilder response = new StringBuilder();
+            StringBuilder buffer = new StringBuilder();
+            final int FLUSH_THRESHOLD = 100;
             
-            // 4. 流式调用 Worker
+            // 4. 创建流式消息记录
+            Long messageId = stateManager.createStreamingMessage(sessionId, step);
+            
+            // 5. 流式调用，边输出边持久化
             llmAdapter.streamChat(Long.valueOf(step.getAssignedAgentId()), sessionId, step.getStepId(), systemPrompt, null)
                     .doOnNext(token -> {
                         response.append(token);
+                        buffer.append(token);
                         eventBus.publish(sessionId, new WorkerDeltaEvent(sessionId, step.getStepId(), token));
+                        
+                        if (buffer.length() >= FLUSH_THRESHOLD) {
+                            stateManager.appendStreamingContent(messageId, buffer.toString());
+                            buffer.setLength(0);
+                        }
+                    })
+                    .doOnComplete(() -> {
+                        if (buffer.length() > 0) {
+                            stateManager.appendStreamingContent(messageId, buffer.toString());
+                        }
+                        stateManager.completeStreamingMessage(messageId, response.toString());
+                    })
+                    .doOnError(e -> {
+                        if (buffer.length() > 0) {
+                            stateManager.appendStreamingContent(messageId, buffer.toString());
+                        }
+                        stateManager.completeStreamingMessage(messageId, response.toString());
                     })
                     .blockLast();
             
@@ -181,10 +204,7 @@ public class WorkerNode implements NodeAction {
                 }
             }
             
-            // 6. 存储完整消息
-            stateManager.recordStepMessage(sessionId, step, output);
-            
-            // 7. 解析结果状态
+            // 6. 解析结果状态（删除 recordStepMessage，因为已经在流式输出中处理）
             return parseStepResult(output);
             
         } catch (Exception e) {

@@ -15,6 +15,7 @@ interface A2AState {
   selectSession: (session: Session) => Promise<void>;
   clearSession: () => void;
   deleteSession: (sessionId: string) => Promise<void>;
+  refreshMessages: () => Promise<void>;  // 新增：刷新当前会话消息
 
   startGroupChatV2: (sessionId: string, userMessage: string | null) => void;
   disconnectStream: () => void;
@@ -443,6 +444,44 @@ function appendToLastMessage(
   }
 }
 
+/**
+ * 抽取加载消息的公共逻辑
+ * 用于 selectSession 和 refreshMessages
+ */
+async function loadSessionMessages(
+  sessionId: string,
+  set: (partial: Partial<A2AState>) => void
+) {
+  const [dbMessages, toolCalls] = await Promise.all([
+    api.messages.getBySession(sessionId),
+    api.toolCalls.getBySession(sessionId)
+  ]);
+
+  const toolCallsByStepId: Record<string, ToolCallDTO[]> = {};
+  for (const tc of toolCalls) {
+    const stepId = tc.stepId || 'unknown';
+    if (!toolCallsByStepId[stepId]) {
+      toolCallsByStepId[stepId] = [];
+    }
+    toolCallsByStepId[stepId].push(tc);
+  }
+
+  const a2aMessages: A2AMessage[] = dbMessages.map(msg => {
+    const isUser = msg.role === 'user';
+    return {
+      agentId: isUser ? 'human' : (msg.agentId?.toString() || 'assistant'),
+      agentName: msg.agentName || (isUser ? 'User' : 'Agent'),
+      content: msg.content,
+      timestamp: msg.createdAt,
+      type: (msg.messageType as 'text' | 'tool_use' | 'tool_result') || 'text',
+      isStreaming: msg.status === 'STREAMING'  // 从数据库字段映射
+    };
+  });
+
+  set({ messages: a2aMessages, toolCallsByStepId });
+  return a2aMessages;
+}
+
 export const useA2AStore = create<A2AState>((set, get) => ({
   sessions: [],
   currentSession: null,
@@ -471,39 +510,13 @@ export const useA2AStore = create<A2AState>((set, get) => ({
     set({ currentSession: session, messages: [], toolCallsByStepId: {}, workflowStatus: null });
 
     try {
-      // 并行加载消息、工具调用、当前状态
-      const [dbMessages, toolCalls, stateResponse] = await Promise.all([
-        api.messages.getBySession(session.id),
-        api.toolCalls.getBySession(session.id),
-        api.groupChat.getState(session.id).catch(() => null)
-      ]);
-
-      // 将工具调用按 stepId 分组
-      const toolCallsByStepId: Record<string, ToolCallDTO[]> = {};
-      for (const tc of toolCalls) {
-        const stepId = tc.stepId || 'unknown';
-        if (!toolCallsByStepId[stepId]) {
-          toolCallsByStepId[stepId] = [];
-        }
-        toolCallsByStepId[stepId].push(tc);
-      }
-
-      const a2aMessages: A2AMessage[] = dbMessages.map(msg => {
-        const isUser = msg.role === 'user';
-
-        return {
-          agentId: isUser ? 'human' : (msg.agentId?.toString() || 'assistant'),
-          agentName: msg.agentName || (isUser ? 'User' : 'Agent'),
-          content: msg.content,
-          timestamp: msg.createdAt,
-          type: (msg.messageType as 'text' | 'tool_use' | 'tool_result') || 'text'
-        };
-      });
-
-      // 从后端获取当前状态
+      // 使用公共方法加载消息
+      await loadSessionMessages(session.id, set);
+      
+      // 加载状态
+      const stateResponse = await api.groupChat.getState(session.id).catch(() => null);
       const workflowStatus = stateResponse?.status || null;
-
-      set({ messages: a2aMessages, toolCallsByStepId, workflowStatus });
+      set({ workflowStatus });
     } catch (error: unknown) {
       console.warn('Failed to fetch messages:', error);
       set({ messages: [], toolCallsByStepId: {}, workflowStatus: null });
@@ -534,6 +547,19 @@ export const useA2AStore = create<A2AState>((set, get) => ({
     } catch (error: unknown) {
       console.error('Failed to delete session:', error);
       throw error;
+    }
+  },
+
+  // 新增：刷新当前会话消息
+  refreshMessages: async () => {
+    const currentSession = get().currentSession;
+    if (!currentSession) return;
+
+    try {
+      console.log('[A2A] Refreshing messages for session:', currentSession.id);
+      await loadSessionMessages(currentSession.id, set);
+    } catch (error) {
+      console.error('[A2A] Failed to refresh messages:', error);
     }
   },
 
@@ -581,6 +607,16 @@ export const useA2AStore = create<A2AState>((set, get) => ({
           async onopen(response) {
             if (response.ok) {
               console.log('[A2A V2 SSE] ✅ Connection established');
+              
+              // 重连时重新加载消息
+              if (reconnectAttempts > 0) {
+                console.log('[A2A V2 SSE] Reloading messages after reconnect...');
+                try {
+                  await loadSessionMessages(sessionId, set);
+                } catch (e) {
+                  console.error('[A2A V2 SSE] Failed to reload messages:', e);
+                }
+              }
             } else {
               throw new Error(`SSE connection failed with status ${response.status}`);
             }

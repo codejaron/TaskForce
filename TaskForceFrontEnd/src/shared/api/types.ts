@@ -79,6 +79,7 @@ export interface Message {
   toolArgs?: string;
   toolResult?: string;
   sequence: number;
+  status?: 'STREAMING' | 'COMPLETED';  // 消息状态：流式输出中或已完成
   createdAt: string;
 }
 
@@ -157,6 +158,9 @@ export interface A2AMessage {
   stepDescription?: string;
   planId?: string;
   goal?: string;
+  
+  // 新增字段：流式状态
+  isStreaming?: boolean;
 }
 
 // ============= Token统计相关类型 =============

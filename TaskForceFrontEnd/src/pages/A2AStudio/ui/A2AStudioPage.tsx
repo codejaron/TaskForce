@@ -33,7 +33,7 @@ import remarkGfm from 'remark-gfm';
 import type { Session } from '../../../shared/api/types';
 
 export const A2AStudioPage: React.FC = () => {
-  const { sessions, currentSession, messages, toolCallsByStepId, workflowStatus, fetchSessions, selectSession, startGroupChatV2, disconnectStream, stopStream, deleteSession } = useA2AStore();
+  const { sessions, currentSession, messages, toolCallsByStepId, workflowStatus, fetchSessions, selectSession, startGroupChatV2, disconnectStream, stopStream, deleteSession, refreshMessages } = useA2AStore();
   const { agents, fetchAgents } = useAgentStore();
   const { t } = useTranslation();
 
@@ -78,6 +78,19 @@ export const A2AStudioPage: React.FC = () => {
       disconnectStream();
     };
   }, []);
+
+  // 监听页面可见性，切回来时刷新消息
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && currentSession) {
+        console.log('[A2AStudioPage] Page visible, refreshing messages...');
+        refreshMessages();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [currentSession, refreshMessages]);
 
   useEffect(() => {
     // 只在用户没有手动滚动时自动滚动到底部

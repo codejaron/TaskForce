@@ -51,6 +51,9 @@ public class Message {
     @TableField("sequence")
     private Integer sequence;
     
+    @TableField("status")
+    private String status;  // STREAMING, COMPLETED
+    
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

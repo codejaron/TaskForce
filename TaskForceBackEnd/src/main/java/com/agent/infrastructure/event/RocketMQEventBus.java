@@ -54,8 +54,8 @@ public class RocketMQEventBus implements EventBus {
     public Flux<OrchestrationEvent> subscribe(String sessionId) {
         SinkWrapper wrapper = subscribers.computeIfAbsent(sessionId, id -> {
             log.info("[MQEventBus] New SSE subscriber for sessionId={}", id);
-            // 使用 replay() 缓存最近的事件，防止订阅晚于发布导致丢失
-            Sinks.Many<OrchestrationEvent> sink = Sinks.many().replay().limit(100);
+            // 使用 multicast，不需要 replay 了（历史数据从 DB 加载）
+            Sinks.Many<OrchestrationEvent> sink = Sinks.many().multicast().onBackpressureBuffer(1024);
             return new SinkWrapper(sink);
         });
 
@@ -89,22 +89,29 @@ public class RocketMQEventBus implements EventBus {
      * 将 MQ 消息推送给本地 SSE 订阅者
      * 由 MQ 消费者调用
      *
-     * 如果订阅者还未连接，会创建 sink 并缓存事件（使用 replay）
+     * 简化版本：不再创建 sink 缓存，历史数据从 DB 加载
      */
     public void pushToSubscriber(String sessionId, OrchestrationEvent event) {
-        // 如果订阅者不存在，创建一个带 replay 的 sink 来缓存事件
-        SinkWrapper wrapper = subscribers.computeIfAbsent(sessionId, id -> {
-            log.info("[MQEventBus] Creating sink for sessionId={} (no subscriber yet, will cache events)", id);
-            Sinks.Many<OrchestrationEvent> sink = Sinks.many().replay().limit(8192);
-            return new SinkWrapper(sink);
-        });
-
+        SinkWrapper wrapper = subscribers.get(sessionId);
+        if (wrapper == null) {
+            log.debug("[MQEventBus] No subscriber for sessionId={}, skipping event push", sessionId);
+            return;
+        }
+        
         wrapper.updateLastActivity();
 
-        Sinks.EmitResult result = wrapper.sink.tryEmitNext(event);
-        if (result.isFailure()) {
-            log.warn("[MQEventBus] Failed to push to sink: sessionId={}, result={}", sessionId, result);
-        }
+        // 使用 emitNext + 重试策略处理并发
+        wrapper.sink.emitNext(event, (signalType, emitResult) -> {
+            if (emitResult == Sinks.EmitResult.FAIL_NON_SERIALIZED) {
+                // 并发冲突，返回 true 重试
+                return true;
+            }
+            if (emitResult.isFailure()) {
+                log.warn("[MQEventBus] Failed to push: sessionId={}, type={}, result={}",
+                        sessionId, event.getEventType(), emitResult);
+            }
+            return false;
+        });
     }
 
     /**

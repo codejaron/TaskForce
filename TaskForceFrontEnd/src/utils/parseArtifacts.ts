@@ -17,8 +17,8 @@ export interface ParsedContent {
 export function parseArtifacts(text: string): ParsedContent[] {
   if (!text) return [{ type: 'text', content: '' }];
 
-  // 匹配 <artifact key="...">...</artifact>
-  const regex = /<artifact\s+key="([a-zA-Z0-9_-]+)"\s*>([\s\S]*?)<\/artifact>/g;
+  // 匹配 <artifact key="...">...</artifact> 或 </artifact >（允许结束标签有空格）
+  const regex = /<artifact\s+key="([a-zA-Z0-9_-]+)"\s*>([\s\S]*?)<\/artifact\s*>/g;
 
   const parts: ParsedContent[] = [];
   let lastIndex = 0;
@@ -63,7 +63,7 @@ export function parseArtifacts(text: string): ParsedContent[] {
  */
 export function stripArtifactTags(text: string): string {
   if (!text) return text;
-  // 移除开始和结束标签，保留内容
+  // 移除开始和结束标签，保留内容（允许结束标签有空格）
   return text.replace(/<artifact\s+key="[a-zA-Z0-9_-]+"\s*>/g, '')
-             .replace(/<\/artifact>/g, '');
+             .replace(/<\/artifact\s*>/g, '');
 }

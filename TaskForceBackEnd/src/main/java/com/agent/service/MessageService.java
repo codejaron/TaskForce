@@ -203,4 +203,45 @@ public class MessageService {
         wrapper.eq(Message::getSessionId, sessionId);
         return messageMapper.selectCount(wrapper);
     }
+    
+    /**
+     * 追加内容（增量更新）
+     */
+    public void appendContent(Long messageId, String delta) {
+        if (messageId == null || delta == null || delta.isEmpty()) {
+            return;
+        }
+        try {
+            messageMapper.appendContent(messageId, delta);
+        } catch (Exception e) {
+            log.error("[MessageService] Failed to append content: messageId={}", messageId, e);
+        }
+    }
+    
+    /**
+     * 完成消息（更新状态和最终内容）
+     */
+    @Transactional
+    public void completeMessage(Long messageId, String finalContent) {
+        if (messageId == null) {
+            return;
+        }
+        try {
+            Message msg = new Message();
+            msg.setId(messageId);
+            msg.setContent(finalContent);
+            msg.setStatus("COMPLETED");
+            messageMapper.updateById(msg);
+            
+            // 删除缓存，让下次重新加载
+            // 注意：这里可以选择直接更新缓存中的该条消息，但为了简化，我们直接删除缓存
+            Message fullMsg = messageMapper.selectById(messageId);
+            if (fullMsg != null) {
+                String key = recentListKey(fullMsg.getSessionId());
+                redisTemplate.delete(key);
+            }
+        } catch (Exception e) {
+            log.error("[MessageService] Failed to complete message: messageId={}", messageId, e);
+        }
+    }
 }
