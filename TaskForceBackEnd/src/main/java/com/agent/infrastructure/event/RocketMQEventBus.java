@@ -5,10 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
+import jakarta.annotation.PreDestroy;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -22,8 +26,11 @@ public class RocketMQEventBus implements EventBus {
     @Value("${app.mq.topic:orchestration-events}")
     private String topic;
 
-    // 本地 SSE 订阅者缓存：sessionId -> Sink
-    private final Map<String, Sinks.Many<OrchestrationEvent>> subscribers = new ConcurrentHashMap<>();
+    // 本地 SSE 订阅者缓存：sessionId -> SinkWrapper
+    private final Map<String, SinkWrapper> subscribers = new ConcurrentHashMap<>();
+
+    // Sink 过期时间（30分钟无订阅者则清理）
+    private static final Duration SINK_TTL = Duration.ofMinutes(30);
 
     public RocketMQEventBus(RocketMQTemplate rocketMQTemplate, ObjectMapper objectMapper) {
         this.rocketMQTemplate = rocketMQTemplate;
@@ -45,12 +52,16 @@ public class RocketMQEventBus implements EventBus {
 
     @Override
     public Flux<OrchestrationEvent> subscribe(String sessionId) {
-        Sinks.Many<OrchestrationEvent> sink = subscribers.computeIfAbsent(sessionId, id -> {
+        SinkWrapper wrapper = subscribers.computeIfAbsent(sessionId, id -> {
             log.info("[MQEventBus] New SSE subscriber for sessionId={}", id);
-            return Sinks.many().multicast().onBackpressureBuffer(256);
+            // 使用 replay() 缓存最近的事件，防止订阅晚于发布导致丢失
+            Sinks.Many<OrchestrationEvent> sink = Sinks.many().replay().limit(100);
+            return new SinkWrapper(sink);
         });
 
-        return sink.asFlux()
+        wrapper.updateLastActivity();
+
+        return wrapper.sink.asFlux()
                 .doOnCancel(() -> {
                     log.info("[MQEventBus] SSE subscriber cancelled: sessionId={}", sessionId);
                 })
@@ -61,35 +72,58 @@ public class RocketMQEventBus implements EventBus {
 
     @Override
     public void unsubscribe(String sessionId) {
-        Sinks.Many<OrchestrationEvent> sink = subscribers.remove(sessionId);
-        if (sink != null) {
-            sink.tryEmitComplete();
+        SinkWrapper wrapper = subscribers.remove(sessionId);
+        if (wrapper != null) {
+            wrapper.sink.tryEmitComplete();
             log.info("[MQEventBus] Unsubscribed and cleaned up: sessionId={}", sessionId);
         }
     }
 
     @Override
     public boolean hasSubscribers(String sessionId) {
-        Sinks.Many<OrchestrationEvent> sink = subscribers.get(sessionId);
-        return sink != null && sink.currentSubscriberCount() > 0;
+        SinkWrapper wrapper = subscribers.get(sessionId);
+        return wrapper != null && wrapper.sink.currentSubscriberCount() > 0;
     }
 
     /**
      * 将 MQ 消息推送给本地 SSE 订阅者
      * 由 MQ 消费者调用
+     *
+     * 如果订阅者还未连接，会创建 sink 并缓存事件（使用 replay）
      */
     public void pushToSubscriber(String sessionId, OrchestrationEvent event) {
-        Sinks.Many<OrchestrationEvent> sink = subscribers.get(sessionId);
-        if (sink != null) {
-            Sinks.EmitResult result = sink.tryEmitNext(event);
-            if (result.isSuccess()) {
-                log.debug("[MQEventBus] Pushed to SSE: sessionId={}, type={}", sessionId, event.getEventType());
-            } else {
-                log.warn("[MQEventBus] Failed to push to SSE: sessionId={}, result={}", sessionId, result);
-            }
-        } else {
-            log.debug("[MQEventBus] No local subscriber for sessionId={}", sessionId);
+        // 如果订阅者不存在，创建一个带 replay 的 sink 来缓存事件
+        SinkWrapper wrapper = subscribers.computeIfAbsent(sessionId, id -> {
+            log.info("[MQEventBus] Creating sink for sessionId={} (no subscriber yet, will cache events)", id);
+            Sinks.Many<OrchestrationEvent> sink = Sinks.many().replay().limit(8192);
+            return new SinkWrapper(sink);
+        });
+
+        wrapper.updateLastActivity();
+
+        Sinks.EmitResult result = wrapper.sink.tryEmitNext(event);
+        if (result.isFailure()) {
+            log.warn("[MQEventBus] Failed to push to sink: sessionId={}, result={}", sessionId, result);
         }
+    }
+
+    /**
+     * 定期清理空闲的 Sink（30分钟无活动且无订阅者）
+     */
+    @Scheduled(fixedRate = 60000)  // 每分钟检查一次
+    public void cleanupIdleSinks() {
+        Instant now = Instant.now();
+        subscribers.entrySet().removeIf(entry -> {
+            SinkWrapper wrapper = entry.getValue();
+            boolean isIdle = wrapper.sink.currentSubscriberCount() == 0 &&
+                    Duration.between(wrapper.lastActivity, now).compareTo(SINK_TTL) > 0;
+            if (isIdle) {
+                wrapper.sink.tryEmitComplete();
+                log.info("[MQEventBus] Cleaned idle sink: sessionId={}", entry.getKey());
+                return true;
+            }
+            return false;
+        });
     }
 
     /**
@@ -99,8 +133,32 @@ public class RocketMQEventBus implements EventBus {
         return subscribers.size();
     }
 
+    @PreDestroy
+    public void cleanup() {
+        log.info("[MQEventBus] Cleanup {} sinks", subscribers.size());
+        subscribers.forEach((id, wrapper) -> wrapper.sink.tryEmitComplete());
+        subscribers.clear();
+    }
+
     /**
      * MQ 消息包装类
      */
     public record EventWrapper(String sessionId, String eventType, String eventData) {}
+
+    /**
+     * Sink 包装类，包含最后活动时间
+     */
+    private static class SinkWrapper {
+        final Sinks.Many<OrchestrationEvent> sink;
+        volatile Instant lastActivity;
+
+        SinkWrapper(Sinks.Many<OrchestrationEvent> sink) {
+            this.sink = sink;
+            this.lastActivity = Instant.now();
+        }
+
+        void updateLastActivity() {
+            this.lastActivity = Instant.now();
+        }
+    }
 }

@@ -560,11 +560,7 @@ export const useA2AStore = create<A2AState>((set, get) => ({
     }
 
     try {
-      // 调用统一接口，后端自动判断 submit 还是 resume
-      const submitResponse = await api.groupChat.message(sessionId, userMessage || '');
-      console.log('[A2A V2] Message response:', submitResponse);
-
-      // 建立 SSE 连接
+      // 🔥 关键修改：先建立 SSE 连接，再提交消息
       const eventSourceUrl = `/api/group-chat/${sessionId}/events`;
       let reconnectAttempts = 0;
 
@@ -581,6 +577,14 @@ export const useA2AStore = create<A2AState>((set, get) => ({
 
         fetchEventSource(eventSourceUrl, {
           signal: controller.signal,
+
+          async onopen(response) {
+            if (response.ok) {
+              console.log('[A2A V2 SSE] ✅ Connection established');
+            } else {
+              throw new Error(`SSE connection failed with status ${response.status}`);
+            }
+          },
 
           onmessage(ev) {
             if (reconnectAttempts > 0) {
@@ -645,7 +649,20 @@ export const useA2AStore = create<A2AState>((set, get) => ({
         });
       };
 
+      // 启动 SSE 连接
       connectSSE();
+
+      // 🔥 等待 SSE 连接建立后再提交消息（给 50ms 缓冲时间）
+      setTimeout(async () => {
+        try {
+          console.log('[A2A V2] Submitting message to backend:', userMessage);
+          const submitResponse = await api.groupChat.message(sessionId, userMessage || '');
+          console.log('[A2A V2] ✅ Message submitted successfully:', submitResponse);
+        } catch (submitError) {
+          console.error('[A2A V2] ❌ Failed to submit message:', submitError);
+          set({ error: 'Failed to submit message', workflowStatus: 'FAILED' });
+        }
+      }, 50);
 
     } catch (error: unknown) {
       console.error('[A2A V2] Failed to start group chat:', error);

@@ -1,5 +1,7 @@
-package com.agent.infrastructure.event;
+package com.agent.infrastructure.mq;
 
+import com.agent.infrastructure.event.OrchestrationEvent;
+import com.agent.infrastructure.event.RocketMQEventBus;
 import com.agent.infrastructure.event.events.*;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,7 +31,7 @@ public class OrchestrationEventConsumer implements RocketMQListener<MessageExt> 
     @Override
     public void onMessage(MessageExt messageExt) {
         String body = new String(messageExt.getBody(), StandardCharsets.UTF_8);
-        log.debug("[MQConsumer] Received message: {}", body);
+        //log.debug("[MQConsumer] Received message: {}", body);
 
         try {
             RocketMQEventBus.EventWrapper wrapper = objectMapper.readValue(body, RocketMQEventBus.EventWrapper.class);
