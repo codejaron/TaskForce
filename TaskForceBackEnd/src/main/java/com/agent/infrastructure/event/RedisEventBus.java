@@ -46,8 +46,8 @@ public class RedisEventBus implements EventBus {
             ));
 
             reactiveRedisTemplate.convertAndSend(channel, json)
-                    .doOnSuccess(receivers -> log.debug("[RedisEventBus] Published: sessionId={}, type={}, receivers={}",
-                            sessionId, event.getEventType(), receivers))
+//                    .doOnSuccess(receivers -> log.debug("[RedisEventBus] Published: sessionId={}, type={}, receivers={}",
+//                            sessionId, event.getEventType(), receivers))
                     .doOnError(e -> log.error("[RedisEventBus] Publish failed: sessionId={}", sessionId, e))
                     .subscribe();
 

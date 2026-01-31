@@ -3,19 +3,24 @@ package com.agent.controller;
 import com.agent.dto.ApiResponse;
 import com.agent.dto.SessionCreateRequest;
 import com.agent.entity.SessionAgent;
+import com.agent.infrastructure.graph.AgentGraphRunner;
 import com.agent.service.SessionService;
 import com.agent.service.SessionStopService;
 import com.agent.entity.Session;
 import jakarta.validation.Valid;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 会话管理控制器
- * 提供会话的 CRUD 操作
+ * 提供会话的 CRUD 操作和 SSE 流式响应
  */
 @Slf4j
 @RestController
@@ -25,7 +30,8 @@ import java.util.List;
 public class SessionController {
 
     private final SessionService sessionService;
-    private final  SessionStopService sessionStopService;
+    private final SessionStopService sessionStopService;
+    private final AgentGraphRunner graphRunner;
 
     /**
      * 获取所有会话
@@ -178,5 +184,36 @@ public class SessionController {
             log.error("Stop session failed", e);
             return ApiResponse.error(e.getMessage());
         }
+    }
+    
+    /**
+     * 聊天接口（SSE 流式响应）
+     */
+    @PostMapping("/{sessionId}/chat")
+    public Flux<ServerSentEvent<String>> chat(
+            @PathVariable String sessionId,
+            @RequestBody UserInputRequest request) {
+        
+        String requestId = UUID.randomUUID().toString();
+        return graphRunner.submit(sessionId, requestId, request.getMessage());
+    }
+    
+    /**
+     * 恢复执行（人工回答后）
+     */
+    @PostMapping("/{sessionId}/resume")
+    public Flux<ServerSentEvent<String>> resume(
+            @PathVariable String sessionId,
+            @RequestBody UserInputRequest request) {
+        
+        return graphRunner.resume(sessionId, request.getMessage());
+    }
+    
+    /**
+     * 用户输入请求 DTO
+     */
+    @Data
+    public static class UserInputRequest {
+        private String message;
     }
 }

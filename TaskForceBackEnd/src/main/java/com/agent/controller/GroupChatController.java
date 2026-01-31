@@ -1,5 +1,6 @@
 package com.agent.controller;
 
+import com.agent.application.orchestration.StateManager;
 import com.agent.application.orchestration.WorkflowEngine;
 import com.agent.domain.model.plan.ExecutionPlan;
 import com.agent.domain.model.plan.PlanStatus;
@@ -7,9 +8,11 @@ import com.agent.dto.SubmitResponse;
 import com.agent.dto.UserInputRequest;
 import com.agent.dto.WorkflowStateResponse;
 import com.agent.infrastructure.event.EventBus;
+import com.agent.infrastructure.graph.AgentGraphRunner;
 import com.agent.service.SessionStopService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
@@ -22,14 +25,16 @@ import java.util.UUID;
  * 群聊控制器
  * 提供基于异步事件驱动的多智能体群聊 API
  *
- * 新架构（异步模式）:
+ * 支持两种模式：
+ * - 新模式（Graph）：使用 AgentGraphRunner（可通过配置切换）
+ * - 旧模式（WorkflowEngine）：原有逻辑（兼容保留）
+ *
+ * API:
  * - POST /group-chat/{sessionId}/submit  - 提交用户输入，立即返回
  * - GET  /group-chat/{sessionId}/events  - SSE 事件流（独立连接）
  * - POST /group-chat/{sessionId}/resume  - 恢复执行（用户回答问题后）
  * - GET  /group-chat/{sessionId}/state   - 查询当前状态
- *
- * 旧接口（兼容保留，内部使用新架构）:
- * - POST /group-chat - SSE 流
+ * - POST /group-chat/{sessionId}/message - 智能路由（submit/resume）
  */
 @Slf4j
 @RestController
@@ -38,34 +43,60 @@ import java.util.UUID;
 public class GroupChatController {
 
     private final WorkflowEngine workflowEngine;
+    private final AgentGraphRunner graphRunner;
+    private final StateManager stateManager;
     private final EventBus eventBus;
     private final SessionStopService sessionStopService;
+    
+    /**
+     * 是否启用新的 Graph 模式
+     * 配置项：agent.graph.enabled=true
+     */
+    @Value("${agent.graph.enabled:true}")
+    private boolean graphEnabled;
 
 
 
     /**
-     * 处理用户消息
+     * 处理用户消息（智能路由）
+     * 根据当前状态自动判断是 submit 还是 resume
      */
     @PostMapping("/group-chat/{sessionId}/message")
     public ResponseEntity<SubmitResponse> handleUserMessage(
             @PathVariable String sessionId,
             @RequestBody UserInputRequest request) {
 
-        log.info("[API] Handle user message: sessionId={}", sessionId);
-
-        ExecutionPlan plan = workflowEngine.getState(sessionId);
+        log.info("[API] Handle user message: sessionId={}, graphEnabled={}", sessionId, graphEnabled);
 
         try {
-            String requestId;
-
-            if (plan != null && plan.getStatus() == PlanStatus.PAUSED) {
-                log.info("Session is PAUSED, routing to RESUME logic");
-                requestId = workflowEngine.resume(sessionId, request.text());
-                return ResponseEntity.ok(SubmitResponse.resumed(requestId));
+            if (graphEnabled) {
+                // 新模式：使用 Graph
+                ExecutionPlan plan = stateManager.loadPlan(sessionId);
+                String requestId = UUID.randomUUID().toString();
+                
+                if (plan != null && plan.getStatus() == PlanStatus.PAUSED) {
+                    log.info("Session is PAUSED, routing to Graph RESUME");
+                    graphRunner.resume(sessionId, request.text()).subscribe();
+                    return ResponseEntity.ok(SubmitResponse.resumed(requestId));
+                } else {
+                    log.info("Session is IDLE/NEW, routing to Graph SUBMIT");
+                    graphRunner.submit(sessionId, requestId, request.text()).subscribe();
+                    return ResponseEntity.ok(SubmitResponse.processing(requestId));
+                }
             } else {
-                log.info("Session is IDLE/NEW, routing to SUBMIT logic");
-                requestId = workflowEngine.submitUserInput(sessionId, request.text());
-                return ResponseEntity.ok(SubmitResponse.processing(requestId));
+                // 旧模式：使用 WorkflowEngine
+                ExecutionPlan plan = workflowEngine.getState(sessionId);
+                String requestId;
+
+                if (plan != null && plan.getStatus() == PlanStatus.PAUSED) {
+                    log.info("Session is PAUSED, routing to RESUME logic");
+                    requestId = workflowEngine.resume(sessionId, request.text());
+                    return ResponseEntity.ok(SubmitResponse.resumed(requestId));
+                } else {
+                    log.info("Session is IDLE/NEW, routing to SUBMIT logic");
+                    requestId = workflowEngine.submitUserInput(sessionId, request.text());
+                    return ResponseEntity.ok(SubmitResponse.processing(requestId));
+                }
             }
 
         } catch (Exception e) {
@@ -84,10 +115,20 @@ public class GroupChatController {
             @PathVariable String sessionId,
             @RequestBody UserInputRequest request) {
 
-        log.info("[API] Submit user input: sessionId={}, text={}", sessionId, request.text());
+        log.info("[API] Submit user input: sessionId={}, text={}, graphEnabled={}", 
+                sessionId, request.text(), graphEnabled);
 
         try {
-            String requestId = workflowEngine.submitUserInput(sessionId, request.text());
+            String requestId = UUID.randomUUID().toString();
+            
+            if (graphEnabled) {
+                // 新模式：使用 Graph
+                graphRunner.submit(sessionId, requestId, request.text()).subscribe();
+            } else {
+                // 旧模式：使用 WorkflowEngine
+                requestId = workflowEngine.submitUserInput(sessionId, request.text());
+            }
+            
             return ResponseEntity.ok(SubmitResponse.processing(requestId));
         } catch (Exception e) {
             log.error("[API] Submit failed: sessionId={}", sessionId, e);
@@ -135,10 +176,20 @@ public class GroupChatController {
             @PathVariable String sessionId,
             @RequestBody UserInputRequest request) {
 
-        log.info("[API] Resume session: sessionId={}, answer={}", sessionId, request.text());
+        log.info("[API] Resume session: sessionId={}, answer={}, graphEnabled={}", 
+                sessionId, request.text(), graphEnabled);
 
         try {
-            String requestId = workflowEngine.resume(sessionId, request.text());
+            String requestId = UUID.randomUUID().toString();
+            
+            if (graphEnabled) {
+                // 新模式：使用 Graph
+                graphRunner.resume(sessionId, request.text()).subscribe();
+            } else {
+                // 旧模式：使用 WorkflowEngine
+                requestId = workflowEngine.resume(sessionId, request.text());
+            }
+            
             return ResponseEntity.ok(SubmitResponse.resumed(requestId));
         } catch (Exception e) {
             log.error("[API] Resume failed: sessionId={}", sessionId, e);
@@ -152,9 +203,15 @@ public class GroupChatController {
      */
     @GetMapping("/group-chat/{sessionId}/state")
     public ResponseEntity<WorkflowStateResponse> getState(@PathVariable String sessionId) {
-        log.info("[API] Get state: sessionId={}", sessionId);
+        log.info("[API] Get state: sessionId={}, graphEnabled={}", sessionId, graphEnabled);
 
-        ExecutionPlan plan = workflowEngine.getState(sessionId);
+        ExecutionPlan plan;
+        if (graphEnabled) {
+            plan = stateManager.loadPlan(sessionId);
+        } else {
+            plan = workflowEngine.getState(sessionId);
+        }
+        
         if (plan == null) {
             return ResponseEntity.notFound().build();
         }
