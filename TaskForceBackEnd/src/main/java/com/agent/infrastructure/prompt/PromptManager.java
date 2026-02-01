@@ -92,6 +92,7 @@ public class PromptManager {
         1. stepIndex 从 1 开始重新计数
         2. 只输出需要调整的步骤
         3. assignedAgentId 必须从可用的 Worker 列表中选择
+        4. instruction 字段应该详细描述该步骤要做什么、如何做、需要注意什么
 
         【重要】
         直接输出 JSON 格式，不要添加任何解释性文字、前言或后缀。
@@ -261,8 +262,7 @@ public class PromptManager {
         PlanStep step = context.getCurrentStep();
         if (step != null) {
             prompt.append("【当前任务】\n");
-            prompt.append("步骤 ").append(step.getStepIndex()).append(": ").append(step.getDescription()).append("\n");
-            prompt.append("指令: ").append(step.getInstruction()).append("\n");
+            prompt.append("步骤 ").append(step.getStepIndex()).append(": ").append(step.getInstruction()).append("\n");
             if (step.getExpectedOutput() != null && !step.getExpectedOutput().isEmpty()) {
                 prompt.append("预期输出: ").append(step.getExpectedOutput()).append("\n");
             }

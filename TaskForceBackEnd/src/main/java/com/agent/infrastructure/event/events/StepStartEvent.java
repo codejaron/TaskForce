@@ -11,7 +11,7 @@ public class StepStartEvent extends OrchestrationEvent {
 
     private String stepId;
     private int stepIndex;
-    private String description;
+    private String instruction;
     private String assignedAgentId;
     private String assignedAgentName;
 
@@ -21,11 +21,11 @@ public class StepStartEvent extends OrchestrationEvent {
     }
 
     public StepStartEvent(String sessionId, String stepId, int stepIndex,
-                          String description, String assignedAgentId, String assignedAgentName) {
+                          String instruction, String assignedAgentId, String assignedAgentName) {
         super(sessionId);
         this.stepId = stepId;
         this.stepIndex = stepIndex;
-        this.description = description;
+        this.instruction = instruction;
         this.assignedAgentId = assignedAgentId;
         this.assignedAgentName = assignedAgentName;
     }

@@ -24,7 +24,7 @@ public record WorkflowStateResponse(
     public record StepSummary(
             String stepId,
             int stepIndex,
-            String description,
+            String instruction,
             String status,
             String assignedAgentName
     ) {}
@@ -39,7 +39,7 @@ public record WorkflowStateResponse(
                         .map(step -> new StepSummary(
                                 step.getStepId(),
                                 step.getStepIndex(),
-                                step.getDescription(),
+                                step.getInstruction(),
                                 step.getStatus().name(),
                                 step.getAssignedAgentName()
                         ))

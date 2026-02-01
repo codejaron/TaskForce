@@ -46,7 +46,7 @@ public class PlanGeneratedEvent extends OrchestrationEvent {
             sb.append(String.format("%d. [%s] %s\n",
                     step.getStepIndex(),
                     step.getAssignedAgentName(),
-                    step.getDescription()
+                    step.getInstruction()
             ));
         }
         return sb.toString();

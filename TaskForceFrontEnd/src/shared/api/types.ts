@@ -135,7 +135,7 @@ export interface WorkflowStateResponse {
 export interface StepSummary {
   stepId: string;
   stepIndex: number;
-  description: string;
+  instruction: string;
   status: string;
   assignedAgentName: string;
 }

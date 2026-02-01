@@ -184,7 +184,7 @@ function handleAsyncEvent(
             stepId: newStepId,
             originalStepId: stepId,
             stepIndex: typeof data.stepIndex === 'number' ? data.stepIndex : undefined,
-            stepDescription: typeof data.description === 'string' ? data.description : undefined
+            stepDescription: typeof data.instruction === 'string' ? data.instruction : undefined
           }]
         });
       }

@@ -69,7 +69,7 @@ public class ReplannerAgent {
                     currentPlan.getCompletedStepCount(),
                     currentPlan.getSteps().size(),
                     blockedStep != null ? blockedStep.getStepIndex() : 0,
-                    blockedStep != null ? blockedStep.getDescription() : "Unknown",
+                    blockedStep != null ? blockedStep.getInstruction() : "Unknown",
                     blockedReason,
                     workersInfo,
                     formatInstructions
@@ -183,7 +183,7 @@ public class ReplannerAgent {
                 请修正 JSON 格式，确保：
                 1. 包含 "type": "plan"
                 2. 包含 "goal" 字段
-                3. 包含 "steps" 数组，每个步骤包含 stepIndex, description, assignedAgentId, instruction, expectedOutput
+                3. 包含 "steps" 数组，每个步骤包含 stepIndex, assignedAgentId, instruction, expectedOutput
                 4. stepIndex 是数字类型
 
                 只输出修正后的纯 JSON，不要有任何解释或 Markdown 代码块标记。
@@ -208,10 +208,8 @@ public class ReplannerAgent {
                     return PlanStep.builder()
                             .stepId(UUID.randomUUID().toString())
                             .stepIndex(stepDto.getStepIndex())  // 保持LLM的1-based
-                            .description(stepDto.getDescription())
                             .assignedAgentId(stepDto.getAssignedAgentId())
                             .assignedAgentName(agent != null ? agent.getName() : "Unknown")  // 设置Agent名称
-                            .requiredCapability(stepDto.getRequiredCapability())
                             .instruction(stepDto.getInstruction())
                             .expectedOutput(stepDto.getExpectedOutput())
                             .status(StepStatus.PENDING)

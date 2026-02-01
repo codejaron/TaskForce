@@ -453,10 +453,10 @@ export const A2AStudioPage: React.FC = () => {
                                             <ol className="list-decimal list-inside mt-1 space-y-1 ml-2">
                                               {planData.steps.map((step: any, stepIdx: number) => (
                                                 <li key={stepIdx} className="text-gray-700">
-                                                  <span className="font-medium">{step.description}</span>
-                                                  {step.assignedAgentId && (
-                                                    <span className="text-purple-600 text-[11px] ml-1">
-                                                      (Agent {step.assignedAgentId})
+                                                  <span className="font-medium">{step.instruction}</span>
+                                                  {step.assignedAgentName && (
+                                                    <span className="text-purple-600 text-[11px] ml-2">
+                                                      - {step.assignedAgentName}
                                                     </span>
                                                   )}
                                                 </li>

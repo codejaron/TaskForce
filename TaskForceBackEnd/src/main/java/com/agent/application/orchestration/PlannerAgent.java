@@ -218,10 +218,8 @@ public class PlannerAgent {
                     return PlanStep.builder()
                             .stepId(UUID.randomUUID().toString())
                             .stepIndex(stepDto.getStepIndex())  // 保持LLM的1-based
-                            .description(stepDto.getDescription())
                             .assignedAgentId(stepDto.getAssignedAgentId())
                             .assignedAgentName(agent != null ? agent.getName() : "Unknown")
-                            .requiredCapability(stepDto.getRequiredCapability())
                             .instruction(stepDto.getInstruction())
                             .expectedOutput(stepDto.getExpectedOutput())
                             .status(StepStatus.PENDING)

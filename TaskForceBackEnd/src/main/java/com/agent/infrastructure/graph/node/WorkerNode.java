@@ -63,15 +63,15 @@ public class WorkerNode implements NodeAction {
         }
         
         PlanStep step = plan.getSteps().get(stepIndex);
-        log.info("[WorkerNode] Executing step: stepId={}, description={}", 
-                step.getStepId(), step.getDescription());
+        log.info("[WorkerNode] Executing step: stepId={}, instruction={}", 
+                step.getStepId(), step.getInstruction());
         
         // 发布事件
         eventBus.publish(sessionId, new StepStartEvent(
                 sessionId,
                 step.getStepId(),
                 step.getStepIndex(),
-                step.getDescription(),
+                step.getInstruction(),
                 step.getAssignedAgentId(),
                 step.getAssignedAgentName()
         ));

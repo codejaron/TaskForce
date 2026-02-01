@@ -28,11 +28,6 @@ public class PlanStep {
     private int stepIndex;
 
     /**
-     * 步骤描述
-     */
-    private String description;
-
-    /**
      * 分配的 Agent ID
      */
     private String assignedAgentId;
@@ -41,11 +36,6 @@ public class PlanStep {
      * 分配的 Agent 名称（用于展示）
      */
     private String assignedAgentName;
-
-    /**
-     * 所需能力
-     */
-    private String requiredCapability;
 
     /**
      * 详细执行指令

@@ -21,22 +21,10 @@ public class PlanStepDTO {
     private int stepIndex;
 
     /**
-     * 步骤描述
-     */
-    @JsonProperty("description")
-    private String description;
-
-    /**
      * 分配的 Agent ID
      */
     @JsonProperty("assignedAgentId")
     private String assignedAgentId;
-
-    /**
-     * 所需能力
-     */
-    @JsonProperty("requiredCapability")
-    private String requiredCapability;
 
     /**
      * 详细执行指令
