@@ -32,10 +32,125 @@ import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 import type { Session } from '../../../shared/api/types';
 
+// ==================== 计划数据类型定义 ====================
+interface PlanStep {
+  stepIndex: number;
+  instruction: string;
+  assignedAgentName: string;
+  assignedAgentId?: string;
+}
+
+interface PlanData {
+  goal: string;
+  steps: PlanStep[];
+}
+
+// ==================== 统一的计划解析函数 ====================
+/**
+ * 解析消息内容为计划数据
+ * @param content 消息内容（JSON 字符串）
+ * @param agentMap Agent ID 到名称的映射表
+ * @returns 解析后的计划对象，或 null（解析失败）
+ */
+function parsePlanContent(content: string, agentMap: Map<string, string>): PlanData | null {
+  try {
+    const data = JSON.parse(content) as Record<string, unknown>;
+    
+    // 验证必要字段
+    if (!data.goal || typeof data.goal !== 'string' || !Array.isArray(data.steps) || data.steps.length === 0) {
+      return null;
+    }
+    
+    // 验证步骤字段
+    const hasValidSteps = data.steps.every((step: unknown) => {
+      if (typeof step !== 'object' || step === null) return false;
+      const stepObj = step as Record<string, unknown>;
+      return stepObj.instruction && typeof stepObj.instruction === 'string';
+    });
+    
+    if (!hasValidSteps) {
+      return null;
+    }
+    
+    return {
+      goal: data.goal,
+      steps: data.steps.map((step: unknown) => {
+        const stepObj = step as Record<string, unknown>;
+        
+        // 优先使用 assignedAgentName，如果没有则通过 assignedAgentId 从 agentMap 查找
+        let agentName = 'Unknown';
+        if (typeof stepObj.assignedAgentName === 'string') {
+          agentName = stepObj.assignedAgentName;
+        } else if (typeof stepObj.assignedAgentId === 'string') {
+          agentName = agentMap.get(stepObj.assignedAgentId) || stepObj.assignedAgentId;
+        }
+        
+        return {
+          stepIndex: typeof stepObj.stepIndex === 'number' ? stepObj.stepIndex : 0,
+          instruction: String(stepObj.instruction),
+          assignedAgentName: agentName,
+          assignedAgentId: typeof stepObj.assignedAgentId === 'string' ? stepObj.assignedAgentId : undefined
+        };
+      })
+    };
+  } catch (e) {
+    console.warn('[parsePlanContent] Failed to parse plan content:', e);
+    return null;
+  }
+}
+
+// ==================== 统一的计划卡片组件 ====================
+interface PlanCardProps {
+  planData: PlanData;
+  t: (key: string) => string;
+}
+
+const PlanCard: React.FC<PlanCardProps> = ({ planData, t }) => {
+  return (
+    <div className="mb-2 px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg">
+      {/* 标题 */}
+      <div className="text-xs font-medium text-purple-900 mb-2 flex items-center gap-1">
+        <ClipboardList size={12} className="shrink-0" />
+        <span>{t('a2a.executionPlan') || '执行计划'}</span>
+      </div>
+      
+      {/* 目标 */}
+      <div className="text-xs text-gray-800 mb-2">
+        <strong className="text-purple-900">目标：</strong>
+        <span className="ml-1">{planData.goal}</span>
+      </div>
+      
+      {/* 步骤列表 */}
+      <div className="text-xs text-gray-700">
+        <strong className="text-purple-900">步骤：</strong>
+        <ol className="list-decimal list-inside mt-1 space-y-1 ml-2">
+          {planData.steps.map((step, idx) => (
+            <li key={idx} className="text-gray-700">
+              <span className="font-medium">{step.instruction}</span>
+              <span className="text-purple-600 text-[11px] ml-2">
+                - {step.assignedAgentName}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+  );
+};
+
 export const A2AStudioPage: React.FC = () => {
   const { sessions, currentSession, messages, toolCallsByStepId, workflowStatus, fetchSessions, selectSession, startGroupChatV2, disconnectStream, stopStream, deleteSession, refreshMessages } = useA2AStore();
   const { agents, fetchAgents } = useAgentStore();
   const { t } = useTranslation();
+
+  // 创建 Agent ID 到名称的映射表
+  const agentMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    agents.forEach(agent => {
+      map.set(agent.id, agent.name);
+    });
+    return map;
+  }, [agents]);
 
   // 计算是否正在运行（用于显示停止按钮）
   const isRunning = workflowStatus === 'PLANNING' || workflowStatus === 'EXECUTING' || workflowStatus === 'REPLANNING';
@@ -432,59 +547,31 @@ export const A2AStudioPage: React.FC = () => {
 
                               {/* 显示计划信息 */}
                               {(() => {
-                                // 如果是 plan 类型或 Planner 发送的消息，尝试解析 JSON
-                                if (msg.type === 'plan' || msg.agentName === 'Planner') {
-                                  try {
-                                    // 尝试解析 content 中的 JSON
-                                    const planData = JSON.parse(msg.content);
-                                    if (planData.goal && planData.steps && Array.isArray(planData.steps)) {
-                                      return (
-                                        <div className="mb-2 px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg">
-                                          <div className="text-xs font-medium text-purple-900 mb-2 flex items-center gap-1">
-                                            <ClipboardList size={12} className="shrink-0" />
-                                            <span>{t('a2a.executionPlan') || '执行计划'}</span>
-                                          </div>
-                                          <div className="text-xs text-gray-800 mb-2">
-                                            <strong className="text-purple-900">目标：</strong>
-                                            <span className="ml-1">{planData.goal}</span>
-                                          </div>
-                                          <div className="text-xs text-gray-700">
-                                            <strong className="text-purple-900">步骤：</strong>
-                                            <ol className="list-decimal list-inside mt-1 space-y-1 ml-2">
-                                              {planData.steps.map((step: any, stepIdx: number) => (
-                                                <li key={stepIdx} className="text-gray-700">
-                                                  <span className="font-medium">{step.instruction}</span>
-                                                  {step.assignedAgentName && (
-                                                    <span className="text-purple-600 text-[11px] ml-2">
-                                                      - {step.assignedAgentName}
-                                                    </span>
-                                                  )}
-                                                </li>
-                                              ))}
-                                            </ol>
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-                                  } catch (e) {
-                                    // JSON 解析失败，继续检查其他情况
-                                  }
+                                // 只对 type='plan' 的消息尝试 JSON 解析（来自数据库的历史消息）
+                                if (msg.type === 'plan') {
+                                  const planData = parsePlanContent(msg.content, agentMap);
                                   
-                                  // 如果有单独的 goal 字段（实时流式时的情况）
-                                  if (msg.goal) {
-                                    return (
-                                      <div className="mb-2 px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg">
-                                        <div className="text-xs font-medium text-purple-900 mb-1 flex items-center gap-1">
-                                          <ClipboardList size={12} className="shrink-0" />
-                                          <span>{t('a2a.executionPlan') || '执行计划'}</span>
-                                        </div>
-                                        <div className="text-xs text-gray-800">
-                                          {msg.goal}
-                                        </div>
-                                      </div>
-                                    );
+                                  if (planData) {
+                                    return <PlanCard planData={planData} t={t} />;
                                   }
                                 }
+                                
+                                // 对于 Planner 的 text 类型消息（来自 plan_generated 事件的格式化文本）
+                                // 显示为计划卡片样式
+                                if (msg.agentName === 'Planner' && msg.type === 'text' && msg.goal) {
+                                  return (
+                                    <div className="mb-2 px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg">
+                                      <div className="text-xs font-medium text-purple-900 mb-2 flex items-center gap-1">
+                                        <ClipboardList size={12} className="shrink-0" />
+                                        <span>{t('a2a.executionPlan') || '执行计划'}</span>
+                                      </div>
+                                      <div className="text-xs text-gray-800 whitespace-pre-wrap">
+                                        {msg.content}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                
                                 return null;
                               })()}
 
@@ -499,18 +586,19 @@ export const A2AStudioPage: React.FC = () => {
                               )}
 
                               {msg.content && (() => {
-                                // 如果是 plan 类型，检查 content 是否为 JSON 格式
-                                // 如果是 JSON 且已经被上面渲染过了，就不再显示原始内容
-                                if (msg.type === 'plan' || msg.agentName === 'Planner') {
-                                  try {
-                                    const planData = JSON.parse(msg.content);
-                                    if (planData.goal && planData.steps && Array.isArray(planData.steps)) {
-                                      // JSON 格式的 plan 已经在上面渲染了，不需要再显示
-                                      return null;
-                                    }
-                                  } catch (e) {
-                                    // 不是 JSON，继续正常渲染
+                                // 如果是 type='plan' 的消息，检查是否已经被上面渲染为计划卡片
+                                if (msg.type === 'plan') {
+                                  const planData = parsePlanContent(msg.content, agentMap);
+                                  if (planData) {
+                                    // JSON 格式的 plan 已经在上面渲染了，不需要再显示原始内容
+                                    return null;
                                   }
+                                }
+                                
+                                // 如果是 Planner 的 text 消息且有 goal 字段，说明已经显示过计划卡片了
+                                if (msg.agentName === 'Planner' && msg.type === 'text' && msg.goal) {
+                                  // 已经在上面显示为计划卡片，不需要再显示原始内容
+                                  return null;
                                 }
                                 
                                 return (

@@ -121,23 +121,30 @@ function handleAsyncEvent(
       break;
 
     case 'planner_delta':
+      // planner_delta 是 JSON 流式输出，不直接显示
+      // 只在规划中显示进度提示（已在 planning_start 中显示）
       break;
 
     case 'plan_generated':
-      set({
-        workflowStatus: newStatus || 'EXECUTING',
-        messages: [...messages, {
-          agentId: 'system',
-          agentName: 'Planner',
-          content: (typeof data.formattedPlan === 'string' && data.formattedPlan)
-            ? data.formattedPlan
-            : `📋 执行计划已生成\n目标: ${getStr(data.goal)}\n步骤数: ${getNum(data.stepCount)}`,
-          timestamp: new Date().toISOString(),
-          type: 'text',
-          planId: typeof data.planId === 'string' ? data.planId : undefined,
-          goal: typeof data.goal === 'string' ? data.goal : undefined
-        }]
-      });
+      {
+        // 使用 formattedPlan 显示格式化的计划
+        const planContent = (typeof data.formattedPlan === 'string' && data.formattedPlan)
+          ? data.formattedPlan
+          : `📋 执行计划已生成\n目标: ${getStr(data.goal)}\n步骤数: ${getNum(data.stepCount)}`;
+        
+        set({
+          workflowStatus: newStatus || 'EXECUTING',
+          messages: [...messages, {
+            agentId: 'system',
+            agentName: 'Planner',
+            content: planContent,
+            timestamp: new Date().toISOString(),
+            type: 'text',
+            planId: typeof data.planId === 'string' ? data.planId : undefined,
+            goal: typeof data.goal === 'string' ? data.goal : undefined
+          }]
+        });
+      }
       break;
 
     case 'need_clarification':
