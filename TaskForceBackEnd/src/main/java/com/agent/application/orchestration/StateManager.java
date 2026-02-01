@@ -202,6 +202,28 @@ public class StateManager {
     }
 
     /**
+     * 创建流式消息（Planner 使用，直接传入 agentId）
+     */
+    public Long createStreamingMessage(String sessionId, Long agentId, String agentName) {
+        try {
+            Message msg = new Message();
+            msg.setSessionId(sessionId);
+            msg.setRole("assistant");
+            msg.setMessageType("PLANNER_MSG");
+            msg.setAgentId(agentId);
+            msg.setAgentName(agentName != null ? agentName : "Planner");
+            msg.setContent("");  // 初始为空
+            msg.setStatus("STREAMING");
+            msg.setCreatedAt(LocalDateTime.now());
+            messageService.saveMessage(msg);
+            return msg.getId();
+        } catch (Exception e) {
+            log.error("[StateManager] Failed to create streaming message for planner", e);
+            return null;
+        }
+    }
+
+    /**
      * 追加流式内容（定期调用）
      */
     public void appendStreamingContent(Long messageId, String delta) {

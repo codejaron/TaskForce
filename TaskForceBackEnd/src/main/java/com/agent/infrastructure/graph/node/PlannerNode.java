@@ -89,13 +89,62 @@ public class PlannerNode implements NodeAction {
             log.info("[PlannerNode] Attempt {}/{} to generate plan", attempt, maxRetries);
             
             StringBuilder response = new StringBuilder();
+            Long messageId = null;
             
             try {
+                // 获取 Planner Agent 信息
+                Long plannerAgentId = getPlannerAgentId();
+                String plannerAgentName = getPlannerAgentName();
+                
+                // 创建流式消息记录
+                messageId = stateManager.createStreamingMessage(sessionId, plannerAgentId, plannerAgentName);
+                log.debug("[PlannerNode] Created streaming message: messageId={}", messageId);
+                
+                // 用于批量存储的缓冲区
+                StringBuilder buffer = new StringBuilder();
+                final int FLUSH_THRESHOLD = 100;
+                final Long finalMessageId = messageId;
+                
                 // 流式调用 LLM
                 llmAdapter.streamChat(getPlannerAgentId(), sessionId, null, currentPrompt, null)
                         .doOnNext(token -> {
                             response.append(token);
+                            buffer.append(token);
+                            
+                            // 实时推送到前端
                             eventBus.publish(sessionId, new PlannerDeltaEvent(sessionId, token));
+                            
+                            // 达到阈值时存入数据库
+                            if (buffer.length() >= FLUSH_THRESHOLD) {
+                                try {
+                                    stateManager.appendStreamingContent(finalMessageId, buffer.toString());
+                                    buffer.setLength(0);
+                                } catch (Exception e) {
+                                    log.error("[PlannerNode] Failed to append streaming content", e);
+                                }
+                            }
+                        })
+                        .doOnComplete(() -> {
+                            // 流式结束后，存储剩余内容
+                            if (buffer.length() > 0) {
+                                try {
+                                    stateManager.appendStreamingContent(finalMessageId, buffer.toString());
+                                } catch (Exception e) {
+                                    log.error("[PlannerNode] Failed to append final content", e);
+                                }
+                            }
+                            log.debug("[PlannerNode] Stream completed for messageId={}", finalMessageId);
+                        })
+                        .doOnError(e -> {
+                            // 即使出错也保存部分内容
+                            if (buffer.length() > 0) {
+                                try {
+                                    stateManager.appendStreamingContent(finalMessageId, buffer.toString());
+                                } catch (Exception ex) {
+                                    log.error("[PlannerNode] Failed to append content on error", ex);
+                                }
+                            }
+                            log.error("[PlannerNode] Stream error for messageId={}", finalMessageId, e);
                         })
                         .blockLast();
                 
@@ -105,11 +154,24 @@ public class PlannerNode implements NodeAction {
                 // 使用 BeanOutputConverter 解析响应
                 PlannerResponseDTO dto = plannerOutputConverter.convert(fullResponse);
                 log.info("[PlannerNode] ✅ Successfully parsed response on attempt {}", attempt);
+                
+                // 解析成功，标记消息为 COMPLETED
+                stateManager.completeStreamingMessage(messageId, fullResponse);
+                
                 return dto;
                 
             } catch (Exception e) {
                 lastException = e;
                 log.warn("[PlannerNode] ❌ Parse failed on attempt {}: {}", attempt, e.getMessage());
+                
+                // 即使解析失败，也标记消息为 COMPLETED（保留原始内容）
+                if (messageId != null) {
+                    try {
+                        stateManager.completeStreamingMessage(messageId, response.toString());
+                    } catch (Exception ex) {
+                        log.error("[PlannerNode] Failed to complete message on parse error", ex);
+                    }
+                }
                 
                 if (attempt < maxRetries) {
                     // 构造修正 Prompt
@@ -318,23 +380,44 @@ public class PlannerNode implements NodeAction {
      * 获取 Planner Agent ID
      */
     private Long getPlannerAgentId() {
+        Agent plannerAgent = getPlannerAgent();
+        return plannerAgent != null ? plannerAgent.getId() : null;
+    }
+    
+    /**
+     * 获取 Planner Agent Name
+     */
+    private String getPlannerAgentName() {
+        Agent plannerAgent = getPlannerAgent();
+        return plannerAgent != null ? plannerAgent.getName() : "Planner";
+    }
+    
+    /**
+     * 获取 Planner Agent（缓存查询结果）
+     */
+    private Agent plannerAgentCache = null;
+    
+    private Agent getPlannerAgent() {
+        if (plannerAgentCache != null) {
+            return plannerAgentCache;
+        }
+        
         try {
-            Agent plannerAgent = agentMapper.selectOne(
+            plannerAgentCache = agentMapper.selectOne(
                     new LambdaQueryWrapper<Agent>()
                             .eq(Agent::getRoleType, "PLANNER")
                             .last("LIMIT 1")
             );
             
-            if (plannerAgent != null) {
+            if (plannerAgentCache != null) {
                 log.debug("[PlannerNode] Found PLANNER agent: id={}, name={}",
-                        plannerAgent.getId(), plannerAgent.getName());
-                return plannerAgent.getId();
+                        plannerAgentCache.getId(), plannerAgentCache.getName());
             }
             
-            return null;
+            return plannerAgentCache;
             
         } catch (Exception e) {
-            log.error("[PlannerNode] Failed to get planner agent ID", e);
+            log.error("[PlannerNode] Failed to get planner agent", e);
             return null;
         }
     }
