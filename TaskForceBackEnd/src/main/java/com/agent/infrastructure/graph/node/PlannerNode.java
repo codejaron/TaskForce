@@ -51,6 +51,10 @@ public class PlannerNode implements NodeAction {
         String userInput = state.value("userInput", "");
         
         log.info("[PlannerNode] Starting: sessionId={}, userInput={}", sessionId, userInput);
+        if (userInput != null && !userInput.isBlank()) {
+            stateManager.recordUserInput(sessionId, requestId, userInput);
+            log.info("[PlannerNode] Recorded user input: sessionId={}", sessionId);
+        }
         
         // 发布事件
         eventBus.publish(sessionId, new PlanningStartEvent(sessionId));

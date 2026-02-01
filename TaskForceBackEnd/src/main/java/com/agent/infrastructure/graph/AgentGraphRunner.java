@@ -68,7 +68,7 @@ public class AgentGraphRunner {
     private Flux<ServerSentEvent<String>> executeAndStream(Map<String, Object> input,
                                                            RunnableConfig config,
                                                            String sessionId) {
-        // 1.1.0.0: stream() 返回 Flux<NodeOutput>
+
         Flux<NodeOutput> outputFlux = compiledAgentGraph.stream(input, config);
 
         return outputFlux
