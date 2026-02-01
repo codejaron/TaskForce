@@ -8,6 +8,8 @@ import com.agent.dto.SubmitResponse;
 import com.agent.dto.UserInputRequest;
 import com.agent.dto.WorkflowStateResponse;
 import com.agent.infrastructure.event.EventBus;
+import com.agent.infrastructure.event.OrchestrationEvent;
+import com.agent.infrastructure.event.RedisStreamEventBus;
 import com.agent.infrastructure.graph.AgentGraphRunner;
 import com.agent.service.SessionStopService;
 import lombok.RequiredArgsConstructor;
@@ -138,35 +140,37 @@ public class GroupChatController {
     }
 
     /**
-     * SSE 事件流 - 独立连接
-     * 前端调用此接口订阅事件，与 submit 完全解耦
+     * SSE 事件流 - 支持断点续传
      */
     @GetMapping(value = "/group-chat/{sessionId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<String>> events(@PathVariable String sessionId) {
-        log.info("[API] SSE subscribe: sessionId={}", sessionId);
+    public Flux<ServerSentEvent<String>> events(
+            @PathVariable String sessionId,
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
 
-        return eventBus.subscribe(sessionId)
+        log.info("[API] SSE subscribe: sessionId={}, lastEventId={}", sessionId, lastEventId);
+
+        // 使用支持断点续传的 subscribe
+        Flux<OrchestrationEvent> eventFlux;
+        if (eventBus instanceof RedisStreamEventBus) {
+            eventFlux = ((RedisStreamEventBus) eventBus).subscribe(sessionId, lastEventId);
+        } else {
+            eventFlux = eventBus.subscribe(sessionId);
+        }
+
+        return eventFlux
                 .map(event -> ServerSentEvent.<String>builder()
+                        .id(event.getStreamRecordId())
                         .event(event.getEventType())
                         .data(event.toJson())
                         .build())
                 .doOnSubscribe(s -> log.info("[API] SSE connected: sessionId={}", sessionId))
-                .doOnCancel(() -> {
-                    log.info("[API] SSE disconnected: sessionId={}", sessionId);
-                    // SSE 断开不影响后台任务继续执行
-                })
-                .doOnError(e -> {
-                    // 记录错误但不抛出，避免 AsyncContext 竞态条件
-                    if (!e.getMessage().contains("AsyncContext")) {
-                        log.warn("[API] SSE error: sessionId={}, error={}", sessionId, e.getMessage());
-                    }
-                })
+                .doOnCancel(() -> log.info("[API] SSE disconnected: sessionId={}", sessionId))
                 .onErrorResume(e -> {
-                    // 优雅处理错误，返回空 Flux 而不是让错误传播
-                    log.debug("[API] SSE stream error handled gracefully: sessionId={}", sessionId);
+                    log.debug("[API] SSE error handled: sessionId={}", sessionId);
                     return Flux.empty();
                 });
     }
+
 
     /**
      * 恢复执行（用户回答问题后）

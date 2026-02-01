@@ -119,5 +119,4 @@ rocketmq:
 app:
   idempotent:
     expire-hours: 24  # 幂等 key 过期时间（小时）
-  mq:
-    topic: orchestration-events
+

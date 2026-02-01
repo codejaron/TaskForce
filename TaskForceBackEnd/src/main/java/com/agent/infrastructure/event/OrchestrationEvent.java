@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.Getter;
+import lombok.Setter;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -28,6 +29,9 @@ public abstract class OrchestrationEvent {
     private final String eventId;
     private final String sessionId;
     private final LocalDateTime timestamp;
+    // Redis Stream 的 RecordId，用于断点续传
+    @Setter
+    private String streamRecordId;
 
     // 无参构造函数（Jackson 反序列化需要）
     protected OrchestrationEvent() {
