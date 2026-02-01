@@ -431,17 +431,62 @@ export const A2AStudioPage: React.FC = () => {
                               )}
 
                               {/* 显示计划信息 */}
-                              {msg.type === 'plan' && msg.goal && (
-                                <div className="mb-2 px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg">
-                                  <div className="text-xs font-medium text-purple-900 mb-1 flex items-center gap-1">
-                                    <ClipboardList size={12} className="shrink-0" />
-                                    <span>{t('a2a.executionPlan') || '执行计划'}</span>
-                                  </div>
-                                  <div className="text-xs text-gray-800">
-                                    {msg.goal}
-                                  </div>
-                                </div>
-                              )}
+                              {(() => {
+                                // 如果是 plan 类型或 Planner 发送的消息，尝试解析 JSON
+                                if (msg.type === 'plan' || msg.agentName === 'Planner') {
+                                  try {
+                                    // 尝试解析 content 中的 JSON
+                                    const planData = JSON.parse(msg.content);
+                                    if (planData.goal && planData.steps && Array.isArray(planData.steps)) {
+                                      return (
+                                        <div className="mb-2 px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg">
+                                          <div className="text-xs font-medium text-purple-900 mb-2 flex items-center gap-1">
+                                            <ClipboardList size={12} className="shrink-0" />
+                                            <span>{t('a2a.executionPlan') || '执行计划'}</span>
+                                          </div>
+                                          <div className="text-xs text-gray-800 mb-2">
+                                            <strong className="text-purple-900">目标：</strong>
+                                            <span className="ml-1">{planData.goal}</span>
+                                          </div>
+                                          <div className="text-xs text-gray-700">
+                                            <strong className="text-purple-900">步骤：</strong>
+                                            <ol className="list-decimal list-inside mt-1 space-y-1 ml-2">
+                                              {planData.steps.map((step: any, stepIdx: number) => (
+                                                <li key={stepIdx} className="text-gray-700">
+                                                  <span className="font-medium">{step.description}</span>
+                                                  {step.assignedAgentId && (
+                                                    <span className="text-purple-600 text-[11px] ml-1">
+                                                      (Agent {step.assignedAgentId})
+                                                    </span>
+                                                  )}
+                                                </li>
+                                              ))}
+                                            </ol>
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                  } catch (e) {
+                                    // JSON 解析失败，继续检查其他情况
+                                  }
+                                  
+                                  // 如果有单独的 goal 字段（实时流式时的情况）
+                                  if (msg.goal) {
+                                    return (
+                                      <div className="mb-2 px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg">
+                                        <div className="text-xs font-medium text-purple-900 mb-1 flex items-center gap-1">
+                                          <ClipboardList size={12} className="shrink-0" />
+                                          <span>{t('a2a.executionPlan') || '执行计划'}</span>
+                                        </div>
+                                        <div className="text-xs text-gray-800">
+                                          {msg.goal}
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+                                }
+                                return null;
+                              })()}
 
                               {/* 显示问题提示 */}
                               {msg.type === 'question' && (
@@ -453,7 +498,22 @@ export const A2AStudioPage: React.FC = () => {
                                 </div>
                               )}
 
-                              {msg.content && (
+                              {msg.content && (() => {
+                                // 如果是 plan 类型，检查 content 是否为 JSON 格式
+                                // 如果是 JSON 且已经被上面渲染过了，就不再显示原始内容
+                                if (msg.type === 'plan' || msg.agentName === 'Planner') {
+                                  try {
+                                    const planData = JSON.parse(msg.content);
+                                    if (planData.goal && planData.steps && Array.isArray(planData.steps)) {
+                                      // JSON 格式的 plan 已经在上面渲染了，不需要再显示
+                                      return null;
+                                    }
+                                  } catch (e) {
+                                    // 不是 JSON，继续正常渲染
+                                  }
+                                }
+                                
+                                return (
                                 <div className={clsx(
                                   "px-4 py-3 rounded-2xl text-sm",
                                   isHuman
@@ -662,7 +722,8 @@ export const A2AStudioPage: React.FC = () => {
                                     })()}
                                   </div>
                                 </div>
-                              )}
+                                );
+                              })()}
 
                               {/* Tool Calls for this step */}
                               {msg.stepId && toolCallsByStepId[msg.stepId] && toolCallsByStepId[msg.stepId].length > 0 && (

@@ -170,6 +170,7 @@ public class StateManager {
             msg.setAgentName(step.getAssignedAgentName());
             msg.setContent(response);
             msg.setStatus("COMPLETED");
+            msg.setStepId(step.getStepId());  // 设置 stepId
             msg.setCreatedAt(LocalDateTime.now());
             messageService.saveMessage(msg);
             return msg.getId();
@@ -192,6 +193,7 @@ public class StateManager {
             msg.setAgentName(step.getAssignedAgentName());
             msg.setContent("");  // 初始为空
             msg.setStatus("STREAMING");
+            msg.setStepId(step.getStepId());  // 设置 stepId
             msg.setCreatedAt(LocalDateTime.now());
             messageService.saveMessage(msg);
             return msg.getId();

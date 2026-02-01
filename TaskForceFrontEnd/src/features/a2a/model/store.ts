@@ -468,13 +468,25 @@ async function loadSessionMessages(
 
   const a2aMessages: A2AMessage[] = dbMessages.map(msg => {
     const isUser = msg.role === 'user';
+    
+    // 映射 messageType 到前端的 type
+    let messageType: 'text' | 'tool_use' | 'tool_result' | 'plan' | 'question' = 'text';
+    if (msg.messageType === 'PLANNER_MSG') {
+      messageType = 'plan';
+    } else if (msg.messageType === 'tool_use') {
+      messageType = 'tool_use';
+    } else if (msg.messageType === 'tool_result') {
+      messageType = 'tool_result';
+    }
+    
     return {
       agentId: isUser ? 'human' : (msg.agentId?.toString() || 'assistant'),
       agentName: msg.agentName || (isUser ? 'User' : 'Agent'),
       content: msg.content,
       timestamp: msg.createdAt,
-      type: (msg.messageType as 'text' | 'tool_use' | 'tool_result') || 'text',
-      isStreaming: msg.status === 'STREAMING'  // 从数据库字段映射
+      type: messageType,
+      isStreaming: msg.status === 'STREAMING',  // 从数据库字段映射
+      stepId: msg.stepId  // 映射 stepId 以关联工具调用
     };
   });
 

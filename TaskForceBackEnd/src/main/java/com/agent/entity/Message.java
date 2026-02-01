@@ -54,6 +54,9 @@ public class Message {
     @TableField("status")
     private String status;  // STREAMING, COMPLETED
     
+    @TableField("step_id")
+    private String stepId;  // 关联的步骤ID，用于关联工具调用
+    
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

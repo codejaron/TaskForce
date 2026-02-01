@@ -1,7 +1,7 @@
 -- ========================================
 -- TaskForce - Complete Database Schema
--- Version: 2.8 (Added status column to messages table)
--- Date: 2026-01-31
+-- Version: 2.9 (Added step_id to messages table)
+-- Date: 2026-02-01
 -- ========================================
 
 -- ========================================
@@ -120,11 +120,13 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_result TEXT COMMENT '工具执行结果',
     sequence INT COMMENT '消息序号',
     status VARCHAR(20) DEFAULT 'COMPLETED' COMMENT '消息状态: STREAMING-流式输出中, COMPLETED-已完成',
+    step_id VARCHAR(100) COMMENT '关联的步骤ID，用于关联工具调用',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_session_id (session_id),
     INDEX idx_agent_id (agent_id),
     INDEX idx_created_at (created_at),
     INDEX idx_session_sequence (session_id, sequence),
+    INDEX idx_step_id (step_id),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息表';
