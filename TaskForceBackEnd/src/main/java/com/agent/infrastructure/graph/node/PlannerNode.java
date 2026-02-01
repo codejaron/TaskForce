@@ -25,7 +25,7 @@ import org.springframework.stereotype.Component;
 import java.util.*;
 
 /**
- * Planner Node（从 PlannerAgent 改造）
+ * Planner Node
  * 负责生成执行计划或询问用户澄清
  */
 @Slf4j

@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Worker Node（从 StepExecutor 改造）
+ * Worker Node
  * 负责执行单个计划步骤
  */
 @Slf4j

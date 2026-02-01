@@ -28,7 +28,7 @@ public class SessionContextHolder {
     public static String getSessionId() {
         String sessionId = SESSION_ID_HOLDER.get();
         if (sessionId == null) {
-            throw new IllegalStateException("SessionId not set in current thread. Please ensure StepExecutor has set the context.");
+            throw new IllegalStateException("SessionId not set in current thread.");
         }
         return sessionId;
     }
