@@ -1,6 +1,6 @@
 package com.agent.infrastructure.persistence.mapper;
 
-import com.agent.domain.token.*;
+import com.agent.api.dto.*;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.agent.infrastructure.persistence.entity.TokenUsage;
 import org.apache.ibatis.annotations.Mapper;

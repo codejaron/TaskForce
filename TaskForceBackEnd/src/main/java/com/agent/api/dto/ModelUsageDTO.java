@@ -1,4 +1,4 @@
-package com.agent.domain.token;
+package com.agent.api.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

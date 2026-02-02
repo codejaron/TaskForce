@@ -1,6 +1,6 @@
 package com.agent.service;
 
-import com.agent.domain.token.*;
+import com.agent.api.dto.*;
 import com.agent.infrastructure.persistence.entity.TokenUsage;
 import com.agent.infrastructure.persistence.mapper.TokenUsageMapper;
 import lombok.RequiredArgsConstructor;
