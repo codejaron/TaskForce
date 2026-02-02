@@ -10,8 +10,7 @@ import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.infrastructure.persistence.mapper.AgentMapper;
-import com.agent.domain.agent.AgentProfile;
-import com.agent.service.AgentProfileService;
+import com.agent.service.AgentService;
 import com.agent.service.SessionService;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
@@ -37,7 +36,7 @@ public class PlannerNode implements NodeAction {
     private final EventBus eventBus;
     private final LlmAdapter llmAdapter;
     private final PromptManager promptManager;
-    private final AgentProfileService agentProfileService;
+    private final AgentService agentService;
     private final SessionService sessionService;
     private final AgentMapper agentMapper;
     
@@ -60,7 +59,7 @@ public class PlannerNode implements NodeAction {
         eventBus.publish(sessionId, new PlanningStartEvent(sessionId));
         
         // 加载可用 Workers
-        List<AgentProfile> workers = loadWorkers(sessionId);
+        List<Agent> workers = loadWorkers(sessionId);
         
         // 确定用户目标
         String userGoal = determineUserGoal(sessionId, userInput);
@@ -222,7 +221,7 @@ public class PlannerNode implements NodeAction {
     /**
      * 将 DTO 转换为 Map<String, Object>（返回给 Graph）
      */
-    private Map<String, Object> convertDtoToResult(String sessionId, PlannerResponseDTO dto, List<AgentProfile> workers) {
+    private Map<String, Object> convertDtoToResult(String sessionId, PlannerResponseDTO dto, List<Agent> workers) {
         String type = dto.getType();
         
         log.debug("[PlannerNode] Converting DTO to result: type={}, sessionId={}", type, sessionId);
@@ -287,10 +286,10 @@ public class PlannerNode implements NodeAction {
     /**
      * 将 DTO 转换为 ExecutionPlan
      */
-    private ExecutionPlan convertDtoToPlan(String sessionId, PlannerResponseDTO dto, List<AgentProfile> workers) {
+    private ExecutionPlan convertDtoToPlan(String sessionId, PlannerResponseDTO dto, List<Agent> workers) {
         List<PlanStep> steps = dto.getSteps().stream()
                 .map(stepDto -> {
-                    AgentProfile agent = findAgentById(workers, stepDto.getAssignedAgentId());
+                    Agent agent = findAgentById(workers, stepDto.getAssignedAgentId());
                     
                     return PlanStep.builder()
                             .stepId(UUID.randomUUID().toString())
@@ -350,17 +349,23 @@ public class PlannerNode implements NodeAction {
     /**
      * 加载可用 Worker
      */
-    private List<AgentProfile> loadWorkers(String sessionId) {
+    private List<Agent> loadWorkers(String sessionId) {
         try {
             var sessionAgents = sessionService.getSessionAgents(sessionId);
             if (sessionAgents.isEmpty()) {
-                return agentProfileService.listAll();
+                return agentService.getAllAgents();
             }
             
             return sessionAgents.stream()
-                    .map(sa -> agentProfileService.findById(String.valueOf(sa.getAgentId())))
-                    .filter(Optional::isPresent)
-                    .map(Optional::get)
+                    .map(sa -> {
+                        try {
+                            return agentService.getAgentById(sa.getAgentId());
+                        } catch (Exception e) {
+                            log.warn("[PlannerNode] Failed to load agent: {}", sa.getAgentId());
+                            return null;
+                        }
+                    })
+                    .filter(Objects::nonNull)
                     .toList();
         } catch (Exception e) {
             log.error("[PlannerNode] Failed to load workers", e);
@@ -371,9 +376,9 @@ public class PlannerNode implements NodeAction {
     /**
      * 根据 ID 查找 Agent
      */
-    private AgentProfile findAgentById(List<AgentProfile> workers, String agentId) {
+    private Agent findAgentById(List<Agent> workers, String agentId) {
         return workers.stream()
-                .filter(w -> agentId.equals(w.getId()))
+                .filter(w -> agentId.equals(String.valueOf(w.getId())))
                 .findFirst()
                 .orElse(null);
     }

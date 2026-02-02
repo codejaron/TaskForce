@@ -10,7 +10,7 @@ import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;
 import com.agent.infrastructure.prompt.PromptManager;
-import com.agent.domain.agent.AgentProfile;
+import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.common.util.ArtifactParser;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
@@ -141,7 +141,7 @@ public class WorkerNode implements NodeAction {
     private StepResult executeStep(String sessionId, PlanStep step) {
         try {
             // 1. 加载 Worker 配置
-            AgentProfile worker = stateManager.loadAgent(step.getAssignedAgentId());
+            Agent worker = stateManager.loadAgent(step.getAssignedAgentId());
             if (worker == null) {
                 log.error("[WorkerNode] Worker not found: {}", step.getAssignedAgentId());
                 return StepResult.blocked("Worker not found: " + step.getAssignedAgentId());

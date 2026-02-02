@@ -1,6 +1,6 @@
 package com.agent.domain.session;
 
-import com.agent.domain.agent.AgentProfile;
+import com.agent.infrastructure.persistence.entity.Agent;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -34,7 +34,7 @@ public class SessionState {
      * 参与会话的智能体列表
      */
     @Builder.Default
-    private List<AgentProfile> agents = new ArrayList<>();
+    private List<Agent> agents = new ArrayList<>();
 
     /**
      * 编排模式
@@ -116,7 +116,7 @@ public class SessionState {
     /**
      * 获取下一个发言者（轮询模式）
      */
-    public AgentProfile getNextSpeaker() {
+    public Agent getNextSpeaker() {
         if (agents.isEmpty()) {
             return null;
         }
@@ -127,7 +127,7 @@ public class SessionState {
     /**
      * 获取当前发言者
      */
-    public AgentProfile getCurrentSpeaker() {
+    public Agent getCurrentSpeaker() {
         if (agents.isEmpty() || currentSpeakerIndex >= agents.size()) {
             return null;
         }

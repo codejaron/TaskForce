@@ -3,7 +3,7 @@ package com.agent.infrastructure.prompt;
 import com.agent.domain.orchestration.model.TaskContext;
 import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.infrastructure.persistence.entity.Message;
-import com.agent.domain.agent.AgentProfile;
+import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.domain.tool.ToolInfo;
 import com.agent.service.AgentToolService;
 import com.agent.infrastructure.mcp.RemoteMcpClient;
@@ -134,7 +134,7 @@ public class PromptManager {
      * @param formatInstructions BeanOutputParser 生成的格式说明
      * @return 完整的Planner Prompt
      */
-    public String buildPlannerPrompt(List<AgentProfile> workers, String userGoal, String formatInstructions) {
+    public String buildPlannerPrompt(List<Agent> workers, String userGoal, String formatInstructions) {
         String rosterText = formatWorkerRoster(workers);
         String fullPrompt = String.format(PLANNER_PROMPT, rosterText, userGoal, formatInstructions);
 
@@ -189,7 +189,7 @@ public class PromptManager {
      * @param worker Worker配置
      * @return 完整的Worker Prompt
      */
-    public String buildWorkerPromptWithContext(TaskContext context, AgentProfile worker) {
+    public String buildWorkerPromptWithContext(TaskContext context, Agent worker) {
         StringBuilder prompt = new StringBuilder();
 
 
@@ -471,13 +471,13 @@ public class PromptManager {
      * 格式化 Worker 列表为文本（简化版）
      * 只包含 ID, name, description，不包含 systemPrompt 和工具列表
      */
-    private String formatWorkerRoster(List<AgentProfile> workers) {
+    private String formatWorkerRoster(List<Agent> workers) {
         if (workers == null || workers.isEmpty()) {
             return "(无可用Worker)";
         }
 
         StringBuilder sb = new StringBuilder();
-        for (AgentProfile worker : workers) {
+        for (Agent worker : workers) {
             String description = worker.getDescription();
             if (description == null || description.isBlank()) {
                 description = "通用任务执行";

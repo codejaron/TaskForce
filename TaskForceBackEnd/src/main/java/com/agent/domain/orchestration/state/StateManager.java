@@ -6,10 +6,10 @@ import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.domain.orchestration.repository.PlanRepository;
 import com.agent.infrastructure.persistence.entity.Message;
 import com.agent.infrastructure.persistence.entity.SessionArtifact;
+import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.persistence.mapper.MessageMapper;
 import com.agent.infrastructure.persistence.mapper.SessionArtifactMapper;
-import com.agent.domain.agent.AgentProfile;
-import com.agent.service.AgentProfileService;
+import com.agent.service.AgentService;
 import com.agent.service.MessageService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,7 +33,7 @@ public class StateManager {
 
     private final PlanRepository planRepository;
     private final MessageMapper messageMapper;
-    private final AgentProfileService agentProfileService;
+    private final AgentService agentService;
     private final SessionArtifactMapper sessionArtifactMapper;
     private final MessageService messageService;
 
@@ -253,9 +253,13 @@ public class StateManager {
     /**
      * 加载 Agent 配置
      */
-    public AgentProfile loadAgent(String agentId) {
+    public Agent loadAgent(String agentId) {
         try {
-            return agentProfileService.findById(agentId).orElse(null);
+            Long id = Long.parseLong(agentId);
+            return agentService.getAgentById(id);
+        } catch (NumberFormatException e) {
+            log.error("[StateManager] Invalid agent ID format: {}", agentId);
+            return null;
         } catch (Exception e) {
             log.error("[StateManager] Failed to load agent: {}", agentId, e);
             return null;
