@@ -77,7 +77,7 @@ public class SpringAiLlmAdapter implements LlmAdapter {
                         String content = chatResponse.getResult().getOutput().getText();
                         return content != null ? content : "";
                     })
-                    .filter(token -> !token.isEmpty())  // ✅ 过滤掉空字符串
+                    .filter(token -> !token.isEmpty())  // 过滤掉空字符串
                     .doOnNext(token -> log.trace("[LlmAdapter] Token received: {}", token))
                     .doOnComplete(() -> {
                         log.info("[LlmAdapter] Stream completed");
