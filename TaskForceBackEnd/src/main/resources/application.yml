@@ -61,20 +61,12 @@ spring:
 
 
 
-  # ========== 异步任务线程池配置 ==========
-  task:
-    execution:
-      pool:
-        core-size: 4
-        max-size: 8
-        queue-capacity: 100
-        keep-alive: 60s
-      thread-name-prefix: async-task-
+
 
 # ========== MyBatis-Plus 配置 ==========
 mybatis-plus:
   mapper-locations: classpath:mapper/**/*.xml
-  type-aliases-package: com.agent.entity
+  type-aliases-package: com.agent.infrastructure.persistence.entity
   configuration:
     map-underscore-to-camel-case: true
     log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
@@ -84,6 +76,7 @@ mybatis-plus:
       logic-delete-field: deleted
       logic-delete-value: 1
       logic-not-delete-value: 0
+
 
 
 

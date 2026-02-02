@@ -1,6 +1,6 @@
 package com.agent.infrastructure.mq;
 
-import com.agent.infrastructure.graph.AgentGraphRunner;
+import com.agent.orchestration.engine.AgentGraphRunner;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

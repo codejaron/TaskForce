@@ -1,7 +1,7 @@
 package com.agent.infrastructure.event.events;
 
-import com.agent.domain.model.plan.ExecutionPlan;
-import com.agent.domain.model.plan.PlanStep;
+import com.agent.domain.plan.ExecutionPlan;
+import com.agent.domain.plan.PlanStep;
 import com.agent.infrastructure.event.OrchestrationEvent;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Getter;

@@ -1,13 +1,13 @@
 package com.agent.infrastructure.prompt;
 
-import com.agent.domain.model.context.TaskContext;
-import com.agent.domain.model.plan.PlanStep;
-import com.agent.entity.Message;
-import com.agent.model.AgentProfile;
-import com.agent.model.ToolInfo;
-import com.agent.service.AgentToolService;
-import com.agent.client.RemoteMcpClient;
-import com.agent.util.ArtifactParser;
+import com.agent.domain.plan.TaskContext;
+import com.agent.domain.plan.PlanStep;
+import com.agent.infrastructure.persistence.entity.Message;
+import com.agent.domain.agent.AgentProfile;
+import com.agent.domain.tool.ToolInfo;
+import com.agent.application.service.AgentToolService;
+import com.agent.infrastructure.mcp.RemoteMcpClient;
+import com.agent.common.util.ArtifactParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
