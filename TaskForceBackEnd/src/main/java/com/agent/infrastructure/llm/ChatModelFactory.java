@@ -100,7 +100,8 @@ public class ChatModelFactory {
         OpenAiApi openAiApi = new OpenAiApi(provider.getBaseUrl(), apiKey);
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
-            .model(configuredModel != null ? configuredModel : "gpt-4o")
+            .model(configuredModel != null ? configuredModel : "deepseek-chat")
+            .streamUsage(true)
             .build();
 
         return new OpenAiChatModel(openAiApi, options);
@@ -124,6 +125,7 @@ public class ChatModelFactory {
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
             .model(configuredModel != null ? configuredModel : "llama2")
+            .streamUsage(true)
             .build();
 
         return new OpenAiChatModel(openAiApi, options);

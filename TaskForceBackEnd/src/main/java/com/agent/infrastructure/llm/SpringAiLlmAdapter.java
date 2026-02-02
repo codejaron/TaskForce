@@ -53,27 +53,31 @@ public class SpringAiLlmAdapter implements LlmAdapter {
 
             String prompt = promptManager.combinePrompts(systemPrompt, userMessage);
 
-            //log.debug("[LlmAdapter] 发送给 LLM 的完整 Prompt (agentId={}):\n{}", agentId, prompt);
-
             // 用于累计Usage数据
             AtomicReference<Usage> usageHolder = new AtomicReference<>();
 
             Flux<String> stream = client.prompt()
                     .user(prompt)
                     .stream()
-                    .chatResponse() // 改用chatResponse()以获取完整元数据
+                    .chatResponse()
                     .doOnNext(chatResponse -> {
-                        // 累计Usage
-                        Usage usage = chatResponse.getMetadata().getUsage();
-                        if (usage != null) {
-                            usageHolder.set(usage);
+                        // 累计Usage（最后一个chunk会包含完整的usage信息）
+                        if (chatResponse.getMetadata() != null) {
+                            Usage usage = chatResponse.getMetadata().getUsage();
+                            if (usage != null && usage.getTotalTokens() != null && usage.getTotalTokens() > 0) {
+                                usageHolder.set(usage);
+                            }
                         }
                     })
                     .map(chatResponse -> {
-                        // 提取content进行流式传输
+                        // 启用 streamUsage 后，最后一个 chunk 只有 usage，没有 content
+                        if (chatResponse.getResult() == null) {
+                            return "";  // 返回空字符串，不影响流
+                        }
                         String content = chatResponse.getResult().getOutput().getText();
                         return content != null ? content : "";
                     })
+                    .filter(token -> !token.isEmpty())  // ✅ 过滤掉空字符串
                     .doOnNext(token -> log.trace("[LlmAdapter] Token received: {}", token))
                     .doOnComplete(() -> {
                         log.info("[LlmAdapter] Stream completed");
