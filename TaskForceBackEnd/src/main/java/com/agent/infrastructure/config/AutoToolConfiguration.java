@@ -45,9 +45,9 @@ public class AutoToolConfiguration implements ApplicationContextAware {
 
     @PostConstruct
     public void scanTools() {
-        log.info("[AutoToolConfiguration] Starting to scan @Tool methods in com.agent.service.tool package...");
+        log.info("[AutoToolConfiguration] Starting to scan @Tool methods");
 
-        // 只扫描 com.agent.service.tool 包下的 Bean
+        // 只扫描指定路径下的 Bean
         Map<String, Object> toolBeans = applicationContext.getBeansWithAnnotation(Service.class);
         int totalScanned = 0;
         int totalRegistered = 0;
@@ -57,9 +57,9 @@ public class AutoToolConfiguration implements ApplicationContextAware {
             Object bean = entry.getValue();
             Class<?> clazz = bean.getClass();
 
-            // 只处理 com.agent.service.tool 包下的类
+            // 只处理指定路径下的类
             String packageName = clazz.getPackage() != null ? clazz.getPackage().getName() : "";
-            if (!packageName.startsWith("com.agent.service.tool")) {
+            if (!packageName.startsWith("com.agent.infrastructure.mcp.tool")) {
                 continue;
             }
 

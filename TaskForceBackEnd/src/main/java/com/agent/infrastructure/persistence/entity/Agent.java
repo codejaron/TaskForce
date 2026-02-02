@@ -52,7 +52,6 @@ public class Agent {
     @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;
 
-    // Role type stored as string in DB: MODERATOR / WORKER
     @TableField("role_type")
     @Builder.Default
     private String roleType = "WORKER";

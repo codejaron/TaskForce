@@ -1,4 +1,4 @@
-package com.agent.application.service.tool;
+package com.agent.infrastructure.mcp.tool;
 
 import com.agent.infrastructure.persistence.entity.SessionArtifact;
 import com.agent.common.context.SessionContextHolder;
