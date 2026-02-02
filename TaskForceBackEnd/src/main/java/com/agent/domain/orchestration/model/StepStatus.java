@@ -1,4 +1,4 @@
-package com.agent.domain.plan;
+package com.agent.domain.orchestration.model;
 
 /**
  * 步骤状态枚举

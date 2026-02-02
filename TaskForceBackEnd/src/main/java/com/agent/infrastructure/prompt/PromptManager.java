@@ -1,11 +1,11 @@
 package com.agent.infrastructure.prompt;
 
-import com.agent.domain.plan.TaskContext;
-import com.agent.domain.plan.PlanStep;
+import com.agent.domain.orchestration.model.TaskContext;
+import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.infrastructure.persistence.entity.Message;
 import com.agent.domain.agent.AgentProfile;
 import com.agent.domain.tool.ToolInfo;
-import com.agent.application.service.AgentToolService;
+import com.agent.service.AgentToolService;
 import com.agent.infrastructure.mcp.RemoteMcpClient;
 import com.agent.common.util.ArtifactParser;
 import lombok.RequiredArgsConstructor;

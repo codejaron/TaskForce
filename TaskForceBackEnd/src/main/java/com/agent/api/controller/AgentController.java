@@ -1,6 +1,6 @@
 package com.agent.api.controller;
 
-import com.agent.application.service.AgentToolService;
+import com.agent.service.AgentToolService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.agent.api.request.AgentRequest;
 import com.agent.api.response.AgentResponse;
@@ -10,7 +10,7 @@ import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.persistence.entity.LLMProvider;
 import com.agent.infrastructure.llm.ChatModelFactory;
 import com.agent.infrastructure.persistence.mapper.LLMProviderMapper;
-import com.agent.application.service.AgentService;
+import com.agent.service.AgentService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

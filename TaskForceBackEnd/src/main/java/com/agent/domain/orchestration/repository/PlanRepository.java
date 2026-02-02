@@ -1,6 +1,6 @@
-package com.agent.domain.plan;
+package com.agent.domain.orchestration.model;
 
-import com.agent.domain.plan.ExecutionPlan;
+import com.agent.domain.orchestration.model.ExecutionPlan;
 
 import java.util.Optional;
 

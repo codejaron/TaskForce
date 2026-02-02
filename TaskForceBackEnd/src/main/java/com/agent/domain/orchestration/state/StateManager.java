@@ -1,16 +1,16 @@
-package com.agent.orchestration.state;
+package com.agent.domain.orchestration.state;
 
-import com.agent.domain.plan.TaskContext;
-import com.agent.domain.plan.ExecutionPlan;
-import com.agent.domain.plan.PlanStep;
-import com.agent.domain.plan.PlanRepository;
+import com.agent.domain.orchestration.model.TaskContext;
+import com.agent.domain.orchestration.model.ExecutionPlan;
+import com.agent.domain.orchestration.model.PlanStep;
+import com.agent.domain.orchestration.model.PlanRepository;
 import com.agent.infrastructure.persistence.entity.Message;
 import com.agent.infrastructure.persistence.entity.SessionArtifact;
 import com.agent.infrastructure.persistence.mapper.MessageMapper;
 import com.agent.infrastructure.persistence.mapper.SessionArtifactMapper;
 import com.agent.domain.agent.AgentProfile;
-import com.agent.application.service.AgentProfileService;
-import com.agent.application.service.MessageService;
+import com.agent.service.AgentProfileService;
+import com.agent.service.MessageService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;

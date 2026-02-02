@@ -2,7 +2,7 @@ package com.agent.api.controller;
 
 import com.agent.api.response.ApiResponse;
 import com.agent.infrastructure.persistence.entity.Message;
-import com.agent.application.service.MessageService;
+import com.agent.service.MessageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;

@@ -1,9 +1,9 @@
-package com.agent.orchestration.graph.node;
+package com.agent.domain.orchestration.graph.node;
 
-import com.agent.orchestration.state.StateManager;
-import com.agent.orchestration.dto.PlannerResponseDTO;
-import com.agent.domain.plan.TaskContext;
-import com.agent.domain.plan.*;
+import com.agent.domain.orchestration.state.StateManager;
+import com.agent.domain.orchestration.dto.PlannerResponseDTO;
+import com.agent.domain.orchestration.model.TaskContext;
+import com.agent.domain.orchestration.model.*;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
@@ -11,8 +11,8 @@ import com.agent.infrastructure.llm.LlmAdapter;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.infrastructure.persistence.mapper.AgentMapper;
 import com.agent.domain.agent.AgentProfile;
-import com.agent.application.service.AgentProfileService;
-import com.agent.application.service.SessionService;
+import com.agent.service.AgentProfileService;
+import com.agent.service.SessionService;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;

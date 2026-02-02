@@ -1,10 +1,10 @@
 package com.agent.infrastructure.persistence.repository;
 
-import com.agent.domain.plan.ExecutionPlan;
-import com.agent.domain.plan.PauseSource;
-import com.agent.domain.plan.PlanStatus;
-import com.agent.domain.plan.PlanStep;
-import com.agent.domain.plan.PlanRepository;
+import com.agent.domain.orchestration.model.ExecutionPlan;
+import com.agent.domain.orchestration.model.PauseSource;
+import com.agent.domain.orchestration.model.PlanStatus;
+import com.agent.domain.orchestration.model.PlanStep;
+import com.agent.domain.orchestration.model.PlanRepository;
 import com.agent.infrastructure.persistence.entity.ExecutionPlanDO;
 import com.agent.infrastructure.persistence.mapper.ExecutionPlanMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;

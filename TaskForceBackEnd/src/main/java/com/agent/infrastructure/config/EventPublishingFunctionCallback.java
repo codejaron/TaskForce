@@ -3,7 +3,7 @@ package com.agent.infrastructure.config;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.ToolCallCompleteEvent;
 import com.agent.infrastructure.event.events.ToolCallStartEvent;
-import com.agent.application.service.ToolCallService;
+import com.agent.service.ToolCallService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.model.function.FunctionCallback;
 

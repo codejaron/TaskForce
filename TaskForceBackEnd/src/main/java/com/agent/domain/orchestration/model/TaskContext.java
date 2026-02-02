@@ -1,6 +1,6 @@
-package com.agent.domain.plan;
+package com.agent.domain.orchestration.model;
 
-import com.agent.domain.plan.PlanStep;
+import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.infrastructure.persistence.entity.Message;
 import lombok.AllArgsConstructor;
 import lombok.Builder;

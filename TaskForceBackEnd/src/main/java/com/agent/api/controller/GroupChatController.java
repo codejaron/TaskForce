@@ -1,16 +1,16 @@
 package com.agent.api.controller;
 
-import com.agent.orchestration.state.StateManager;
-import com.agent.domain.plan.ExecutionPlan;
-import com.agent.domain.plan.PlanStatus;
+import com.agent.domain.orchestration.state.StateManager;
+import com.agent.domain.orchestration.model.ExecutionPlan;
+import com.agent.domain.orchestration.model.PlanStatus;
 import com.agent.api.response.SubmitResponse;
 import com.agent.api.request.UserInputRequest;
 import com.agent.api.response.WorkflowStateResponse;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.OrchestrationEvent;
 import com.agent.infrastructure.event.RedisStreamEventBus;
-import com.agent.orchestration.engine.AgentGraphRunner;
-import com.agent.application.service.SessionStopService;
+import com.agent.domain.orchestration.engine.AgentGraphRunner;
+import com.agent.service.SessionStopService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;

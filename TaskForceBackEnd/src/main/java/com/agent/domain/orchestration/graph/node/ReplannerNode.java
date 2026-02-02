@@ -1,7 +1,7 @@
-package com.agent.orchestration.graph.node;
+package com.agent.domain.orchestration.graph.node;
 
-import com.agent.orchestration.state.StateManager;
-import com.agent.domain.plan.ExecutionPlan;
+import com.agent.domain.orchestration.state.StateManager;
+import com.agent.domain.orchestration.model.ExecutionPlan;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
 import com.alibaba.cloud.ai.graph.OverAllState;

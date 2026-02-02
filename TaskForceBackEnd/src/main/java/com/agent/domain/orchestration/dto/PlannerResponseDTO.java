@@ -1,4 +1,4 @@
-package com.agent.orchestration.dto;
+package com.agent.domain.orchestration.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;

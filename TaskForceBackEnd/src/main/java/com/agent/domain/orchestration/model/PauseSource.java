@@ -1,4 +1,4 @@
-package com.agent.domain.plan;
+package com.agent.domain.orchestration.model;
 
 /**
  * 暂停触发源枚举

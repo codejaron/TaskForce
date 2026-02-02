@@ -1,4 +1,4 @@
-package com.agent.application.service;
+package com.agent.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.agent.api.request.ChannelModelRequest;

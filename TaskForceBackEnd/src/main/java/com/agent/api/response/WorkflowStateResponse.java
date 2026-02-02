@@ -1,7 +1,7 @@
 package com.agent.api.response;
 
-import com.agent.domain.plan.ExecutionPlan;
-import com.agent.domain.plan.PlanStatus;
+import com.agent.domain.orchestration.model.ExecutionPlan;
+import com.agent.domain.orchestration.model.PlanStatus;
 
 import java.util.List;
 

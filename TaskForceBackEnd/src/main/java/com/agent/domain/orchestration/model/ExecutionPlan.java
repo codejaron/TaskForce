@@ -1,4 +1,4 @@
-package com.agent.domain.plan;
+package com.agent.domain.orchestration.model;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

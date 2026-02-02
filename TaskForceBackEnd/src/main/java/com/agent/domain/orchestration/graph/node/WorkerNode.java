@@ -1,11 +1,11 @@
-package com.agent.orchestration.graph.node;
+package com.agent.domain.orchestration.graph.node;
 
-import com.agent.orchestration.state.StateManager;
-import com.agent.domain.plan.TaskContext;
-import com.agent.domain.plan.ExecutionPlan;
-import com.agent.domain.plan.PlanStep;
-import com.agent.domain.plan.StepResult;
-import com.agent.domain.plan.StepStatus;
+import com.agent.domain.orchestration.state.StateManager;
+import com.agent.domain.orchestration.model.TaskContext;
+import com.agent.domain.orchestration.model.ExecutionPlan;
+import com.agent.domain.orchestration.model.PlanStep;
+import com.agent.domain.orchestration.model.StepResult;
+import com.agent.domain.orchestration.model.StepStatus;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;

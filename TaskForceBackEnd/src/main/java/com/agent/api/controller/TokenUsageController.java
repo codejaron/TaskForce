@@ -2,7 +2,7 @@ package com.agent.api.controller;
 
 import com.agent.api.response.ApiResponse;
 import com.agent.domain.token.*;
-import com.agent.application.service.TokenUsageService;
+import com.agent.service.TokenUsageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;

@@ -1,7 +1,7 @@
 package com.agent.infrastructure.llm;
 
 import com.agent.infrastructure.persistence.entity.LLMProvider;
-import com.agent.application.service.ChannelModelService;
+import com.agent.service.ChannelModelService;
 import com.agent.infrastructure.persistence.entity.ChannelModel;
 import com.agent.infrastructure.persistence.mapper.LLMProviderMapper;
 import com.agent.common.util.EncryptionUtil;

@@ -1,4 +1,4 @@
-package com.agent.application.service;
+package com.agent.service;
 
 import com.agent.domain.token.*;
 import com.agent.infrastructure.persistence.entity.TokenUsage;

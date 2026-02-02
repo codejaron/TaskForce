@@ -1,4 +1,4 @@
-package com.agent.domain.plan;
+package com.agent.domain.orchestration.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

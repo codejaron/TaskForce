@@ -3,7 +3,7 @@ package com.agent.api.controller;
 import com.agent.domain.tool.AgentToolDetail;
 import com.agent.api.response.ApiResponse;
 import com.agent.infrastructure.persistence.entity.AgentTool;
-import com.agent.application.service.AgentToolService;
+import com.agent.service.AgentToolService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;

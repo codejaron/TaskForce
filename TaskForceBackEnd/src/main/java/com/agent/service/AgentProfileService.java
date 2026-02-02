@@ -1,4 +1,4 @@
-package com.agent.application.service;
+package com.agent.service;
 
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.domain.agent.AgentProfile;
