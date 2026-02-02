@@ -3,7 +3,7 @@ package com.agent.domain.orchestration.state;
 import com.agent.domain.orchestration.model.TaskContext;
 import com.agent.domain.orchestration.model.ExecutionPlan;
 import com.agent.domain.orchestration.model.PlanStep;
-import com.agent.domain.orchestration.model.PlanRepository;
+import com.agent.domain.orchestration.repository.PlanRepository;
 import com.agent.infrastructure.persistence.entity.Message;
 import com.agent.infrastructure.persistence.entity.SessionArtifact;
 import com.agent.infrastructure.persistence.mapper.MessageMapper;

@@ -9,7 +9,7 @@ import com.agent.api.response.WorkflowStateResponse;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.OrchestrationEvent;
 import com.agent.infrastructure.event.RedisStreamEventBus;
-import com.agent.domain.orchestration.engine.AgentGraphRunner;
+import com.agent.domain.orchestration.graph.AgentGraphRunner;
 import com.agent.service.SessionStopService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -1,4 +1,4 @@
-package com.agent.domain.orchestration.model;
+package com.agent.domain.orchestration.repository;
 
 import com.agent.domain.orchestration.model.ExecutionPlan;
 

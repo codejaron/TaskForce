@@ -3,7 +3,7 @@ package com.agent.api.controller;
 import com.agent.api.response.ApiResponse;
 import com.agent.api.request.SessionCreateRequest;
 import com.agent.infrastructure.persistence.entity.SessionAgent;
-import com.agent.domain.orchestration.engine.AgentGraphRunner;
+import com.agent.domain.orchestration.graph.AgentGraphRunner;
 import com.agent.service.SessionService;
 import com.agent.service.SessionStopService;
 import com.agent.infrastructure.persistence.entity.Session;
