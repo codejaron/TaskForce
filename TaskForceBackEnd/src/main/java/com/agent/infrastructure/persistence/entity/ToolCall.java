@@ -63,6 +63,9 @@ public class ToolCall {
     @TableField("sequence")
     private Integer sequence;
 
+    @TableField("file_path")
+    private String filePath;  // 工具结果文件路径
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

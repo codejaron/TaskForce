@@ -184,6 +184,67 @@ public class PromptManager {
     }
 
     /**
+     * 构建带组装上下文的 Worker Prompt
+     * @param assembledContext 已组装的上下文（来自 ContextAssembler）
+     * @param worker Worker配置
+     * @param step 当前步骤
+     * @return 完整的Worker Prompt
+     */
+    public String buildWorkerPromptWithAssembledContext(String assembledContext, Agent worker, PlanStep step) {
+        StringBuilder prompt = new StringBuilder();
+
+        // 1. 输出协议 + 工具使用说明（静态 - 大块内容，优先缓存）
+        prompt.append("""
+            【输出协议】
+            如果你产生了需要传递给后续步骤的关键产物（如代码、搜索结果、草稿），
+            使用下面这个MCP工具写入产出物：
+            - filesystem::write_file(path="/workspace/{sessionId}/artifacts/result.md", content="...")
+
+            【步骤完成协议】
+            完成当前步骤后，**必须**调用 native::write_step_summary 工具记录核心结论：
+
+            write_step_summary(
+              stepIndex={当前步骤索引},
+              stepTitle="步骤标题",
+              conclusion="一句话核心结论",
+              findings=["关键发现1", "关键发现2"],
+              nextSuggestion="给下一步的建议"
+            )
+
+            注意：sessionId 会自动从上下文获取，无需传递。
+
+            【查阅历史】
+            如需查看历史步骤详情，使用：
+            - filesystem::read_file(path="/workspace/{sessionId}/step_001/summary.md")
+            - filesystem::list_directory(path="/workspace/{sessionId}/step_001/tools")
+
+            【写入产出物】
+            如需保存最终产出物，使用：
+            - filesystem::write_file(path="/workspace/{sessionId}/artifacts/result.md", content="...")
+
+            【执行规则】
+            1. 严格按照任务指令执行
+            2. 如果遇到无法完成的情况，输出 "BLOCKED: 原因"
+            3. 如果需要用户提供更多信息，输出 "NEED_USER_INPUT: 问题"
+            4. 完成后直接输出结果，不需要额外的格式
+
+            """);
+
+        // 2. 角色定义
+        prompt.append("你是一个任务执行专家：").append(worker.getName()).append("\n\n");
+        prompt.append("【你的角色】\n");
+        prompt.append(worker.getSystemPrompt() != null ? worker.getSystemPrompt() : "执行任务").append("\n\n");
+
+        // 3. 组装的上下文（包含计划、历史步骤、当前步骤）
+        prompt.append(assembledContext);
+
+        log.debug("[PromptManager] Built Worker Prompt with assembled context: worker={}, contextLength={}",
+                worker.getName(), assembledContext.length());
+
+        return prompt.toString();
+    }
+
+    /**
      * 构建带上下文的 Worker Prompt
      * @param context 任务上下文
      * @param worker Worker配置

@@ -1,5 +1,7 @@
 package com.agent.domain.orchestration.graph.node;
 
+import com.agent.domain.context.assembly.ContextAssembler;
+import com.agent.domain.context.service.ContextService;
 import com.agent.domain.orchestration.state.StateManager;
 import com.agent.domain.orchestration.model.TaskContext;
 import com.agent.domain.orchestration.model.ExecutionPlan;
@@ -34,6 +36,8 @@ public class WorkerNode implements NodeAction {
     private final EventBus eventBus;
     private final LlmAdapter llmAdapter;
     private final PromptManager promptManager;
+    private final ContextService contextService;
+    private final ContextAssembler contextAssembler;
     
     @Override
     public Map<String, Object> apply(OverAllState state) throws Exception {
@@ -147,11 +151,12 @@ public class WorkerNode implements NodeAction {
                 return StepResult.blocked("Worker not found: " + step.getAssignedAgentId());
             }
             
-            // 2. 构建上下文
-            TaskContext context = stateManager.buildContext(sessionId);
+            // 2. 组装上下文（使用新的上下文系统）
+            String assembledContext = contextAssembler.assemble(sessionId, step.getStepIndex());
             
-            // 3. 构建 Prompt
-            String systemPrompt = promptManager.buildWorkerPromptWithContext(context, worker);
+            // 3. 构建 Prompt（使用组装的上下文）
+            String systemPrompt = promptManager.buildWorkerPromptWithAssembledContext(
+                    assembledContext, worker, step);
             log.debug("[WorkerNode] Worker '{}' (步骤 {}) 收到的 Prompt:\n{}",
                     worker.getName(), step.getStepId(), systemPrompt);
             
@@ -179,12 +184,18 @@ public class WorkerNode implements NodeAction {
                             stateManager.appendStreamingContent(messageId, buffer.toString());
                         }
                         stateManager.completeStreamingMessage(messageId, response.toString());
+                        
+                        // 保存步骤输出到上下文系统
+                        contextService.saveStepOutput(sessionId, step.getStepIndex(), response.toString());
                     })
                     .doOnError(e -> {
                         if (buffer.length() > 0) {
                             stateManager.appendStreamingContent(messageId, buffer.toString());
                         }
                         stateManager.completeStreamingMessage(messageId, response.toString());
+                        
+                        // 即使出错也保存输出
+                        contextService.saveStepOutput(sessionId, step.getStepIndex(), response.toString());
                     })
                     .blockLast();
             
@@ -192,7 +203,7 @@ public class WorkerNode implements NodeAction {
             log.debug("[WorkerNode] Worker '{}' 完整响应 ({}字符):\n{}",
                     worker.getName(), output.length(), output);
             
-            // 5. 提取并存储 Artifact
+            // 6. 提取并存储 Artifact
             List<ArtifactParser.Artifact> artifacts = ArtifactParser.extract(output);
             if (!artifacts.isEmpty()) {
                 log.info("[WorkerNode] Extracted {} artifact(s) from worker '{}'",
@@ -201,10 +212,13 @@ public class WorkerNode implements NodeAction {
                     log.debug("[WorkerNode] Saving artifact: key='{}', valueLength={}",
                             artifact.getKey(), artifact.getValue().length());
                     stateManager.saveArtifact(sessionId, artifact.getKey(), artifact.getValue());
+                    
+                    // 同时保存到上下文系统的 artifacts 目录
+                    contextService.saveArtifact(sessionId, artifact.getKey() + ".md", artifact.getValue());
                 }
             }
             
-            // 6. 解析结果状态（删除 recordStepMessage，因为已经在流式输出中处理）
+            // 7. 解析结果状态
             return parseStepResult(output);
             
         } catch (Exception e) {

@@ -2,6 +2,7 @@ package com.agent.infrastructure.event;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.connection.stream.*;
@@ -23,6 +24,7 @@ public class RedisStreamEventBus implements EventBus {
     private final StringRedisTemplate redisTemplate;
     private final RedisMessageListenerContainer listenerContainer;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     private static final String STREAM_KEY_PREFIX = "sse:stream:";
     private static final String CHANNEL_PREFIX = "sse:notify:";
@@ -33,10 +35,12 @@ public class RedisStreamEventBus implements EventBus {
 
     public RedisStreamEventBus(StringRedisTemplate redisTemplate,
                                RedisMessageListenerContainer listenerContainer,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               ApplicationEventPublisher eventPublisher) {
         this.redisTemplate = redisTemplate;
         this.listenerContainer = listenerContainer;
         this.objectMapper = objectMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -58,6 +62,9 @@ public class RedisStreamEventBus implements EventBus {
 
             // Pub/Sub 通知
             redisTemplate.convertAndSend(channel, recordId.getValue());
+            
+            // 发布 Spring 本地事件，供 @EventListener 监听
+            eventPublisher.publishEvent(event);
 
 //            log.debug("[RedisStreamEventBus] Published: sessionId={}, type={}, recordId={}",
 //                    sessionId, event.getEventType(), recordId.getValue());

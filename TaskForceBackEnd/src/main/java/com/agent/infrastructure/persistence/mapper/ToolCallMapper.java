@@ -33,4 +33,7 @@ public interface ToolCallMapper extends BaseMapper<ToolCall> {
                            @Param("errorMessage") String errorMessage,
                            @Param("completedAt") java.time.LocalDateTime completedAt,
                            @Param("durationMs") Long durationMs);
+
+    @Update("UPDATE tool_calls SET file_path = #{filePath} WHERE tool_call_id = #{toolCallId}")
+    int updateFilePath(@Param("toolCallId") String toolCallId, @Param("filePath") String filePath);
 }

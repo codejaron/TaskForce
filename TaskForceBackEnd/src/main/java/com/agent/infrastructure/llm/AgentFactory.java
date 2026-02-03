@@ -1,5 +1,6 @@
 package com.agent.infrastructure.llm;
 
+import com.agent.domain.tool.ToolInfo;
 import com.agent.infrastructure.mcp.RemoteMcpClient;
 import com.agent.infrastructure.config.AutoToolConfiguration;
 import com.agent.infrastructure.config.EventPublishingFunctionCallback;
@@ -133,7 +134,24 @@ public class AgentFactory {
         AtomicInteger sequenceCounter = new AtomicInteger(0);
 
         // 8.1 添加远程 MCP 工具（从 mcp-server 获取）
-        List<String> enabledToolIds = agentToolService.getEnabledToolIds(agentId);
+        List<String> enabledToolIds = new ArrayList<>(agentToolService.getEnabledToolIds(agentId));
+        
+        // 8.1.1 自动添加所有 native 工具（所有 Agent 默认拥有）
+        try {
+            List<ToolInfo> allAvailableTools = remoteMcpClient.listTools();
+            List<String> nativeToolIds = allAvailableTools.stream()
+                    .filter(tool -> tool.getId() != null && tool.getId().startsWith("native::"))
+                    .map(ToolInfo::getId)
+                    .toList();
+            
+            if (!nativeToolIds.isEmpty()) {
+                enabledToolIds.addAll(nativeToolIds);
+                log.info("  Auto-added {} native tools to agent {}", nativeToolIds.size(), agent.getName());
+            }
+        } catch (Exception e) {
+            log.warn("  Failed to fetch native tools: {}", e.getMessage());
+        }
+        
         if (!enabledToolIds.isEmpty()) {
             ToolCallback[] remoteTools = remoteMcpClient.getToolCallbacks(enabledToolIds);
             if (remoteTools.length > 0) {

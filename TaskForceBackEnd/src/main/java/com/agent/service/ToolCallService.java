@@ -79,4 +79,17 @@ public class ToolCallService {
     public ToolCall getByToolCallId(String toolCallId) {
         return toolCallMapper.selectByToolCallId(toolCallId);
     }
+
+    /**
+     * 更新工具结果文件路径
+     */
+    @Transactional
+    public void updateFilePath(String toolCallId, String filePath) {
+        int updated = toolCallMapper.updateFilePath(toolCallId, filePath);
+        if (updated > 0) {
+            log.debug("Updated tool call file path: {} -> {}", toolCallId, filePath);
+        } else {
+            log.warn("Failed to update tool call file path: {} - record not found", toolCallId);
+        }
+    }
 }

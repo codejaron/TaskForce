@@ -161,7 +161,15 @@ public class ToolRouter {
         // 1. 先检查 Native 工具
         if (nativeToolScanner.hasTool(globalToolId)) {
             log.info("[ToolRouter] Routing to native tool: {}", globalToolId);
-            return nativeToolScanner.callTool(globalToolId, arguments);
+            // 设置 SessionContext，供 native 工具使用
+            try {
+                if (sessionId != null) {
+                    com.agent.mcpserver.context.SessionContext.setSessionId(sessionId);
+                }
+                return nativeToolScanner.callTool(globalToolId, arguments);
+            } finally {
+                com.agent.mcpserver.context.SessionContext.clear();
+            }
         }
 
         // 2. 再查 Provider

@@ -113,3 +113,13 @@ app:
   idempotent:
     expire-hours: 24  # 幂等 key 过期时间（小时）
 
+# ========== 上下文系统配置 ==========
+context:
+  workspace:
+    base-path: /Users/jaron/Downloads/test  # 工作空间根路径（MCP filesystem 路径）
+  assembly:
+    include-recent-output: true
+    max-history-steps: 20
+  summary:
+    fallback-enabled: true
+
