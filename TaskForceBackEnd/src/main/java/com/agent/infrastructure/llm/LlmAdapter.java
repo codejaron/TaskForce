@@ -49,8 +49,18 @@ public interface LlmAdapter {
      * @param userMessage  用户消息（可为 null）
      * @return 流式 token 输出
      */
-    default Flux<String> streamChat(Long agentId, String sessionId, String stepId, String systemPrompt, String userMessage) {
-        // 默认实现：忽略 stepId，调用原方法（向后兼容）
-        return streamChat(agentId, sessionId, systemPrompt, userMessage);
-    }
+    Flux<String> streamChat(Long agentId, String sessionId, String stepId, String systemPrompt, String userMessage);
+
+    /**
+     * 流式调用 LLM（使用 sessionId、stepId 和 stepIndex，支持工具调用事件追踪）
+     *
+     * @param agentId      Agent ID
+     * @param sessionId    会话 ID
+     * @param stepId       步骤 ID（用于工具调用事件关联）
+     * @param stepIndex    步骤索引（用于工具调用事件关联）
+     * @param systemPrompt 系统提示词
+     * @param userMessage  用户消息（可为 null）
+     * @return 流式 token 输出
+     */
+    Flux<String> streamChat(Long agentId, String sessionId, String stepId, Integer stepIndex, String systemPrompt, String userMessage);
 }

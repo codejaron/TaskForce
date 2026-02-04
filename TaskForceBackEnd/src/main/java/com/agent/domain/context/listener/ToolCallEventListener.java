@@ -42,10 +42,10 @@ public class ToolCallEventListener {
                 return;
             }
             
-            // 解析 stepIndex（从 stepId 提取，格式如 "step_001"）
-            int stepIndex = extractStepIndex(event.getStepId());
-            if (stepIndex <= 0) {
-                log.warn("无法解析步骤索引: stepId={}", event.getStepId());
+            // 直接使用 event.getStepIndex()
+            Integer stepIndex = event.getStepIndex();
+            if (stepIndex == null || stepIndex <= 0) {
+                log.warn("无法获取步骤索引: stepId={}, stepIndex={}", event.getStepId(), stepIndex);
                 return;
             }
             
@@ -69,21 +69,6 @@ public class ToolCallEventListener {
             
         } catch (Exception e) {
             log.error("保存工具结果失败: toolCallId={}", event.getToolCallId(), e);
-        }
-    }
-    
-    /**
-     * 从 stepId 提取步骤索引
-     * 例如: "step_001" -> 1
-     */
-    private int extractStepIndex(String stepId) {
-        if (stepId == null || !stepId.startsWith("step_")) {
-            return -1;
-        }
-        try {
-            return Integer.parseInt(stepId.substring(5));
-        } catch (NumberFormatException e) {
-            return -1;
         }
     }
     

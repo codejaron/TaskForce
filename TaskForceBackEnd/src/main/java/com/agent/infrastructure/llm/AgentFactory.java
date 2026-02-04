@@ -77,7 +77,7 @@ public class AgentFactory {
      * 根据数据库中的 Agent ID 构建 ChatClient（向后兼容，不带 stepId）
      */
     public ChatClient buildClientForDatabaseAgent(Long agentId, String sessionId) {
-        return buildClientForDatabaseAgent(agentId, sessionId, null);
+        return buildClientForDatabaseAgent(agentId, sessionId, null, null);
     }
 
     /**
@@ -86,16 +86,18 @@ public class AgentFactory {
      * @param agentId   数据库中的智能体ID
      * @param sessionId 会话ID
      * @param stepId    步骤ID（用于工具调用事件关联，可为 null）
+     * @param stepIndex 步骤索引（用于工具调用事件关联，可为 null）
      * @return ChatClient
      */
-    public ChatClient buildClientForDatabaseAgent(Long agentId, String sessionId, String stepId) {
+    public ChatClient buildClientForDatabaseAgent(Long agentId, String sessionId, String stepId, Integer stepIndex) {
         // 1. 从数据库加载 Agent
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
             throw new RuntimeException("Agent not found: " + agentId);
         }
 
-        log.info("Building ChatClient for database agent: {} (id: {}, stepId: {})", agent.getName(), agentId, stepId);
+        log.info("Building ChatClient for database agent: {} (id: {}, stepId: {}, stepIndex: {})", 
+                agent.getName(), agentId, stepId, stepIndex);
 
         // 2. 确定使用的 ChatModel
         // 强制要求Agent配置Provider
@@ -160,7 +162,7 @@ public class AgentFactory {
                     String serverName = extractProviderName(callback.getName());
                     // 包装为事件发布回调
                     ToolCallback wrapped = wrapWithEventPublishing(
-                            callback, sessionId, stepId, agentId, serverName, sequenceCounter
+                            callback, sessionId, stepId, stepIndex, agentId, serverName, sequenceCounter
                     );
                     allTools.add(wrapped);
                 }
@@ -176,7 +178,7 @@ public class AgentFactory {
             for (FunctionCallback callback : nativeCallbacks) {
                 // 原生工具使用 EventPublishingFunctionCallback 包装
                 FunctionCallback wrapped = wrapFunctionWithEventPublishing(
-                        callback, sessionId, stepId, agentId, sequenceCounter
+                        callback, sessionId, stepId, stepIndex, agentId, sequenceCounter
                 );
                 allTools.add(wrapped);
             }
@@ -201,6 +203,7 @@ public class AgentFactory {
             ToolCallback delegate,
             String sessionId,
             String stepId,
+            Integer stepIndex,
             Long agentId,
             String serverName,
             AtomicInteger sequenceCounter) {
@@ -208,6 +211,7 @@ public class AgentFactory {
                 delegate,
                 sessionId,
                 stepId,
+                stepIndex,
                 agentId,
                 serverName,
                 eventBus,
@@ -223,12 +227,14 @@ public class AgentFactory {
             FunctionCallback delegate,
             String sessionId,
             String stepId,
+            Integer stepIndex,
             Long agentId,
             AtomicInteger sequenceCounter) {
         return new EventPublishingFunctionCallback(
                 delegate,
                 sessionId,
                 stepId,
+                stepIndex,
                 agentId,
                 eventBus,
                 toolCallService,

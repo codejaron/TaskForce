@@ -34,21 +34,26 @@ public class SpringAiLlmAdapter implements LlmAdapter {
 
     @Override
     public Flux<String> streamChat(Long agentId, String systemPrompt, String userMessage) {
-        return streamChat(agentId, null, null, systemPrompt, userMessage);
+        return streamChat(agentId, null, null, null, systemPrompt, userMessage);
     }
 
     @Override
     public Flux<String> streamChat(Long agentId, String sessionId, String systemPrompt, String userMessage) {
-        return streamChat(agentId, sessionId, null, systemPrompt, userMessage);
+        return streamChat(agentId, sessionId, null, null, systemPrompt, userMessage);
     }
 
     @Override
     public Flux<String> streamChat(Long agentId, String sessionId, String stepId, String systemPrompt, String userMessage) {
-        log.info("[LlmAdapter] streamChat called: agentId={}, sessionId={}, stepId={}, promptLen={}",
-                agentId, sessionId, stepId, systemPrompt != null ? systemPrompt.length() : 0);
+        return streamChat(agentId, sessionId, stepId, null, systemPrompt, userMessage);
+    }
+
+    @Override
+    public Flux<String> streamChat(Long agentId, String sessionId, String stepId, Integer stepIndex, String systemPrompt, String userMessage) {
+        log.info("[LlmAdapter] streamChat called: agentId={}, sessionId={}, stepId={}, stepIndex={}, promptLen={}",
+                agentId, sessionId, stepId, stepIndex, systemPrompt != null ? systemPrompt.length() : 0);
 
         try {
-            ChatClient client = agentFactory.buildClientForDatabaseAgent(agentId, sessionId != null ? sessionId : "default", stepId);
+            ChatClient client = agentFactory.buildClientForDatabaseAgent(agentId, sessionId != null ? sessionId : "default", stepId, stepIndex);
             log.info("[LlmAdapter] ChatClient created successfully");
 
             String prompt = promptManager.combinePrompts(systemPrompt, userMessage);

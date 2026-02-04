@@ -21,6 +21,7 @@ public class EventPublishingFunctionCallback implements FunctionCallback {
     private final FunctionCallback delegate;
     private final String sessionId;
     private final String stepId;
+    private final Integer stepIndex;  // 新增
     private final Long agentId;
     private final EventBus eventBus;
     private final ToolCallService toolCallService;
@@ -30,6 +31,7 @@ public class EventPublishingFunctionCallback implements FunctionCallback {
             FunctionCallback delegate,
             String sessionId,
             String stepId,
+            Integer stepIndex,
             Long agentId,
             EventBus eventBus,
             ToolCallService toolCallService,
@@ -37,6 +39,7 @@ public class EventPublishingFunctionCallback implements FunctionCallback {
         this.delegate = delegate;
         this.sessionId = sessionId;
         this.stepId = stepId;
+        this.stepIndex = stepIndex;
         this.agentId = agentId;
         this.eventBus = eventBus;
         this.toolCallService = toolCallService;
@@ -69,11 +72,11 @@ public class EventPublishingFunctionCallback implements FunctionCallback {
         // 1. 发布开始事件
         if (eventBus != null && sessionId != null) {
             eventBus.publish(sessionId, new ToolCallStartEvent(
-                    sessionId, stepId, toolCallId, toolName, null, functionArguments, sequence
+                    sessionId, stepId, stepIndex, toolCallId, toolName, null, functionArguments, sequence
             ));
         }
 
-        // 2. 持久化开始记录
+        // 2. 持久化开始记录（不保存 stepIndex）
         if (toolCallService != null && sessionId != null) {
             try {
                 toolCallService.createToolCall(
@@ -107,7 +110,7 @@ public class EventPublishingFunctionCallback implements FunctionCallback {
         // 4. 发布完成事件
         if (eventBus != null && sessionId != null) {
             eventBus.publish(sessionId, new ToolCallCompleteEvent(
-                    sessionId, stepId, toolCallId, toolName, result, status, errorMessage, durationMs
+                    sessionId, stepId, stepIndex, toolCallId, toolName, result, status, errorMessage, durationMs
             ));
         }
 

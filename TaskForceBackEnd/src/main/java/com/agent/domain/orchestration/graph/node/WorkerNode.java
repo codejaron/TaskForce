@@ -168,7 +168,7 @@ public class WorkerNode implements NodeAction {
             Long messageId = stateManager.createStreamingMessage(sessionId, step);
             
             // 5. 流式调用，边输出边持久化
-            llmAdapter.streamChat(Long.valueOf(step.getAssignedAgentId()), sessionId, step.getStepId(), systemPrompt, null)
+            llmAdapter.streamChat(Long.valueOf(step.getAssignedAgentId()), sessionId, step.getStepId(), step.getStepIndex(), systemPrompt, null)
                     .doOnNext(token -> {
                         response.append(token);
                         buffer.append(token);

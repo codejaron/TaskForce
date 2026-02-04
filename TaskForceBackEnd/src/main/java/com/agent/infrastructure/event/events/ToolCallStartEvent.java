@@ -10,6 +10,7 @@ import lombok.Getter;
 public class ToolCallStartEvent extends OrchestrationEvent {
 
     private String stepId;
+    private Integer stepIndex;  // 新增
     private String toolCallId;
     private String toolName;
     private String serverName;
@@ -21,10 +22,12 @@ public class ToolCallStartEvent extends OrchestrationEvent {
         super();
     }
 
-    public ToolCallStartEvent(String sessionId, String stepId, String toolCallId,
-                              String toolName, String serverName, String toolArgs, Integer sequence) {
+    public ToolCallStartEvent(String sessionId, String stepId, Integer stepIndex,
+                              String toolCallId, String toolName, String serverName, 
+                              String toolArgs, Integer sequence) {
         super(sessionId);
         this.stepId = stepId;
+        this.stepIndex = stepIndex;
         this.toolCallId = toolCallId;
         this.toolName = toolName;
         this.serverName = serverName;

@@ -25,6 +25,7 @@ public class EventPublishingToolCallback implements ToolCallback {
     private final ToolCallback delegate;
     private final String sessionId;
     private final String stepId;
+    private final Integer stepIndex;  // 新增
     private final Long agentId;
     private final String serverName;  // MCP Server 名称，原生工具为 null
     private final EventBus eventBus;
@@ -35,6 +36,7 @@ public class EventPublishingToolCallback implements ToolCallback {
             ToolCallback delegate,
             String sessionId,
             String stepId,
+            Integer stepIndex,
             Long agentId,
             String serverName,
             EventBus eventBus,
@@ -43,6 +45,7 @@ public class EventPublishingToolCallback implements ToolCallback {
         this.delegate = delegate;
         this.sessionId = sessionId;
         this.stepId = stepId;
+        this.stepIndex = stepIndex;
         this.agentId = agentId;
         this.serverName = serverName;
         this.eventBus = eventBus;
@@ -96,11 +99,11 @@ public class EventPublishingToolCallback implements ToolCallback {
         // 1. 发布开始事件
         if (eventBus != null && sessionId != null) {
             eventBus.publish(sessionId, new ToolCallStartEvent(
-                    sessionId, stepId, toolCallId, toolName, serverName, toolInput, sequence
+                    sessionId, stepId, stepIndex, toolCallId, toolName, serverName, toolInput, sequence
             ));
         }
 
-        // 2. 持久化开始记录
+        // 2. 持久化开始记录（不保存 stepIndex）
         if (toolCallService != null && sessionId != null) {
             try {
                 toolCallService.createToolCall(
@@ -134,7 +137,7 @@ public class EventPublishingToolCallback implements ToolCallback {
         // 4. 发布完成事件
         if (eventBus != null && sessionId != null) {
             eventBus.publish(sessionId, new ToolCallCompleteEvent(
-                    sessionId, stepId, toolCallId, toolName, result, status, errorMessage, durationMs
+                    sessionId, stepId, stepIndex, toolCallId, toolName, result, status, errorMessage, durationMs
             ));
         }
 
