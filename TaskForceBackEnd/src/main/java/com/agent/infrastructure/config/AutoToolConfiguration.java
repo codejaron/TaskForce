@@ -114,19 +114,29 @@ public class AutoToolConfiguration implements ApplicationContextAware {
     }
 
     /**
-     * 获取所有注册的工具回调（动态创建，传入 sessionId）
+     * 获取所有注册的工具回调（动态创建，传入 sessionId 和 stepIndex）
      * @param sessionId 会话ID，用于跨线程传递上下文
+     * @param stepIndex 步骤索引，用于跨线程传递上下文
      */
-    public FunctionCallback[] getToolCallbacks(String sessionId) {
+    public FunctionCallback[] getToolCallbacks(String sessionId, Integer stepIndex) {
         return toolMetadataCache.values().stream()
             .map(metadata -> new MethodToolCallbackWrapper(
                 metadata.bean,
                 metadata.method,
                 metadata.name,
                 metadata.description,
-                sessionId  // 传入 sessionId
+                sessionId,
+                stepIndex
             ))
             .toArray(FunctionCallback[]::new);
+    }
+
+    /**
+     * 获取所有注册的工具回调（传入 sessionId，向后兼容）
+     * @param sessionId 会话ID，用于跨线程传递上下文
+     */
+    public FunctionCallback[] getToolCallbacks(String sessionId) {
+        return getToolCallbacks(sessionId, null);
     }
 
     /**
@@ -139,7 +149,7 @@ public class AutoToolConfiguration implements ApplicationContextAware {
     /**
      * 获取指定名称的工具回调
      */
-    public FunctionCallback getToolCallback(String name, String sessionId) {
+    public FunctionCallback getToolCallback(String name, String sessionId, Integer stepIndex) {
         ToolMetadata metadata = toolMetadataCache.get(name);
         if (metadata == null) {
             return null;
@@ -149,8 +159,16 @@ public class AutoToolConfiguration implements ApplicationContextAware {
             metadata.method,
             metadata.name,
             metadata.description,
-            sessionId
+            sessionId,
+            stepIndex
         );
+    }
+
+    /**
+     * 获取指定名称的工具回调（向后兼容）
+     */
+    public FunctionCallback getToolCallback(String name, String sessionId) {
+        return getToolCallback(name, sessionId, null);
     }
 
     /**

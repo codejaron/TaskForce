@@ -86,6 +86,9 @@ public class EventPublishingToolCallback implements ToolCallback {
             map.putAll(original.getContext());
         }
         map.put("sessionId", this.sessionId);  // 关键：把 sessionId 塞进去
+        if (this.stepIndex != null) {
+            map.put("stepIndex", this.stepIndex);  // 关键：把 stepIndex 也塞进去
+        }
         return new ToolContext(map);
     }
 

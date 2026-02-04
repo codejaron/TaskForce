@@ -172,8 +172,8 @@ public class AgentFactory {
             }
         }
 
-        // 8.2 添加原生 @Tool 工具（所有 Worker 都可用，传入 sessionId 用于跨线程传递上下文）
-        FunctionCallback[] nativeCallbacks = autoToolConfiguration.getToolCallbacks(sessionId);
+        // 8.2 添加原生 @Tool 工具（所有 Worker 都可用，传入 sessionId 和 stepIndex 用于跨线程传递上下文）
+        FunctionCallback[] nativeCallbacks = autoToolConfiguration.getToolCallbacks(sessionId, stepIndex);
         if (nativeCallbacks.length > 0) {
             for (FunctionCallback callback : nativeCallbacks) {
                 // 原生工具使用 EventPublishingFunctionCallback 包装
@@ -182,7 +182,8 @@ public class AgentFactory {
                 );
                 allTools.add(wrapped);
             }
-            log.info("  Attached {} native @Tool tools (with event publishing, sessionId: {})", nativeCallbacks.length, sessionId);
+            log.info("  Attached {} native @Tool tools (with event publishing, sessionId: {}, stepIndex: {})", 
+                    nativeCallbacks.length, sessionId, stepIndex);
         }
 
         // 8.3 注册到 ChatClient

@@ -23,15 +23,17 @@ public class MethodToolCallbackWrapper implements FunctionCallback {
     private final Method method;
     private final String name;
     private final String description;
-    private final String sessionId;  // 新增：用于跨线程传递 sessionId
+    private final String sessionId;  // 用于跨线程传递 sessionId
+    private final Integer stepIndex;  // 新增：用于跨线程传递 stepIndex
     private final ObjectMapper objectMapper;
 
-    public MethodToolCallbackWrapper(Object bean, Method method, String name, String description, String sessionId) {
+    public MethodToolCallbackWrapper(Object bean, Method method, String name, String description, String sessionId, Integer stepIndex) {
         this.bean = bean;
         this.method = method;
         this.name = name;
         this.description = description;
         this.sessionId = sessionId;
+        this.stepIndex = stepIndex;
         this.objectMapper = new ObjectMapper();
         this.method.setAccessible(true);
     }
@@ -53,15 +55,33 @@ public class MethodToolCallbackWrapper implements FunctionCallback {
 
     @Override
     public String call(String functionArguments) {
-        // 标记是否设置了 SessionId，用于 finally 块清理
-        boolean sessionIdSet = false;
+        // 标记是否设置了上下文，用于 finally 块清理
+        boolean contextSet = false;
 
         try {
-            // 在工具调用前设置 SessionId 到当前线程（Reactor 线程）
+            // 在工具调用前设置 SessionId 和 StepIndex 到当前线程（Reactor 线程）
             if (sessionId != null) {
                 SessionContextHolder.setSessionId(sessionId);
-                sessionIdSet = true;
+                contextSet = true;
                 log.debug("[ToolCall] SessionId set for tool '{}': {}", name, sessionId);
+                
+                // 同时设置到 mcp-server 的 SessionContext（通过反射）
+                try {
+                    Class<?> mcpSessionContext = Class.forName("com.agent.mcpserver.context.SessionContext");
+                    Method setSessionIdMethod = mcpSessionContext.getMethod("setSessionId", String.class);
+                    setSessionIdMethod.invoke(null, sessionId);
+                    
+                    if (stepIndex != null) {
+                        Method setStepIndexMethod = mcpSessionContext.getMethod("setStepIndex", Integer.class);
+                        setStepIndexMethod.invoke(null, stepIndex);
+                        log.debug("[ToolCall] StepIndex set for tool '{}': {}", name, stepIndex);
+                    }
+                } catch (ClassNotFoundException e) {
+                    // mcp-server 模块不存在，忽略
+                    log.trace("[ToolCall] mcp-server SessionContext not found, skipping");
+                } catch (Exception e) {
+                    log.warn("[ToolCall] Failed to set mcp-server SessionContext: {}", e.getMessage());
+                }
             }
 
             log.info("🔧 [ToolCall] Tool='{}' called with arguments: {}", name, functionArguments);
@@ -92,9 +112,18 @@ public class MethodToolCallbackWrapper implements FunctionCallback {
             }
         } finally {
             // 清理 ThreadLocal，避免线程池复用导致的数据污染
-            if (sessionIdSet) {
+            if (contextSet) {
                 SessionContextHolder.clear();
                 log.debug("[ToolCall] SessionId cleared for tool '{}'", name);
+                
+                // 同时清理 mcp-server 的 SessionContext
+                try {
+                    Class<?> mcpSessionContext = Class.forName("com.agent.mcpserver.context.SessionContext");
+                    Method clearMethod = mcpSessionContext.getMethod("clear");
+                    clearMethod.invoke(null);
+                } catch (Exception e) {
+                    // 忽略
+                }
             }
         }
     }

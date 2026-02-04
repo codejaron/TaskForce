@@ -32,25 +32,32 @@ public class WriteStepSummaryTool {
      */
     @Tool(
         name = "write_step_summary",
-        description = "完成当前步骤后调用，记录核心结论。工具调用的文件会自动展示，你只需总结得出了什么结论。sessionId 会自动从上下文获取，无需传递。"
+        description = "完成当前步骤后调用，记录核心结论。工具调用的文件会自动展示，你只需总结得出了什么结论。sessionId 和 stepIndex 会自动从上下文获取，无需传递。"
     )
     public Map<String, Object> writeStepSummary(
-            @JsonProperty(value = "stepIndex", required = true) int stepIndex,
             @JsonProperty(value = "stepTitle", required = true) String stepTitle,
             @JsonProperty(value = "conclusion", required = true) String conclusion,
             @JsonProperty(value = "findings") List<String> findings,
             @JsonProperty(value = "nextSuggestion") String nextSuggestion
     ) {
         try {
-            // 从 ThreadLocal 或请求上下文获取 sessionId
-            // 注意：这里需要一个机制来传递 sessionId，暂时使用占位符
+            // 从 ThreadLocal 获取 sessionId 和 stepIndex
             String sessionId = getCurrentSessionId();
+            Integer stepIndex = getCurrentStepIndex();
             
             if (sessionId == null || sessionId.isEmpty()) {
                 log.error("[WriteStepSummaryTool] 无法获取 sessionId");
                 return Map.of(
                         "success", false,
                         "error", "无法获取当前会话ID"
+                );
+            }
+            
+            if (stepIndex == null || stepIndex <= 0) {
+                log.error("[WriteStepSummaryTool] 无法获取 stepIndex");
+                return Map.of(
+                        "success", false,
+                        "error", "无法获取当前步骤索引"
                 );
             }
             
@@ -101,6 +108,13 @@ public class WriteStepSummaryTool {
      */
     private String getCurrentSessionId() {
         return com.agent.mcpserver.context.SessionContext.getSessionId();
+    }
+    
+    /**
+     * 从上下文获取当前 stepIndex
+     */
+    private Integer getCurrentStepIndex() {
+        return com.agent.mcpserver.context.SessionContext.getStepIndex();
     }
     
     /**

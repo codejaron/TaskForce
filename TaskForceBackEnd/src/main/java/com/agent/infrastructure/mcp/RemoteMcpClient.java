@@ -319,11 +319,16 @@ public class RemoteMcpClient {
     }
 
     public ToolCallResultDTO callTool(String toolId, Map<String, Object> args) {
-        return callTool(toolId, args, null);
+        return callTool(toolId, args, null, null);
     }
 
-    // 新增带 sessionId 的版本
+    // 带 sessionId 的版本（向后兼容）
     public ToolCallResultDTO callTool(String toolId, Map<String, Object> args, String sessionId) {
+        return callTool(toolId, args, sessionId, null);
+    }
+
+    // 新增带 sessionId 和 stepIndex 的版本
+    public ToolCallResultDTO callTool(String toolId, Map<String, Object> args, String sessionId, Integer stepIndex) {
         return executeBlocking(() -> {
             try {
                 String url = getMcpServerUrl() + "/mcp";
@@ -352,6 +357,12 @@ public class RemoteMcpClient {
                 if (sessionId != null && !sessionId.isEmpty()) {
                     requestBuilder.header("X-Session-Id", sessionId);
                     log.debug("Calling tool {} with sessionId: {}", toolId, sessionId);
+                }
+
+                // 添加 stepIndex Header
+                if (stepIndex != null) {
+                    requestBuilder.header("X-Step-Index", stepIndex.toString());
+                    log.debug("Calling tool {} with stepIndex: {}", toolId, stepIndex);
                 }
 
                 HttpRequest request = requestBuilder.build();
@@ -476,16 +487,21 @@ public class RemoteMcpClient {
                         new TypeReference<Map<String, Object>>() {}
                 );
 
-                // 从 ToolContext 获取 sessionId
+                // 从 ToolContext 获取 sessionId 和 stepIndex
                 String sessionId = null;
+                Integer stepIndex = null;
                 if (toolContext != null && toolContext.getContext() != null) {
                     Object sid = toolContext.getContext().get("sessionId");
                     if (sid != null) {
                         sessionId = sid.toString();
                     }
+                    Object si = toolContext.getContext().get("stepIndex");
+                    if (si != null) {
+                        stepIndex = (Integer) si;
+                    }
                 }
 
-                ToolCallResultDTO result = client.callTool(toolId, args, sessionId);
+                ToolCallResultDTO result = client.callTool(toolId, args, sessionId, stepIndex);
                 return result.getTextContent();
             } catch (Exception e) {
                 throw new RuntimeException("Failed to call remote tool: " + toolId, e);

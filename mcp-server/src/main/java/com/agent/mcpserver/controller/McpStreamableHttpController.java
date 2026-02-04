@@ -55,16 +55,20 @@ public class McpStreamableHttpController {
             produces = MediaType.APPLICATION_JSON_VALUE
     )
     public ResponseEntity<JsonRpcResponse> handleRequest(
-            @RequestHeader(value = "X-Session-Id", required = false) String sessionId,  // 改成 Header
+            @RequestHeader(value = "X-Session-Id", required = false) String sessionId,
+            @RequestHeader(value = "X-Step-Index", required = false) Integer stepIndex,
             @RequestBody JsonRpcRequest request
     ) {
-        log.info("[StreamableHTTP] Received request: method={}, id={}, sessionId={}",
-                request.getMethod(), request.getId(), sessionId);
+        log.info("[StreamableHTTP] Received request: method={}, id={}, sessionId={}, stepIndex={}",
+                request.getMethod(), request.getId(), sessionId, stepIndex);
 
         try {
             // 存入 ThreadLocal
             if (sessionId != null && !sessionId.isEmpty()) {
                 SessionContext.setSessionId(sessionId);
+            }
+            if (stepIndex != null) {
+                SessionContext.setStepIndex(stepIndex);
             }
 
             // 处理请求
