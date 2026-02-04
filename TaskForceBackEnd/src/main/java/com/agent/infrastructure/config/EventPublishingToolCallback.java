@@ -9,8 +9,11 @@ import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 /**
  * 事件发布工具回调包装器
@@ -69,10 +72,21 @@ public class EventPublishingToolCallback implements ToolCallback {
 
     @Override
     public String call(String toolInput, ToolContext toolContext) {
-        return executeWithEvents(toolInput, () -> delegate.call(toolInput, toolContext));
+        // 把 sessionId 塞进 toolContext
+        ToolContext enrichedContext = enrichWithSessionId(toolContext);
+        return executeWithEvents(toolInput, () -> delegate.call(toolInput, enrichedContext));
     }
 
-    private String executeWithEvents(String toolInput, java.util.function.Supplier<String> execution) {
+    private ToolContext enrichWithSessionId(ToolContext original) {
+        Map<String, Object> map = new HashMap<>();
+        if (original != null && original.getContext() != null) {
+            map.putAll(original.getContext());
+        }
+        map.put("sessionId", this.sessionId);  // 关键：把 sessionId 塞进去
+        return new ToolContext(map);
+    }
+
+    private String executeWithEvents(String toolInput, Supplier<String> execution) {
         String toolCallId = UUID.randomUUID().toString();
         String toolName = getToolDefinition().name();
         int sequence = sequenceCounter.getAndIncrement();

@@ -1,5 +1,6 @@
 package com.agent.mcpserver.controller;
 
+import com.agent.mcpserver.context.SessionContext;
 import com.agent.mcpserver.protocol.JsonRpcRequest;
 import com.agent.mcpserver.protocol.JsonRpcResponse;
 import com.agent.mcpserver.service.McpProtocolHandler;
@@ -54,18 +55,23 @@ public class McpStreamableHttpController {
             produces = MediaType.APPLICATION_JSON_VALUE
     )
     public ResponseEntity<JsonRpcResponse> handleRequest(
-            @RequestParam(required = false) String sessionId,
+            @RequestHeader(value = "X-Session-Id", required = false) String sessionId,  // 改成 Header
             @RequestBody JsonRpcRequest request
     ) {
-        log.info("[StreamableHTTP] Received request: method={}, id={}, sessionId={}", 
+        log.info("[StreamableHTTP] Received request: method={}, id={}, sessionId={}",
                 request.getMethod(), request.getId(), sessionId);
 
         try {
+            // 存入 ThreadLocal
+            if (sessionId != null && !sessionId.isEmpty()) {
+                SessionContext.setSessionId(sessionId);
+            }
+
             // 处理请求
             JsonRpcResponse response = protocolHandler.handleRequest(request, sessionId);
-            
+
             log.debug("[StreamableHTTP] Returning response: id={}", response.getId());
-            
+
             return ResponseEntity.ok(response);
 
         } catch (Exception e) {
@@ -75,6 +81,10 @@ public class McpStreamableHttpController {
                     JsonRpcResponse.INTERNAL_ERROR,
                     "Internal error: " + e.getMessage()
             ));
+        } finally {
+            // 请求结束后清理 ThreadLocal，防止内存泄漏
+            SessionContext.clear();
         }
     }
+
 }

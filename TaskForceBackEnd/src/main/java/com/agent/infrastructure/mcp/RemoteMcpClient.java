@@ -318,10 +318,12 @@ public class RemoteMcpClient {
         });
     }
 
-    /**
-     * 调用远程工具（使用 JSON-RPC 协议）
-     */
     public ToolCallResultDTO callTool(String toolId, Map<String, Object> args) {
+        return callTool(toolId, args, null);
+    }
+
+    // 新增带 sessionId 的版本
+    public ToolCallResultDTO callTool(String toolId, Map<String, Object> args, String sessionId) {
         return executeBlocking(() -> {
             try {
                 String url = getMcpServerUrl() + "/mcp";
@@ -331,7 +333,7 @@ public class RemoteMcpClient {
                 rpcRequest.setJsonrpc("2.0");
                 rpcRequest.setMethod("tools/call");
                 rpcRequest.setId(java.util.UUID.randomUUID().toString());
-                
+
                 Map<String, Object> params = new java.util.HashMap<>();
                 params.put("name", toolId);
                 params.put("arguments", args != null ? args : new java.util.HashMap<>());
@@ -339,13 +341,20 @@ public class RemoteMcpClient {
 
                 String jsonBody = objectMapper.writeValueAsString(rpcRequest);
 
-                HttpRequest request = HttpRequest.newBuilder()
+                // 构建 HTTP 请求
+                HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .header("Content-Type", "application/json")
                         .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                        .timeout(Duration.ofSeconds(120))
-                        .build();
+                        .timeout(Duration.ofSeconds(120));
 
+                // 添加 sessionId Header
+                if (sessionId != null && !sessionId.isEmpty()) {
+                    requestBuilder.header("X-Session-Id", sessionId);
+                    log.debug("Calling tool {} with sessionId: {}", toolId, sessionId);
+                }
+
+                HttpRequest request = requestBuilder.build();
                 HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
                 if (response.statusCode() != 200) {
@@ -461,7 +470,26 @@ public class RemoteMcpClient {
 
         @Override
         public String call(String toolInput, ToolContext toolContext) {
-            return call(toolInput);
+            try {
+                Map<String, Object> args = client.objectMapper.readValue(
+                        toolInput,
+                        new TypeReference<Map<String, Object>>() {}
+                );
+
+                // 从 ToolContext 获取 sessionId
+                String sessionId = null;
+                if (toolContext != null && toolContext.getContext() != null) {
+                    Object sid = toolContext.getContext().get("sessionId");
+                    if (sid != null) {
+                        sessionId = sid.toString();
+                    }
+                }
+
+                ToolCallResultDTO result = client.callTool(toolId, args, sessionId);
+                return result.getTextContent();
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to call remote tool: " + toolId, e);
+            }
         }
     }
 
