@@ -13,7 +13,6 @@ import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.infrastructure.persistence.entity.Agent;
-import com.agent.common.util.ArtifactParser;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import lombok.RequiredArgsConstructor;
@@ -202,21 +201,6 @@ public class WorkerNode implements NodeAction {
             String output = response.toString();
             log.debug("[WorkerNode] Worker '{}' 完整响应 ({}字符):\n{}",
                     worker.getName(), output.length(), output);
-            
-            // 6. 提取并存储 Artifact
-            List<ArtifactParser.Artifact> artifacts = ArtifactParser.extract(output);
-            if (!artifacts.isEmpty()) {
-                log.info("[WorkerNode] Extracted {} artifact(s) from worker '{}'",
-                        artifacts.size(), worker.getName());
-                for (ArtifactParser.Artifact artifact : artifacts) {
-                    log.debug("[WorkerNode] Saving artifact: key='{}', valueLength={}",
-                            artifact.getKey(), artifact.getValue().length());
-                    stateManager.saveArtifact(sessionId, artifact.getKey(), artifact.getValue());
-                    
-                    // 同时保存到上下文系统的 artifacts 目录
-                    contextService.saveArtifact(sessionId, artifact.getKey() + ".md", artifact.getValue());
-                }
-            }
             
             // 7. 解析结果状态
             return parseStepResult(output);

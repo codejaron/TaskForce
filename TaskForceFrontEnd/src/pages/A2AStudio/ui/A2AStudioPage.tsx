@@ -3,8 +3,6 @@ import { useA2AStore } from '../../../features/a2a/model/store';
 import { useAgentStore } from '../../../features/agents/model/store';
 import { api } from '../../../shared/api';
 import { useTranslation } from 'react-i18next';
-import { parseArtifacts, stripArtifactTags } from '../../../utils/parseArtifacts';
-import { ArtifactCard } from '../../../components/ArtifactCard';
 import { ToolCallList } from '../../../components/ToolCallCard';
 import {
   Plus,
@@ -614,199 +612,91 @@ export const A2AStudioPage: React.FC = () => {
                                       // 只有最后一条消息才可能正在流式传输
                                       const isStreaming = isRunning && (idx === messages.length - 1);
 
-                                      if (isStreaming) {
-                                        // 流式传输中：简单剔除标签，避免不完整标签导致渲染问题
-                                        const displayContent = stripArtifactTags(msg.content);
-                                        return (
-                                          <ReactMarkdown
-                                            remarkPlugins={[remarkGfm]}
-                                            components={{
-                                              p: ({ children }) => <p className="mb-2 last:mb-0 break-words">{children}</p>,
-                                              pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-gray-200 rounded p-2 text-xs">{children}</pre>,
-                                              code(props: unknown) {
-                                                const { inline, className, children, ...rest } = props as {
-                                                  inline?: boolean;
-                                                  className?: string;
-                                                  children?: unknown;
-                                                  [key: string]: unknown;
-                                                };
-                                                const match = /language-(\w+)/.exec(className || '');
-                                                const text = String(children ?? '');
+                                      // 统一使用 ReactMarkdown 渲染（不再区分流式和历史消息）
+                                      return (
+                                        <ReactMarkdown
+                                          remarkPlugins={[remarkGfm]}
+                                          components={{
+                                            p: ({ children }) => <p className="mb-2 last:mb-0 break-words">{children}</p>,
+                                            pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-gray-200 rounded p-2 text-xs">{children}</pre>,
+                                            code(props: unknown) {
+                                              const { inline, className, children, ...rest } = props as {
+                                                inline?: boolean;
+                                                className?: string;
+                                                children?: unknown;
+                                                [key: string]: unknown;
+                                              };
+                                              const match = /language-(\w+)/.exec(className || '');
+                                              const text = String(children ?? '');
 
-                                                // 有语言标记的代码块
-                                                if (!inline && match) {
-                                                  return (
-                                                    <div className="my-2 overflow-x-auto rounded">
-                                                      <SyntaxHighlighter
-                                                        {...(rest as any)}
-                                                        style={oneLight}
-                                                        language={match[1]}
-                                                        PreTag="div"
-                                                        customStyle={{ margin: 0, fontSize: '0.75rem' }}
-                                                        wrapLongLines={false}
-                                                      >
-                                                        {text.replace(/\n$/, '')}
-                                                      </SyntaxHighlighter>
-                                                    </div>
-                                                  );
-                                                }
-
-                                                // 无语言标记的代码块
-                                                if (!inline) {
-                                                  // 单行短文本按行内代码处理（修复误判）
-                                                  if (!text.includes('\n') && text.length < 100) {
-                                                    return (
-                                                      <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
-                                                        {children as any}
-                                                      </code>
-                                                    );
-                                                  }
-                                                  // 多行代码块
-                                                  return (
-                                                    <div className="my-2 overflow-x-auto rounded">
-                                                      <SyntaxHighlighter
-                                                        {...(rest as any)}
-                                                        style={oneLight}
-                                                        language="text"
-                                                        PreTag="div"
-                                                        customStyle={{ margin: 0, fontSize: '0.75rem' }}
-                                                        wrapLongLines={false}
-                                                      >
-                                                        {text.replace(/\n$/, '')}
-                                                      </SyntaxHighlighter>
-                                                    </div>
-                                                  );
-                                                }
-
-                                                // 行内代码
+                                              // 有语言标记的代码块
+                                              if (!inline && match) {
                                                 return (
-                                                  <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
-                                                    {children as any}
-                                                  </code>
-                                                );
-                                              },
-                                              ul: ({ children }) => <ul className="list-disc list-outside mb-2 space-y-1 ml-4">{children}</ul>,
-                                              ol: ({ children }) => <ol className="list-decimal list-outside mb-2 space-y-1 ml-4">{children}</ol>,
-                                              li: ({ children }) => <li className="break-words">{children}</li>,
-                                              h1: ({ children }) => <h1 className="text-lg font-bold mb-2 break-words">{children}</h1>,
-                                              h2: ({ children }) => <h2 className="text-base font-bold mb-2 break-words">{children}</h2>,
-                                              h3: ({ children }) => <h3 className="text-sm font-bold mb-1 break-words">{children}</h3>,
-                                              blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-3 my-2 italic break-words">{children}</blockquote>,
-                                              a: ({ href, children }) => <a href={href} className="text-purple-600 hover:underline break-all" target="_blank" rel="noopener noreferrer">{children}</a>,
-                                              table: ({ children }) => <div className="overflow-x-auto my-2"><table className="min-w-full border-collapse">{children}</table></div>,
-                                              th: ({ children }) => <th className="border border-gray-300 px-2 py-1 bg-gray-100 text-left break-words">{children}</th>,
-                                              td: ({ children }) => <td className="border border-gray-300 px-2 py-1 break-words">{children}</td>
-                                            }}
-                                          >
-                                            {displayContent}
-                                          </ReactMarkdown>
-                                        );
-                                      } else {
-                                        // 历史消息/完成的消息：解析 artifact 为卡片
-                                        const parts = parseArtifacts(msg.content);
-                                        return (
-                                          <>
-                                            {parts.map((part, partIdx) => {
-                                              if (part.type === 'text') {
-                                                return (
-                                                  <ReactMarkdown
-                                                    key={partIdx}
-                                                    remarkPlugins={[remarkGfm]}
-                                                    components={{
-                                                      p: ({ children }) => <p className="mb-2 last:mb-0 break-words">{children}</p>,
-                                                      pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-gray-200 rounded p-2 text-xs">{children}</pre>,
-                                                      code(props: unknown) {
-                                                        const { inline, className, children, ...rest } = props as {
-                                                          inline?: boolean;
-                                                          className?: string;
-                                                          children?: unknown;
-                                                          [key: string]: unknown;
-                                                        };
-                                                        const match = /language-(\w+)/.exec(className || '');
-                                                        const text = String(children ?? '');
-
-                                                        // 有语言标记的代码块
-                                                        if (!inline && match) {
-                                                          return (
-                                                            <div className="my-2 overflow-x-auto rounded">
-                                                              <SyntaxHighlighter
-                                                                {...(rest as any)}
-                                                                style={oneLight}
-                                                                language={match[1]}
-                                                                PreTag="div"
-                                                                customStyle={{ margin: 0, fontSize: '0.75rem' }}
-                                                                wrapLongLines={false}
-                                                              >
-                                                                {text.replace(/\n$/, '')}
-                                                              </SyntaxHighlighter>
-                                                            </div>
-                                                          );
-                                                        }
-
-                                                        // 无语言标记的代码块
-                                                        if (!inline) {
-                                                          // 单行短文本按行内代码处理（修复误判）
-                                                          if (!text.includes('\n') && text.length < 100) {
-                                                            return (
-                                                              <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
-                                                                {children as any}
-                                                              </code>
-                                                            );
-                                                          }
-                                                          // 多行代码块
-                                                          return (
-                                                            <div className="my-2 overflow-x-auto rounded">
-                                                              <SyntaxHighlighter
-                                                                {...(rest as any)}
-                                                                style={oneLight}
-                                                                language="text"
-                                                                PreTag="div"
-                                                                customStyle={{ margin: 0, fontSize: '0.75rem' }}
-                                                                wrapLongLines={false}
-                                                              >
-                                                                {text.replace(/\n$/, '')}
-                                                              </SyntaxHighlighter>
-                                                            </div>
-                                                          );
-                                                        }
-
-                                                        // 行内代码
-                                                        return (
-                                                          <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
-                                                            {children as any}
-                                                          </code>
-                                                        );
-                                                      },
-                                                      ul: ({ children }) => <ul className="list-disc list-outside mb-2 space-y-1 ml-4">{children}</ul>,
-                                                      ol: ({ children }) => <ol className="list-decimal list-outside mb-2 space-y-1 ml-4">{children}</ol>,
-                                                      li: ({ children }) => <li className="break-words">{children}</li>,
-                                                      h1: ({ children }) => <h1 className="text-lg font-bold mb-2 break-words">{children}</h1>,
-                                                      h2: ({ children }) => <h2 className="text-base font-bold mb-2 break-words">{children}</h2>,
-                                                      h3: ({ children }) => <h3 className="text-sm font-bold mb-1 break-words">{children}</h3>,
-                                                      blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-3 my-2 italic break-words">{children}</blockquote>,
-                                                      a: ({ href, children }) => <a href={href} className="text-purple-600 hover:underline break-all" target="_blank" rel="noopener noreferrer">{children}</a>,
-                                                      table: ({ children }) => <div className="overflow-x-auto my-2"><table className="min-w-full border-collapse">{children}</table></div>,
-                                                      th: ({ children }) => <th className="border border-gray-300 px-2 py-1 bg-gray-100 text-left break-words">{children}</th>,
-                                                      td: ({ children }) => <td className="border border-gray-300 px-2 py-1 break-words">{children}</td>
-                                                    }}
-                                                  >
-                                                    {part.content}
-                                                  </ReactMarkdown>
-                                                );
-                                              } else {
-                                                // Artifact 卡片
-                                                return (
-                                                  <ArtifactCard
-                                                    key={partIdx}
-                                                    artifactKey={part.key!}
-                                                    content={part.content}
-                                                  />
+                                                  <div className="my-2 overflow-x-auto rounded">
+                                                    <SyntaxHighlighter
+                                                      {...(rest as any)}
+                                                      style={oneLight}
+                                                      language={match[1]}
+                                                      PreTag="div"
+                                                      customStyle={{ margin: 0, fontSize: '0.75rem' }}
+                                                      wrapLongLines={false}
+                                                    >
+                                                      {text.replace(/\n$/, '')}
+                                                    </SyntaxHighlighter>
+                                                  </div>
                                                 );
                                               }
-                                            })}
-                                          </>
-                                        );
-                                      }
+
+                                              // 无语言标记的代码块
+                                              if (!inline) {
+                                                // 单行短文本按行内代码处理（修复误判）
+                                                if (!text.includes('\n') && text.length < 100) {
+                                                  return (
+                                                    <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
+                                                      {children as any}
+                                                    </code>
+                                                  );
+                                                }
+                                                // 多行代码块
+                                                return (
+                                                  <div className="my-2 overflow-x-auto rounded">
+                                                    <SyntaxHighlighter
+                                                      {...(rest as any)}
+                                                      style={oneLight}
+                                                      language="text"
+                                                      PreTag="div"
+                                                      customStyle={{ margin: 0, fontSize: '0.75rem' }}
+                                                      wrapLongLines={false}
+                                                    >
+                                                      {text.replace(/\n$/, '')}
+                                                    </SyntaxHighlighter>
+                                                  </div>
+                                                );
+                                              }
+
+                                              // 行内代码
+                                              return (
+                                                <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
+                                                  {children as any}
+                                                </code>
+                                              );
+                                            },
+                                            ul: ({ children }) => <ul className="list-disc list-outside mb-2 space-y-1 ml-4">{children}</ul>,
+                                            ol: ({ children }) => <ol className="list-decimal list-outside mb-2 space-y-1 ml-4">{children}</ol>,
+                                            li: ({ children }) => <li className="break-words">{children}</li>,
+                                            h1: ({ children }) => <h1 className="text-lg font-bold mb-2 break-words">{children}</h1>,
+                                            h2: ({ children }) => <h2 className="text-base font-bold mb-2 break-words">{children}</h2>,
+                                            h3: ({ children }) => <h3 className="text-sm font-bold mb-1 break-words">{children}</h3>,
+                                            blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-3 my-2 italic break-words">{children}</blockquote>,
+                                            a: ({ href, children }) => <a href={href} className="text-purple-600 hover:underline break-all" target="_blank" rel="noopener noreferrer">{children}</a>,
+                                            table: ({ children }) => <div className="overflow-x-auto my-2"><table className="min-w-full border-collapse">{children}</table></div>,
+                                            th: ({ children }) => <th className="border border-gray-300 px-2 py-1 bg-gray-100 text-left break-words">{children}</th>,
+                                            td: ({ children }) => <td className="border border-gray-300 px-2 py-1 break-words">{children}</td>
+                                          }}
+                                        >
+                                          {msg.content}
+                                        </ReactMarkdown>
+                                      );
                                     })()}
                                   </div>
                                 </div>

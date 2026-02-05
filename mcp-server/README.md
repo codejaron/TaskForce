@@ -3,8 +3,7 @@
 统一的 MCP (Model Context Protocol) Server 微服务，支持三种工具来源：
 
 1. **STDIO 工具** - 通过 npx 等子进程启动的工具（如 weather、filesystem）
-2. **Native Java 工具** - 自己用 Java 实现的工具（如 ArtifactTools）
-3. **Remote SSE 工具** - 远程 SSE 服务（如 n8n 集成的工具）
+2. **Remote SSE 工具** - 远程 SSE 服务（如 n8n 集成的工具）
 
 ## 架构设计
 
@@ -24,17 +23,17 @@
 │  │                  ToolRouter                          │   │
 │  │           根据 tool_name 路由到对应 Provider          │   │
 │  └─────────────────────────────────────────────────────┘   │
-│         │                 │                 │              │
-│         ▼                 ▼                 ▼              │
-│  ┌───────────┐     ┌───────────┐     ┌─────────────┐      │
-│  │StdioProvider│   │NativeJava │     │RemoteSse    │      │
-│  │           │     │Provider   │     │Provider     │      │
-│  │ 管理 npx  │     │           │     │             │      │
-│  │ 子进程    │     │ 自己写的  │     │ 转发到远程  │      │
-│  │           │     │ Java 工具 │     │ SSE 服务    │      │
-│  │- weather  │     │- artifact │     │- n8n_gmail  │      │
-│  │- filesystem│    │- db_query │     │- cloud_x    │      │
-│  └───────────┘     └───────────┘     └─────────────┘      │
+│                    │                 │                      │
+│                    ▼                 ▼                      │
+│         ┌───────────────┐     ┌─────────────┐              │
+│         │StdioProvider  │     │RemoteSse    │              │
+│         │               │     │Provider     │              │
+│         │ 管理 npx      │     │             │              │
+│         │ 子进程        │     │ 转发到远程  │              │
+│         │               │     │ SSE 服务    │              │
+│         │- weather      │     │- n8n_gmail  │              │
+│         │- filesystem   │     │- cloud_x    │              │
+│         └───────────────┘     └─────────────┘              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -81,12 +80,6 @@ docker run -p 8081:8081 mcp-server
       "command": "npx",
       "args": ["-y", "@anthropics/weather-server"],
       "env": {}
-    },
-    "artifact_tools": {
-      "type": "NATIVE",
-      "enabled": true,
-      "beanName": "artifactTools",
-      "className": "com.agent.service.tool.ArtifactTools"
     },
     "n8n_gmail": {
       "type": "REMOTE_SSE",
@@ -141,36 +134,7 @@ docker run -p 8081:8081 mcp-server
 }
 ```
 
-### 2. Native Java 工具
-
-1. 创建工具类，使用 `@Tool` 注解：
-
-```java
-@Service
-public class MyCustomTools {
-    
-    @Tool(
-        name = "my_tool",
-        description = "My custom tool description"
-    )
-    public Map<String, Object> myTool(@JsonProperty("param1") String param1) {
-        // 实现工具逻辑
-        return Map.of("result", "success");
-    }
-}
-```
-
-2. 在配置中注册：
-
-```json
-{
-  "type": "NATIVE",
-  "beanName": "myCustomTools",
-  "className": "com.your.package.MyCustomTools"
-}
-```
-
-### 3. Remote SSE 工具
+### 2. Remote SSE 工具
 
 ```json
 {

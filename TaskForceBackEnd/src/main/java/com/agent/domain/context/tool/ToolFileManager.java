@@ -1,11 +1,11 @@
 package com.agent.domain.context.tool;
 
 import com.agent.domain.context.storage.WorkspaceStorage;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.net.URI;
 import java.util.Map;
 
 /**
@@ -16,67 +16,104 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 public class ToolFileManager {
-    
+
     private final WorkspaceStorage storage;
-    
+    private final ObjectMapper objectMapper;
+
     /**
      * 保存工具结果
+     *
      * @param sessionId 会话ID
      * @param stepIndex 步骤索引
-     * @param toolName 工具名称
-     * @param args 工具参数
-     * @param result 工具结果
+     * @param toolName  工具名称
+     * @param args      工具参数
+     * @param result    工具结果
      * @return 文件相对路径
      */
     public String saveToolResult(String sessionId, int stepIndex,
-                                  String toolName, Map<String, Object> args,
-                                  String result) {
-        // 生成文件名
-        String fileName = generateFileName(toolName, args);
-        String path = String.format("step_%03d/tools/%s", stepIndex, fileName);
-        
-        // 保存
-        storage.writeFile(sessionId, path, result);
+                                 String toolName, Map<String, Object> args,
+                                 String result) {
+        // 1. 简化工具名
+        String shortName = extractShortName(toolName);
+
+        // 2. 提取第一个参数值作为提示
+        String hint = extractHint(args);
+
+        // 3. 生成基础文件名
+        String baseName = shortName + "_" + hint;
+
+        // 4. 先确保目录存在
+        String toolsDir = String.format("step_%03d/tools", stepIndex);
+        storage.ensureDirectory(sessionId, toolsDir);
+
+        // 5. 再检查唯一文件名
+        String fileName = getUniqueFileName(sessionId, toolsDir, baseName);
+
+        // 6. 保存
+        String path = toolsDir + "/" + fileName + ".md";
+        String markdown = formatAsMarkdown(toolName, args, result);
+        storage.writeFile(sessionId, path, markdown);
+
         log.debug("保存工具结果: sessionId={}, path={}", sessionId, path);
-        
         return path;
     }
-    
+
+
     /**
-     * 生成文件名：工具名_关键参数.扩展名
+     * 简化工具名
+     * duckduckgo::search -> search
+     * filesystem::read_file -> read_file
      */
-    private String generateFileName(String toolName, Map<String, Object> args) {
-        String suffix = extractKeySuffix(toolName, args);
-        String ext = determineExtension(toolName);
-        return toolName + "_" + suffix + ext;
+    private String extractShortName(String toolName) {
+        if (toolName == null || toolName.isEmpty()) {
+            return "tool";
+        }
+        if (toolName.contains("::")) {
+            return toolName.substring(toolName.indexOf("::") + 2);
+        }
+        return toolName;
     }
-    
+
     /**
-     * 提取关键参数作为文件名后缀
+     * 提取第一个参数值作为文件名提示
      */
-    private String extractKeySuffix(String toolName, Map<String, Object> args) {
-        return switch (toolName) {
-            case "search", "web_search" -> sanitize(getStringArg(args, "query", "result"));
-            case "browser", "web_fetch" -> extractDomain(getStringArg(args, "url", "page"));
-            case "shell", "execute" -> sanitize(truncate(getStringArg(args, "command", "cmd"), 20));
-            case "file_read", "read_file" -> extractFileName(getStringArg(args, "path", "file"));
-            case "analyze", "review" -> sanitize(getStringArg(args, "target", "result"));
-            case "database_query" -> sanitize(truncate(getStringArg(args, "sql", "query"), 30));
-            default -> sanitize(getStringArg(args, "name", "result"));
-        };
+    private String extractHint(Map<String, Object> args) {
+        if (args == null || args.isEmpty()) {
+            return "result";
+        }
+
+        Object firstValue = args.values().iterator().next();
+        if (firstValue == null) {
+            return "result";
+        }
+
+        String hint = firstValue.toString();
+        return sanitize(truncate(hint, 30));
     }
-    
+
     /**
-     * 确定文件扩展名
+     * 获取唯一文件名（重名则加序号）
      */
-    private String determineExtension(String toolName) {
-        // 文本类工具用 .md，其他用 .json
-        return switch (toolName) {
-            case "browser", "web_fetch", "file_read", "read_file" -> ".md";
-            default -> ".json";
-        };
+    private String getUniqueFileName(String sessionId, String toolsDir, String baseName) {
+        String path = toolsDir + "/" + baseName + ".md";
+
+        if (!storage.exists(sessionId, path)) {
+            return baseName;
+        }
+
+        // 加序号
+        for (int i = 2; i <= 99; i++) {
+            String newName = baseName + "_" + i;
+            path = toolsDir + "/" + newName + ".md";
+            if (!storage.exists(sessionId, path)) {
+                return newName;
+            }
+        }
+
+        // 兜底：加时间戳
+        return baseName + "_" + System.currentTimeMillis();
     }
-    
+
     /**
      * 清理文件名：只保留字母、数字、中文、下划线、连字符
      */
@@ -84,10 +121,16 @@ public class ToolFileManager {
         if (s == null || s.isEmpty()) {
             return "result";
         }
-        return s.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5_-]", "_")
-                .substring(0, Math.min(s.length(), 30));
+        String sanitized = s.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5_-]", "_")
+                .replaceAll("_+", "_")      // 合并连续下划线
+                .replaceAll("^_|_$", "");   // 去除首尾下划线
+
+        if (sanitized.isEmpty()) {
+            return "result";
+        }
+        return sanitized.substring(0, Math.min(sanitized.length(), 30));
     }
-    
+
     /**
      * 截断字符串
      */
@@ -97,51 +140,24 @@ public class ToolFileManager {
         }
         return s.substring(0, maxLength);
     }
-    
+
     /**
-     * 从 URL 提取域名
+     * 格式化为 Markdown
      */
-    private String extractDomain(String url) {
+    private String formatAsMarkdown(String toolName, Map<String, Object> args, String result) {
+        StringBuilder md = new StringBuilder();
+        md.append("# Tool: ").append(toolName).append("\n\n");
+
+        md.append("## Arguments\n```json\n");
         try {
-            URI uri = new URI(url);
-            String host = uri.getHost();
-            if (host != null) {
-                // 移除 www. 前缀
-                return host.replaceFirst("^www\\.", "").replace(".", "_");
-            }
+            md.append(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(args));
         } catch (Exception e) {
-            log.debug("解析 URL 失败: {}", url);
+            md.append(args != null ? args.toString() : "{}");
         }
-        return sanitize(url);
-    }
-    
-    /**
-     * 从路径提取文件名
-     */
-    private String extractFileName(String path) {
-        if (path == null || path.isEmpty()) {
-            return "file";
-        }
-        int lastSlash = path.lastIndexOf('/');
-        if (lastSlash >= 0 && lastSlash < path.length() - 1) {
-            path = path.substring(lastSlash + 1);
-        }
-        // 移除扩展名
-        int lastDot = path.lastIndexOf('.');
-        if (lastDot > 0) {
-            path = path.substring(0, lastDot);
-        }
-        return sanitize(path);
-    }
-    
-    /**
-     * 安全获取字符串参数
-     */
-    private String getStringArg(Map<String, Object> args, String key, String defaultValue) {
-        Object value = args.get(key);
-        if (value == null) {
-            return defaultValue;
-        }
-        return value.toString();
+        md.append("\n```\n\n");
+
+        md.append("## Result\n").append(result != null ? result : "");
+
+        return md.toString();
     }
 }

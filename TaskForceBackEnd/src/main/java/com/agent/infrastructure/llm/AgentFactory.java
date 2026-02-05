@@ -2,8 +2,6 @@ package com.agent.infrastructure.llm;
 
 import com.agent.domain.tool.ToolInfo;
 import com.agent.infrastructure.mcp.RemoteMcpClient;
-import com.agent.infrastructure.config.AutoToolConfiguration;
-import com.agent.infrastructure.config.EventPublishingFunctionCallback;
 import com.agent.infrastructure.config.EventPublishingToolCallback;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.service.AgentToolService;
@@ -44,7 +42,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AgentFactory {
 
     private final RemoteMcpClient remoteMcpClient;
-    private final AutoToolConfiguration autoToolConfiguration; // 原生工具配置
     private final ChatModelFactory chatModelFactory; // 动态模型工厂
     private final AgentMapper agentMapper;
     private final LLMProviderMapper providerMapper;
@@ -52,10 +49,8 @@ public class AgentFactory {
     private final EventBus eventBus;
     private final ToolCallService toolCallService;
 
-    // 使用构造函数注入，对 AutoToolConfiguration 使用 @Lazy 打破循环依赖
     public AgentFactory(
             RemoteMcpClient remoteMcpClient,
-            @Lazy AutoToolConfiguration autoToolConfiguration,
             ChatModelFactory chatModelFactory,
             AgentMapper agentMapper,
             LLMProviderMapper providerMapper,
@@ -63,7 +58,6 @@ public class AgentFactory {
             EventBus eventBus,
             @Lazy ToolCallService toolCallService) {
         this.remoteMcpClient = remoteMcpClient;
-        this.autoToolConfiguration = autoToolConfiguration;
         this.chatModelFactory = chatModelFactory;
         this.agentMapper = agentMapper;
         this.providerMapper = providerMapper;
@@ -131,7 +125,7 @@ public class AgentFactory {
         builder.defaultOptions(clientOptions);
 
 
-        // 8. 挂载工具（MCP + 原生），并用 EventPublishingToolCallback 包装
+        // 8. 挂载工具（从 mcp-server 获取），并用 EventPublishingToolCallback 包装
         List<FunctionCallback> allTools = new ArrayList<>();
         AtomicInteger sequenceCounter = new AtomicInteger(0);
 
@@ -166,27 +160,13 @@ public class AgentFactory {
                     );
                     allTools.add(wrapped);
                 }
-                log.info("  Attached {} remote MCP tools (with event publishing)", remoteTools.length);
+                log.info("  Attached {} MCP tools (with event publishing)", remoteTools.length);
             } else {
-                log.warn("  No valid remote MCP tools found");
+                log.warn("  No valid MCP tools found");
             }
         }
 
-        // 8.2 添加原生 @Tool 工具（所有 Worker 都可用，传入 sessionId 和 stepIndex 用于跨线程传递上下文）
-        FunctionCallback[] nativeCallbacks = autoToolConfiguration.getToolCallbacks(sessionId, stepIndex);
-        if (nativeCallbacks.length > 0) {
-            for (FunctionCallback callback : nativeCallbacks) {
-                // 原生工具使用 EventPublishingFunctionCallback 包装
-                FunctionCallback wrapped = wrapFunctionWithEventPublishing(
-                        callback, sessionId, stepId, stepIndex, agentId, sequenceCounter
-                );
-                allTools.add(wrapped);
-            }
-            log.info("  Attached {} native @Tool tools (with event publishing, sessionId: {}, stepIndex: {})", 
-                    nativeCallbacks.length, sessionId, stepIndex);
-        }
-
-        // 8.3 注册到 ChatClient
+        // 8.2 注册到 ChatClient
         if (!allTools.isEmpty()) {
             builder.defaultTools(allTools.toArray(new FunctionCallback[0]));
             log.info("  Total tools attached to agent {}: {}", agent.getName(), allTools.size());
@@ -215,28 +195,6 @@ public class AgentFactory {
                 stepIndex,
                 agentId,
                 serverName,
-                eventBus,
-                toolCallService,
-                sequenceCounter
-        );
-    }
-
-    /**
-     * 用 EventPublishingFunctionCallback 包装 FunctionCallback（原生 @Tool 工具）
-     */
-    private FunctionCallback wrapFunctionWithEventPublishing(
-            FunctionCallback delegate,
-            String sessionId,
-            String stepId,
-            Integer stepIndex,
-            Long agentId,
-            AtomicInteger sequenceCounter) {
-        return new EventPublishingFunctionCallback(
-                delegate,
-                sessionId,
-                stepId,
-                stepIndex,
-                agentId,
                 eventBus,
                 toolCallService,
                 sequenceCounter

@@ -62,9 +62,9 @@ public class WorkspaceStorage {
         try {
             Map<String, Object> args = new HashMap<>();
             args.put("path", fullPath);
-            
+
             RemoteMcpClient.ToolCallResultDTO result = mcpClient.callTool("filesystem::create_directory", args);
-            
+
             if (result.isError()) {
                 String errorMsg = result.getTextContent();
                 // 如果是父目录不存在的错误，递归创建父目录
@@ -88,7 +88,7 @@ public class WorkspaceStorage {
             log.error("创建目录失败: {}", fullPath, e);
         }
     }
-    
+
     /**
      * 获取父目录路径
      */
@@ -124,19 +124,26 @@ public class WorkspaceStorage {
             throw new RuntimeException("读取文件失败: " + relativePath, e);
         }
     }
-    
+
     /**
      * 检查文件是否存在
      */
     public boolean exists(String sessionId, String relativePath) {
-        try {
-            readFile(sessionId, relativePath);
-            return true;
-        } catch (Exception e) {
-            return false;
+        // 分离目录和文件名
+        int lastSlash = relativePath.lastIndexOf('/');
+        if (lastSlash < 0) {
+            // 根目录下的文件
+            return listFiles(sessionId, "").contains(relativePath);
         }
+
+        String dir = relativePath.substring(0, lastSlash);
+        String fileName = relativePath.substring(lastSlash + 1);
+
+        List<String> files = listFiles(sessionId, dir);
+        return files.stream().anyMatch(f -> f.contains(fileName));
     }
-    
+
+
     /**
      * 创建目录
      */
@@ -198,13 +205,7 @@ public class WorkspaceStorage {
             return new ArrayList<>();
         }
     }
-    
-    /**
-     * 删除文件（暂不实现，MCP filesystem 可能没有 delete）
-     */
-    public void deleteFile(String sessionId, String relativePath) {
-        log.warn("删除文件功能未实现: {}", relativePath);
-    }
+
     
     /**
      * 获取会话工作空间根路径
@@ -246,4 +247,9 @@ public class WorkspaceStorage {
         
         return files;
     }
+    public void ensureDirectory(String sessionId, String relativePath) {
+        String fullPath = getFullPath(sessionId, relativePath);
+        createDirectoryRecursive(fullPath);
+    }
+
 }

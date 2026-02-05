@@ -7,7 +7,6 @@ import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.domain.tool.ToolInfo;
 import com.agent.service.AgentToolService;
 import com.agent.infrastructure.mcp.RemoteMcpClient;
-import com.agent.common.util.ArtifactParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -407,13 +406,10 @@ public class PromptManager {
                 default -> role;
             };
 
-            // 清洗 Artifact 标签
-            String cleanedContent = ArtifactParser.removeArtifacts(content);
-
             // 内容裁剪（保留 800 字符）
-            String displayContent = cleanedContent;
-            if (cleanedContent.length() > 800) {
-                displayContent = cleanedContent.substring(0, 800) + "\n[... 省略 " + (cleanedContent.length() - 800) + " 字符]";
+            String displayContent = content;
+            if (content.length() > 800) {
+                displayContent = content.substring(0, 800) + "\n[... 省略 " + (content.length() - 800) + " 字符]";
             }
 
             sb.append("[").append(roleDisplay).append("]: ");

@@ -132,23 +132,7 @@ CREATE TABLE IF NOT EXISTS messages (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息表';
 
 -- ========================================
--- 8. 会话Artifact存储表
--- ========================================
-CREATE TABLE IF NOT EXISTS session_artifact (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
-    session_id VARCHAR(64) NOT NULL COMMENT '会话ID',
-    artifact_key VARCHAR(128) NOT NULL COMMENT 'Artifact键名',
-    artifact_value LONGTEXT COMMENT 'Artifact值（支持大文本）',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY uk_session_key (session_id, artifact_key),
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-    INDEX idx_session_id (session_id),
-    INDEX idx_created_at (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话Artifact存储表-XML上下文管理';
-
--- ========================================
--- 9. 执行计划表（异步工作流状态）
+-- 8. 执行计划表（异步工作流状态）
 -- ========================================
 CREATE TABLE IF NOT EXISTS execution_plan (
     plan_id VARCHAR(64) PRIMARY KEY COMMENT '计划ID(UUID)',

@@ -5,10 +5,8 @@ import com.agent.domain.orchestration.model.ExecutionPlan;
 import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.domain.orchestration.repository.PlanRepository;
 import com.agent.infrastructure.persistence.entity.Message;
-import com.agent.infrastructure.persistence.entity.SessionArtifact;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.persistence.mapper.MessageMapper;
-import com.agent.infrastructure.persistence.mapper.SessionArtifactMapper;
 import com.agent.service.AgentService;
 import com.agent.service.MessageService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -34,7 +32,6 @@ public class StateManager {
     private final PlanRepository planRepository;
     private final MessageMapper messageMapper;
     private final AgentService agentService;
-    private final SessionArtifactMapper sessionArtifactMapper;
     private final MessageService messageService;
 
     private final StringRedisTemplate redisTemplate;
@@ -266,50 +263,6 @@ public class StateManager {
         }
     }
 
-    // === Artifact 操作 ===
-
-    /**
-     * 保存或更新 Artifact (Upsert)
-     * 使用 MyBatis-Plus 查询 + 更新/插入的方式实现 Upsert 语义
-     *
-     * @param sessionId 会话ID
-     * @param key Artifact键名
-     * @param value Artifact值
-     */
-    public void saveArtifact(String sessionId, String key, String value) {
-        try {
-            // 查询是否已存在
-            QueryWrapper<SessionArtifact> queryWrapper = new QueryWrapper<>();
-            queryWrapper.eq("session_id", sessionId)
-                        .eq("artifact_key", key);
-
-            SessionArtifact existing = sessionArtifactMapper.selectOne(queryWrapper);
-
-            if (existing != null) {
-                // 更新
-                existing.setArtifactValue(value);
-                existing.setUpdatedAt(LocalDateTime.now());
-                sessionArtifactMapper.updateById(existing);
-                log.debug("[StateManager] Updated artifact: sessionId={}, key={}, valueLength={}",
-                         sessionId, key, value.length());
-            } else {
-                // 新建
-                SessionArtifact artifact = new SessionArtifact();
-                artifact.setSessionId(sessionId);
-                artifact.setArtifactKey(key);
-                artifact.setArtifactValue(value);
-                artifact.setCreatedAt(LocalDateTime.now());
-                artifact.setUpdatedAt(LocalDateTime.now());
-                sessionArtifactMapper.insert(artifact);
-                log.debug("[StateManager] Created artifact: sessionId={}, key={}, valueLength={}",
-                         sessionId, key, value.length());
-            }
-        } catch (Exception e) {
-            log.error("[StateManager] Failed to save artifact: sessionId={}, key={}", sessionId, key, e);
-            // 不抛出异常，避免中断主流程
-        }
-    }
-
     /**
      * 构建任务上下文
      * 从数据库查询并组装 Worker 执行所需的完整上下文
@@ -331,20 +284,17 @@ public class StateManager {
             // 2. 查询最近的对话历史（最多 10 条）
             List<Message> recentHistory = messageService.getRecentMessages(sessionId, 10);
 
-            // 3. 查询所有 Artifact（黑板数据）
-            Map<String, String> sharedData = queryAllArtifacts(sessionId);
-
-            // 4. 组装 TaskContext
+            // 3. 组装 TaskContext
             TaskContext context = TaskContext.builder()
                     .sessionId(sessionId)
                     .userGoal(plan.getGoal())
                     .recentHistory(recentHistory)
-                    .sharedData(sharedData)
+                    .sharedData(new HashMap<>())  // 不再使用 artifact
                     .currentStep(plan.getCurrentStep())
                     .build();
 
-            log.info("[StateManager] Built context: sessionId={}, historyCount={}, artifactCount={}",
-                    sessionId, context.getHistoryCount(), context.getSharedDataCount());
+            log.info("[StateManager] Built context: sessionId={}, historyCount={}",
+                    sessionId, context.getHistoryCount());
 
             return context;
 
@@ -353,32 +303,6 @@ public class StateManager {
             return TaskContext.builder()
                     .sessionId(sessionId)
                     .build();
-        }
-    }
-
-
-    /**
-     * 查询所有 Artifact
-     *
-     * @param sessionId 会话ID
-     * @return Artifact Map（key -> value）
-     */
-    private Map<String, String> queryAllArtifacts(String sessionId) {
-        try {
-            QueryWrapper<SessionArtifact> queryWrapper = new QueryWrapper<>();
-            queryWrapper.eq("session_id", sessionId)
-                        .orderByDesc("updated_at");  // 最新的在前
-
-            List<SessionArtifact> artifacts = sessionArtifactMapper.selectList(queryWrapper);
-
-            Map<String, String> result = new LinkedHashMap<>();
-            for (SessionArtifact artifact : artifacts) {
-                result.put(artifact.getArtifactKey(), artifact.getArtifactValue());
-            }
-            return result;
-        } catch (Exception e) {
-            log.error("[StateManager] Failed to query artifacts", e);
-            return new HashMap<>();
         }
     }
 }
