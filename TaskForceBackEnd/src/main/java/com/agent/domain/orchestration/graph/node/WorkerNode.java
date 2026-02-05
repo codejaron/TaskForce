@@ -150,8 +150,8 @@ public class WorkerNode implements NodeAction {
                 return StepResult.blocked("Worker not found: " + step.getAssignedAgentId());
             }
             
-            // 2. 组装上下文（使用新的上下文系统）
-            String assembledContext = contextAssembler.assemble(sessionId, step.getStepIndex());
+            // 2. 组装上下文（使用新的上下文系统，传入步骤指令）
+            String assembledContext = contextAssembler.assemble(sessionId, step.getStepIndex(), step.getInstruction());
             
             // 3. 构建 Prompt（使用组装的上下文）
             String systemPrompt = promptManager.buildWorkerPromptWithAssembledContext(

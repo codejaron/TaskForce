@@ -26,9 +26,10 @@ public class ContextAssembler {
      * 组装完整上下文
      * @param sessionId 会话ID
      * @param currentStepIndex 当前步骤索引
+     * @param currentStepInstruction 当前步骤的具体指令
      * @return 组装后的上下文 Markdown
      */
-    public String assemble(String sessionId, int currentStepIndex) {
+    public String assemble(String sessionId, int currentStepIndex, String currentStepInstruction) {
         StringBuilder context = new StringBuilder();
         
         // 1. 加载计划
@@ -57,10 +58,8 @@ public class ContextAssembler {
         }
         
         // 4. 当前步骤 + 目标复述
-        context.append(renderCurrentStep(currentStepIndex));
-        
-        // 5. 资源提示
-        context.append(renderResourceHint());
+        context.append(renderCurrentStep(currentStepIndex, currentStepInstruction));
+
         
         return context.toString();
     }
@@ -180,22 +179,14 @@ public class ContextAssembler {
     /**
      * 渲染当前步骤
      */
-    private String renderCurrentStep(int stepIndex) {
+    private String renderCurrentStep(int stepIndex, String instruction) {
         StringBuilder sb = new StringBuilder();
         sb.append("【当前步骤】\n");
         sb.append("## Step ").append(stepIndex).append("\n\n");
+        sb.append(instruction).append("\n\n");
         sb.append("请执行当前步骤，完成后调用 write_step_summary 工具记录核心结论。\n\n");
         return sb.toString();
     }
     
-    /**
-     * 渲染资源提示
-     */
-    private String renderResourceHint() {
-        return """
-                【查阅详情】
-                如需查看某步骤的详细数据，调用 read_file(path) 读取对应文件。
-                
-                """;
-    }
+
 }

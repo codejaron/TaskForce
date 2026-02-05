@@ -42,17 +42,7 @@ public class ContextService {
         }
     }
     
-    /**
-     * 组装上下文
-     * @param sessionId 会话ID
-     * @param stepIndex 当前步骤索引
-     * @return 组装后的上下文
-     */
-    public String assemble(String sessionId, int stepIndex) {
-        // 确保工作空间已初始化
-        ensureWorkspaceInitialized(sessionId);
-        return assembler.assemble(sessionId, stepIndex);
-    }
+
     
     /**
      * 保存步骤输出
