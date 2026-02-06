@@ -104,46 +104,46 @@ public class ChatModelFactory {
     /**
      * 创建 OpenAI 兼容模型
      */
-//    private ChatModel createOpenAiCompatibleModel(LLMProvider provider, String apiKey, String configuredModel) {
-//        OpenAiApi openAiApi = new OpenAiApi(provider.getBaseUrl(), apiKey);
-//
-//        OpenAiChatOptions options = OpenAiChatOptions.builder()
-//            .model(configuredModel != null ? configuredModel : "deepseek-chat")
-//            .streamUsage(true)
-//            .build();
-//
-//        return new OpenAiChatModel(openAiApi, options);
-//    }
     private ChatModel createOpenAiCompatibleModel(LLMProvider provider, String apiKey, String configuredModel) {
-        // RestClient 代理配置
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setProxy(new Proxy(Proxy.Type.HTTP, new InetSocketAddress("127.0.0.1", 9091)));
-        RestClient.Builder restClientBuilder = RestClient.builder().requestFactory(requestFactory);
-
-        // WebClient 代理配置 (用于流式请求)
-        HttpClient httpClient = HttpClient.create()
-                .proxy(proxy -> proxy
-                        .type(ProxyProvider.Proxy.HTTP)
-                        .host("127.0.0.1")
-                        .port(9091));
-        WebClient.Builder webClientBuilder = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(httpClient));
-
-        // 使用 Builder 模式创建 OpenAiApi
-        OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl(provider.getBaseUrl())
-                .apiKey(apiKey)
-                .restClientBuilder(restClientBuilder)
-                .webClientBuilder(webClientBuilder)
-                .build();
+        OpenAiApi openAiApi = new OpenAiApi(provider.getBaseUrl(), apiKey);
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
-                .model(configuredModel != null ? configuredModel : "deepseek-chat")
-                .streamUsage(true)
-                .build();
+            .model(configuredModel != null ? configuredModel : "deepseek-chat")
+            .streamUsage(true)
+            .build();
 
         return new OpenAiChatModel(openAiApi, options);
     }
+//    private ChatModel createOpenAiCompatibleModel(LLMProvider provider, String apiKey, String configuredModel) {
+//        // RestClient 代理配置
+//        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+//        requestFactory.setProxy(new Proxy(Proxy.Type.HTTP, new InetSocketAddress("127.0.0.1", 9091)));
+//        RestClient.Builder restClientBuilder = RestClient.builder().requestFactory(requestFactory);
+//
+//        // WebClient 代理配置 (用于流式请求)
+//        HttpClient httpClient = HttpClient.create()
+//                .proxy(proxy -> proxy
+//                        .type(ProxyProvider.Proxy.HTTP)
+//                        .host("127.0.0.1")
+//                        .port(9091));
+//        WebClient.Builder webClientBuilder = WebClient.builder()
+//                .clientConnector(new ReactorClientHttpConnector(httpClient));
+//
+//        // 使用 Builder 模式创建 OpenAiApi
+//        OpenAiApi openAiApi = OpenAiApi.builder()
+//                .baseUrl(provider.getBaseUrl())
+//                .apiKey(apiKey)
+//                .restClientBuilder(restClientBuilder)
+//                .webClientBuilder(webClientBuilder)
+//                .build();
+//
+//        OpenAiChatOptions options = OpenAiChatOptions.builder()
+//                .model(configuredModel != null ? configuredModel : "deepseek-chat")
+//                .streamUsage(true)
+//                .build();
+//
+//        return new OpenAiChatModel(openAiApi, options);
+//    }
 
 
     /**

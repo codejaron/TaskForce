@@ -2,6 +2,7 @@ package com.agent.domain.orchestration.graph.config;
 
 
 import com.agent.domain.orchestration.graph.dispatcher.PlannerDispatcher;
+import com.agent.domain.orchestration.graph.dispatcher.ReplannerDispatcher;
 import com.agent.domain.orchestration.graph.dispatcher.WorkerDispatcher;
 import com.agent.domain.orchestration.graph.node.HumanFeedbackNode;
 import com.agent.domain.orchestration.graph.node.PlannerNode;
@@ -73,7 +74,13 @@ public class AgentGraphConfiguration {
                                 "clarify", "human_feedback",
                                 "complete", END
                         ))
-                .addEdge("replanner", "worker");
+                .addConditionalEdges("replanner",
+                        edge_async(new ReplannerDispatcher()),
+                        Map.of(
+                                "continue", "worker",
+                                "clarify", "human_feedback",
+                                "complete", END
+                        ));
 
         GraphRepresentation uml = graph.getGraph(GraphRepresentation.Type.PLANTUML, "Agent Workflow");
         log.info("Graph PlantUML:\n{}", uml.content());

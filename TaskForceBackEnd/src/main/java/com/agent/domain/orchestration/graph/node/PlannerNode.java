@@ -409,29 +409,16 @@ public class PlannerNode implements NodeAction {
     }
     
     /**
-     * 获取 Planner Agent（缓存查询结果）
+     * 获取 Planner Agent
      */
-    private Agent plannerAgentCache = null;
-    
+
     private Agent getPlannerAgent() {
-        if (plannerAgentCache != null) {
-            return plannerAgentCache;
-        }
-        
         try {
-            plannerAgentCache = agentMapper.selectOne(
+            return agentMapper.selectOne(
                     new LambdaQueryWrapper<Agent>()
                             .eq(Agent::getRoleType, "PLANNER")
                             .last("LIMIT 1")
             );
-            
-            if (plannerAgentCache != null) {
-                log.debug("[PlannerNode] Found PLANNER agent: id={}, name={}",
-                        plannerAgentCache.getId(), plannerAgentCache.getName());
-            }
-            
-            return plannerAgentCache;
-            
         } catch (Exception e) {
             log.error("[PlannerNode] Failed to get planner agent", e);
             return null;
