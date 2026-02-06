@@ -24,6 +24,7 @@ public class ReplannerNode implements NodeAction {
 
     private final StateManager stateManager;
     private final EventBus eventBus;
+    private final com.agent.service.SessionStopService sessionStopService;
     
     @Override
     public Map<String, Object> apply(OverAllState state) throws Exception {
@@ -31,6 +32,13 @@ public class ReplannerNode implements NodeAction {
         int stepIndex = state.value("currentStepIndex", 0);
         
         log.info("[ReplannerNode] Replanning: sessionId={}, stepIndex={}", sessionId, stepIndex);
+        
+        // 检查是否需要停止
+        if (sessionStopService.shouldStop(sessionId)) {
+            log.info("[ReplannerNode] Session stopped by user: sessionId={}", sessionId);
+            eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "USER_STOP"));
+            return Map.of("nextAction", "complete");
+        }
         
         // 加载当前计划
         ExecutionPlan plan = stateManager.loadPlan(sessionId);

@@ -1,5 +1,7 @@
 package com.agent.domain.orchestration.graph;
 
+import com.agent.service.SessionService;
+import com.agent.service.SessionStopService;
 import com.alibaba.cloud.ai.graph.*;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.alibaba.fastjson.JSON;
@@ -17,9 +19,15 @@ import java.util.Map;
 public class AgentGraphRunner {
 
     private final CompiledGraph compiledAgentGraph;
+    private final SessionStopService sessionStopService;
+    private final SessionService sessionService;
 
-    public AgentGraphRunner(CompiledGraph compiledAgentGraph) {
+    public AgentGraphRunner(CompiledGraph compiledAgentGraph,
+                           SessionStopService sessionStopService,
+                           SessionService sessionService) {
         this.compiledAgentGraph = compiledAgentGraph;
+        this.sessionStopService = sessionStopService;
+        this.sessionService = sessionService;
     }
 
     /**
@@ -27,6 +35,18 @@ public class AgentGraphRunner {
      */
     public Flux<ServerSentEvent<String>> submit(String sessionId, String requestId, String userInput) {
         log.info("[GraphRunner] Submit: sessionId={}, requestId={}", sessionId, requestId);
+
+        // 检查会话状态
+        try {
+            var session = sessionService.getSessionById(sessionId);
+            if ("PAUSED".equals(session.getStatus())) {
+                log.warn("[GraphRunner] Session is paused, clearing stop flag: sessionId={}", sessionId);
+                sessionStopService.clearStop(sessionId);
+                // 不在这里更新状态，让 PlanningStartEvent 触发状态更新
+            }
+        } catch (Exception e) {
+            log.warn("[GraphRunner] Failed to check session status: sessionId={}", sessionId, e);
+        }
 
         RunnableConfig config = RunnableConfig.builder()
                 .threadId(sessionId)
@@ -45,6 +65,18 @@ public class AgentGraphRunner {
      */
     public Flux<ServerSentEvent<String>> resume(String sessionId, String userAnswer) {
         log.info("[GraphRunner] Resume: sessionId={}", sessionId);
+
+        // 检查会话状态并清除停止标志
+        try {
+            var session = sessionService.getSessionById(sessionId);
+            if ("PAUSED".equals(session.getStatus())) {
+                log.info("[GraphRunner] Clearing stop flag for paused session: sessionId={}", sessionId);
+                sessionStopService.clearStop(sessionId);
+                // 不在这里更新状态，让后续事件触发状态更新
+            }
+        } catch (Exception e) {
+            log.warn("[GraphRunner] Failed to check session status: sessionId={}", sessionId, e);
+        }
 
         RunnableConfig config = RunnableConfig.builder()
                 .threadId(sessionId)

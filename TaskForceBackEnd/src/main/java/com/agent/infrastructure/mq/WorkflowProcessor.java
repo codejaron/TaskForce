@@ -15,6 +15,8 @@ import org.springframework.stereotype.Component;
 public class WorkflowProcessor {
 
     private final AgentGraphRunner graphRunner;
+    private final com.agent.service.SessionStopService sessionStopService;
+    private final com.agent.service.SessionService sessionService;
 
     
     /**
@@ -29,6 +31,23 @@ public class WorkflowProcessor {
         
         log.info("[Processor] Processing message: sessionId={}, requestId={}, type={}",
                 sessionId, requestId, message.getType());
+        
+        // 检查会话是否已被停止
+        if (sessionStopService.shouldStop(sessionId)) {
+            log.info("[Processor] Session is stopped, skipping execution: sessionId={}", sessionId);
+            return;
+        }
+        
+        // 检查会话状态
+        try {
+            var session = sessionService.getSessionById(sessionId);
+            if ("PAUSED".equals(session.getStatus())) {
+                log.info("[Processor] Session is paused, skipping execution: sessionId={}", sessionId);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("[Processor] Failed to check session status: sessionId={}", sessionId, e);
+        }
         
         switch (message.getType()) {
             case SUBMIT -> {

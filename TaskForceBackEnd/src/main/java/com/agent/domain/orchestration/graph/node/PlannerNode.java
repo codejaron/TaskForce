@@ -12,6 +12,7 @@ import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.infrastructure.persistence.mapper.AgentMapper;
 import com.agent.service.AgentService;
 import com.agent.service.SessionService;
+import com.agent.service.SessionStopService;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -39,6 +40,7 @@ public class PlannerNode implements NodeAction {
     private final AgentService agentService;
     private final SessionService sessionService;
     private final AgentMapper agentMapper;
+    private final SessionStopService sessionStopService;
     
     private final BeanOutputConverter<PlannerResponseDTO> plannerOutputConverter =
             new BeanOutputConverter<>(new ParameterizedTypeReference<>() {});
@@ -50,6 +52,13 @@ public class PlannerNode implements NodeAction {
         String userInput = state.value("userInput", "");
         
         log.info("[PlannerNode] Starting: sessionId={}, userInput={}", sessionId, userInput);
+        
+        // 检查是否需要停止
+        if (sessionStopService.shouldStop(sessionId)) {
+            log.info("[PlannerNode] Session stopped by user: sessionId={}", sessionId);
+            eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "USER_STOP"));
+            return Map.of("nextAction", "cannot_plan");
+        }
         if (userInput != null && !userInput.isBlank()) {
             stateManager.recordUserInput(sessionId, requestId, userInput);
             log.info("[PlannerNode] Recorded user input: sessionId={}", sessionId);

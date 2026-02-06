@@ -52,6 +52,12 @@ public class SpringAiLlmAdapter implements LlmAdapter {
         log.info("[LlmAdapter] streamChat called: agentId={}, sessionId={}, stepId={}, stepIndex={}, promptLen={}",
                 agentId, sessionId, stepId, stepIndex, systemPrompt != null ? systemPrompt.length() : 0);
 
+        // 如果有 sessionId，先检查是否已停止
+        if (sessionId != null && sessionStopService.shouldStop(sessionId)) {
+            log.info("[LlmAdapter] Session already stopped before stream start: sessionId={}", sessionId);
+            return Flux.empty();
+        }
+
         try {
             ChatClient client = agentFactory.buildClientForDatabaseAgent(agentId, sessionId != null ? sessionId : "default", stepId, stepIndex);
             log.info("[LlmAdapter] ChatClient created successfully");
@@ -65,6 +71,14 @@ public class SpringAiLlmAdapter implements LlmAdapter {
                     .user(prompt)
                     .stream()
                     .chatResponse()
+                    .takeWhile(chatResponse -> {
+                        // 在每个 chunk 到达时检查停止标志
+                        if (sessionId != null && sessionStopService.shouldStop(sessionId)) {
+                            log.info("[LlmAdapter] Stream interrupted by stop signal: sessionId={}", sessionId);
+                            return false;
+                        }
+                        return true;
+                    })
                     .doOnNext(chatResponse -> {
                         // 累计Usage（最后一个chunk会包含完整的usage信息）
                         if (chatResponse.getMetadata() != null) {
@@ -89,12 +103,8 @@ public class SpringAiLlmAdapter implements LlmAdapter {
                         // 流结束时异步记录Token
                         recordTokenUsageAsync(agentId, sessionId, usageHolder.get());
                     })
-                    .doOnError(e -> log.error("[LlmAdapter] Stream error", e));
-
-            // 如果有 sessionId，添加停止检查
-            if (sessionId != null) {
-                stream = stream.takeWhile(token -> !sessionStopService.shouldStop(sessionId));
-            }
+                    .doOnError(e -> log.error("[LlmAdapter] Stream error", e))
+                    .doOnCancel(() -> log.info("[LlmAdapter] Stream cancelled: sessionId={}", sessionId));
 
             return stream;
 

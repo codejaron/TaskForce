@@ -13,6 +13,7 @@ import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.llm.LlmAdapter;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.infrastructure.persistence.entity.Agent;
+import com.agent.service.SessionStopService;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +38,7 @@ public class WorkerNode implements NodeAction {
     private final PromptManager promptManager;
     private final ContextService contextService;
     private final ContextAssembler contextAssembler;
+    private final SessionStopService sessionStopService;
     
     @Override
     public Map<String, Object> apply(OverAllState state) throws Exception {
@@ -44,6 +46,13 @@ public class WorkerNode implements NodeAction {
         int stepIndex = state.value("currentStepIndex", 0);
         
         log.info("[WorkerNode] Executing step {}: sessionId={}", stepIndex, sessionId);
+        
+        // 检查是否需要停止
+        if (sessionStopService.shouldStop(sessionId)) {
+            log.info("[WorkerNode] Session stopped by user: sessionId={}", sessionId);
+            eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "USER_STOP"));
+            return Map.of("nextAction", "complete");
+        }
         
         // 加载计划和当前步骤
         ExecutionPlan plan = stateManager.loadPlan(sessionId);

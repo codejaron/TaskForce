@@ -175,8 +175,7 @@ public class SessionController {
             // 标记停止标志，让后端流检测并中断
             sessionStopService.markStop(sessionId);
 
-            // 更新会话状态为 PAUSED，表示用户主动停止
-            sessionService.updateSessionStatus(sessionId, "PAUSED");
+            // 状态更新由 SessionPauseEvent 触发，不在这里手动更新
 
             log.info("Session stopped by user: {}", sessionId);
             return ApiResponse.success("会话已停止", null);
