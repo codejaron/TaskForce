@@ -4,8 +4,9 @@ import com.agent.service.SessionService;
 import com.agent.service.SessionStopService;
 import com.alibaba.cloud.ai.graph.*;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
@@ -21,13 +22,15 @@ public class AgentGraphRunner {
     private final CompiledGraph compiledAgentGraph;
     private final SessionStopService sessionStopService;
     private final SessionService sessionService;
+    private final ObjectMapper objectMapper;
 
     public AgentGraphRunner(CompiledGraph compiledAgentGraph,
-                           SessionStopService sessionStopService,
-                           SessionService sessionService) {
+                            SessionStopService sessionStopService,
+                            SessionService sessionService, ObjectMapper objectMapper) {
         this.compiledAgentGraph = compiledAgentGraph;
         this.sessionStopService = sessionStopService;
         this.sessionService = sessionService;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -121,28 +124,30 @@ public class AgentGraphRunner {
     private String formatOutput(NodeOutput output) {
         String nodeName = output.node();
 
-        if (output instanceof StreamingOutput streamingOutput) {
-            // 流式 token
-            Map<String, Object> streamingMap = new HashMap<>();
-            streamingMap.put("type", "streaming");
-            streamingMap.put("node", nodeName);
-            streamingMap.put("chunk", streamingOutput.chunk());
-            return JSON.toJSONString(streamingMap);
-        } else {
-            // 节点完成输出
-            JSONObject nodeOutput = new JSONObject();
-            nodeOutput.put("type", "node_complete");
-            nodeOutput.put("node", nodeName);
-            
-            // 添加空指针检查
-            if (output.state() != null && output.state().data() != null) {
-                nodeOutput.put("data", output.state().data());
+        try {
+            if (output instanceof StreamingOutput streamingOutput) {
+                Map<String, Object> streamingMap = new HashMap<>();
+                streamingMap.put("type", "streaming");
+                streamingMap.put("node", nodeName);
+                streamingMap.put("chunk", streamingOutput.chunk());
+                return objectMapper.writeValueAsString(streamingMap);
             } else {
-                log.warn("[GraphRunner] Output state or data is null for node: {}", nodeName);
-                nodeOutput.put("data", new HashMap<>());
+                ObjectNode nodeOutput = objectMapper.createObjectNode();
+                nodeOutput.put("type", "node_complete");
+                nodeOutput.put("node", nodeName);
+
+                if (output.state() != null && output.state().data() != null) {
+                    nodeOutput.set("data", objectMapper.valueToTree(output.state().data()));
+                } else {
+                    log.warn("[GraphRunner] Output state or data is null for node: {}", nodeName);
+                    nodeOutput.putObject("data");
+                }
+
+                return objectMapper.writeValueAsString(nodeOutput);
             }
-            
-            return nodeOutput.toJSONString();
+        } catch (Exception e) {
+            log.error("[GraphRunner] Failed to format output for node: {}", nodeName, e);
+            return "{\"type\":\"error\",\"node\":\"" + nodeName + "\"}";
         }
     }
 }
