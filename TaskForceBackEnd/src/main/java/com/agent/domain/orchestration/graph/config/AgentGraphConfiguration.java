@@ -4,10 +4,10 @@ package com.agent.domain.orchestration.graph.config;
 import com.agent.domain.orchestration.graph.dispatcher.PlannerDispatcher;
 import com.agent.domain.orchestration.graph.dispatcher.ReplannerDispatcher;
 import com.agent.domain.orchestration.graph.dispatcher.WorkerDispatcher;
+import com.agent.domain.orchestration.graph.node.DynamicExecutorNode;
 import com.agent.domain.orchestration.graph.node.HumanFeedbackNode;
 import com.agent.domain.orchestration.graph.node.PlannerNode;
 import com.agent.domain.orchestration.graph.node.ReplannerNode;
-import com.agent.domain.orchestration.graph.node.WorkerNode;
 import com.alibaba.cloud.ai.graph.*;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.redis.RedisSaver;
@@ -35,7 +35,7 @@ public class AgentGraphConfiguration {
     @Bean
     public StateGraph agentGraph(
             PlannerNode plannerNode,
-            WorkerNode workerNode,
+            DynamicExecutorNode dynamicExecutorNode,
             ReplannerNode replannerNode,
             HumanFeedbackNode humanFeedbackNode) throws GraphStateException {
 
@@ -54,7 +54,7 @@ public class AgentGraphConfiguration {
 
         StateGraph graph = new StateGraph("agent-workflow", keyStrategyFactory)
                 .addNode("planner", node_async(plannerNode))
-                .addNode("worker", node_async(workerNode))
+                .addNode("worker", node_async(dynamicExecutorNode))
                 .addNode("replanner", node_async(replannerNode))
                 .addNode("human_feedback", node_async(humanFeedbackNode))
                 .addEdge(START, "planner")

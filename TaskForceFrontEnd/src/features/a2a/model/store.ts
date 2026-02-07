@@ -173,6 +173,47 @@ function handleAsyncEvent(
       });
       break;
 
+    case 'layer_start':
+      {
+        const layerIndex = getNum(data.layerIndex, 0);
+        const stepIds = Array.isArray(data.stepIds) ? data.stepIds : [];
+        const stepCount = getNum(data.stepCount, 0);
+
+        set({
+          workflowStatus: newStatus || 'EXECUTING',
+          messages: [...messages, {
+            agentId: 'system',
+            agentName: 'System',
+            content: `🔄 开始执行第 ${layerIndex + 1} 层（${stepCount} 个并行步骤）`,
+            timestamp: new Date().toISOString(),
+            type: 'text',
+            layerIndex,
+            stepIds: stepIds as string[]
+          }]
+        });
+      }
+      break;
+
+    case 'layer_complete':
+      {
+        const layerIndex = getNum(data.layerIndex, 0);
+        const successCount = getNum(data.successCount, 0);
+        const failedCount = getNum(data.failedCount, 0);
+
+        set({
+          workflowStatus: newStatus || get().workflowStatus,
+          messages: [...messages, {
+            agentId: 'system',
+            agentName: 'System',
+            content: `✅ 第 ${layerIndex + 1} 层完成（成功: ${successCount}, 失败: ${failedCount}）`,
+            timestamp: new Date().toISOString(),
+            type: 'text',
+            layerIndex
+          }]
+        });
+      }
+      break;
+
     case 'step_start':
       {
         const stepId = getStr(data.stepId, 'unknown');

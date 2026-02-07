@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Users, Database, Bot, Server, Zap, PanelLeftClose, Settings } from 'lucide-react';
+import { LayoutDashboard, Users, Database, Bot, Server, Zap, PanelLeftClose, Settings, Sparkles } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -40,6 +40,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
       icon: Database,
       label: t('sidebar.mcpMarketplace'),
       color: 'text-orange-600'
+    },
+    {
+      path: '/skills',
+      icon: Sparkles,
+      label: t('sidebar.skills'),
+      color: 'text-yellow-600'
     },
     {
       path: '/a2a',

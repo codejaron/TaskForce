@@ -165,7 +165,7 @@ public class AgentFactory {
 
         // 8.2 注册到 ChatClient
         if (!allTools.isEmpty()) {
-            builder.defaultTools(allTools.toArray(new ToolCallback[0]));
+            builder.defaultToolCallbacks(allTools);
             log.info("  Total tools attached to agent {}: {}", agent.getName(), allTools.size());
         } else {
             log.info("  No tools attached to agent {}", agent.getName());

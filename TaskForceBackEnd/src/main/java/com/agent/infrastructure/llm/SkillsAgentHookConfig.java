@@ -15,12 +15,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * ReactAgent 工厂配置
+ * SkillsAgentHook 配置类
  * 用于创建配置了 Skill 和 Sandbox 的 SkillsAgentHook
  */
 @Slf4j
 @Configuration
-public class ReactAgentFactory {
+public class SkillsAgentHookConfig {
 
     /**
      * 创建 SkillsAgentHook

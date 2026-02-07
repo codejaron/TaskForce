@@ -20,6 +20,7 @@ export default {
     llmProviders: 'LLM 提供商',
     agentWorkshop: 'Agent 工作坊',
     mcpMarketplace: 'MCP 市场',
+    skills: 'Skills 管理',
     a2aStudio: 'A2A 工作室',
     systemConfig: '系统配置',
     collapse: '收起侧边栏',

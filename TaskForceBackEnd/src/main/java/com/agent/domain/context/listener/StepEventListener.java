@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 /**
  * 步骤事件监听器
  * 监听步骤完成事件，检查并生成兜底 summary
- * 监听计划生成事件，保存 plan.md
+ * 监听计划生成事件（计划现在存储在数据库中）
  */
 @Slf4j
 @Component

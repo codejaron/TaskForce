@@ -158,7 +158,11 @@ export interface A2AMessage {
   stepDescription?: string;
   planId?: string;
   goal?: string;
-  
+
+  // 新增字段：并行执行层级信息
+  layerIndex?: number;
+  stepIds?: string[];
+
   // 新增字段：流式状态
   isStreaming?: boolean;
 }

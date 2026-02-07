@@ -5,6 +5,7 @@ import { McpMarketplacePage } from '../pages/McpMarketplace/ui/McpMarketplacePag
 import { A2AStudioPage } from '../pages/A2AStudio/ui/A2AStudioPage';
 import { LLMProvidersPage } from '../pages/LLMProviders/ui/LLMProvidersPage';
 import { SystemConfigPage } from '../pages/SystemConfig/ui/SystemConfigPage';
+import { SkillsPage } from '../pages/Skills/ui/SkillsPage';
 import { Layout } from './Layout';
 
 export const router = createBrowserRouter([
@@ -35,6 +36,10 @@ export const router = createBrowserRouter([
       {
         path: 'system-config',
         element: <SystemConfigPage />,
+      },
+      {
+        path: 'skills',
+        element: <SkillsPage />,
       },
     ],
   },
