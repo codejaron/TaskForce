@@ -166,6 +166,11 @@ public class ToolRouter {
                 if (sessionId != null) {
                     com.agent.mcpserver.context.SessionContext.setSessionId(sessionId);
                 }
+                // 从 arguments 中提取 stepIndex（如果有的话）
+                Object stepIndexObj = arguments.get("stepIndex");
+                if (stepIndexObj instanceof Integer) {
+                    com.agent.mcpserver.context.SessionContext.setStepIndex((Integer) stepIndexObj);
+                }
                 return nativeToolScanner.callTool(globalToolId, arguments);
             } finally {
                 com.agent.mcpserver.context.SessionContext.clear();

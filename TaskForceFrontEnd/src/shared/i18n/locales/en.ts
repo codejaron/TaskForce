@@ -20,6 +20,7 @@ export default {
     llmProviders: 'LLM Providers',
     agentWorkshop: 'Agent Workshop',
     mcpMarketplace: 'MCP Marketplace',
+    skills: 'Skills Management',
     a2aStudio: 'A2A Studio',
     systemConfig: 'System Config',
     collapse: 'Collapse Sidebar',

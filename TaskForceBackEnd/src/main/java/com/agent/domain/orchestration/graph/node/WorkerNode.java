@@ -12,7 +12,6 @@ import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.prompt.PromptManager;
-import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.service.SessionStopService;
 import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.OverAllState;
@@ -39,11 +38,11 @@ public class WorkerNode implements NodeAction {
 
     private final StateManager stateManager;
     private final EventBus eventBus;
-    private final PromptManager promptManager;
     private final ContextService contextService;
     private final ContextAssembler contextAssembler;
     private final SessionStopService sessionStopService;
     private final ReactAgentFactory reactAgentFactory;
+    private final PromptManager promptManager;
 
     private static final int MAX_REACT_ITERATIONS = 20; // 最大 ReAct 循环次数
 
@@ -108,7 +107,7 @@ public class WorkerNode implements NodeAction {
         // 创建 ParallelExecutor 并执行当前层
         ParallelExecutor executor = new ParallelExecutor(
                 stateManager, eventBus, contextService, contextAssembler,
-                sessionStopService, reactAgentFactory
+                sessionStopService, reactAgentFactory, promptManager
         );
 
         Map<String, StepResult> results = executor.executeLayer(sessionId, layerSteps);

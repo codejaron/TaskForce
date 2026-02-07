@@ -1,10 +1,9 @@
-package com.agent.domain.orchestration.graph.parallel;
+package com.agent.domain.orchestration.graph.node;
 
 import com.agent.domain.context.assembly.ContextAssembler;
 import com.agent.domain.context.service.ContextService;
 import com.agent.domain.orchestration.model.ExecutionPlan;
 import com.agent.domain.orchestration.model.PlanStep;
-import com.agent.domain.orchestration.model.StepResult;
 import com.agent.domain.orchestration.model.StepStatus;
 import com.agent.domain.orchestration.state.StateManager;
 import com.agent.infrastructure.agent.ReactAgentFactory;
@@ -15,27 +14,22 @@ import com.agent.infrastructure.event.events.WorkerDeltaEvent;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.service.SessionStopService;
-import com.alibaba.cloud.ai.graph.NodeOutput;
+import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 并行执行器
- * 负责并行执行同一层级的多个步骤
+ * 单个 Worker 节点
+ * 用于子 Graph 中执行单个步骤（使用 ReactAgent）
  */
 @Slf4j
-@RequiredArgsConstructor
-public class ParallelExecutor {
+public class SingleWorkerNode implements NodeAction {
 
     private final StateManager stateManager;
     private final EventBus eventBus;
@@ -44,102 +38,74 @@ public class ParallelExecutor {
     private final SessionStopService sessionStopService;
     private final ReactAgentFactory reactAgentFactory;
     private final PromptManager promptManager;
+    private final PlanStep step;
+    private final String sessionId;
 
     private static final int MAX_REACT_ITERATIONS = 20;
 
-    /**
-     * 并行执行一层的所有步骤
-     *
-     * @param sessionId 会话 ID
-     * @param layerSteps 当前层的所有步骤
-     * @return 所有步骤的执行结果
-     */
-    public Map<String, StepResult> executeLayer(String sessionId, List<PlanStep> layerSteps) {
-        log.info("[ParallelExecutor] Executing layer with {} steps in parallel", layerSteps.size());
-
-        Map<String, StepResult> results = new ConcurrentHashMap<>();
-
-        // 创建并行执行的 Flux
-        List<Mono<Void>> stepMonos = new ArrayList<>();
-
-        for (PlanStep step : layerSteps) {
-            Mono<Void> stepMono = Mono.fromRunnable(() -> {
-                try {
-                    // 检查是否需要停止
-                    if (sessionStopService.shouldStop(sessionId)) {
-                        log.info("[ParallelExecutor] Session stopped: sessionId={}, stepId={}",
-                                sessionId, step.getStepId());
-                        results.put(step.getStepId(), StepResult.blocked("Session stopped"));
-                        return;
-                    }
-
-                    log.info("[ParallelExecutor] Executing step: stepId={}, instruction={}",
-                            step.getStepId(), step.getInstruction());
-
-                    // 发布开始事件
-                    eventBus.publish(sessionId, new StepStartEvent(
-                            sessionId,
-                            step.getStepId(),
-                            step.getStepIndex(),
-                            step.getInstruction(),
-                            step.getAssignedAgentId(),
-                            step.getAssignedAgentName()
-                    ));
-
-                    // 执行步骤
-                    StepResult result = executeStep(sessionId, step);
-                    results.put(step.getStepId(), result);
-
-                    // 更新步骤状态
-                    if (result.isSuccess()) {
-                        step.setStatus(StepStatus.DONE);
-                    } else if (result.isBlocked()) {
-                        step.setStatus(StepStatus.BLOCKED);
-                    }
-
-                    // 发布完成事件
-                    eventBus.publish(sessionId, new StepCompletedEvent(
-                            sessionId,
-                            step.getStepId(),
-                            step.getStepIndex(),
-                            result.getOutput()
-                    ));
-
-                } catch (Exception e) {
-                    log.error("[ParallelExecutor] Failed to execute step: stepId={}", step.getStepId(), e);
-                    results.put(step.getStepId(), StepResult.blocked("执行失败: " + e.getMessage()));
-                }
-            });
-
-            stepMonos.add(stepMono);
-        }
-
-        // 并行执行所有步骤
-        Flux.merge(stepMonos)
-                .then()
-                .block();
-
-        log.info("[ParallelExecutor] Layer execution completed, {} results", results.size());
-        return results;
+    public SingleWorkerNode(
+            StateManager stateManager,
+            EventBus eventBus,
+            ContextService contextService,
+            ContextAssembler contextAssembler,
+            SessionStopService sessionStopService,
+            ReactAgentFactory reactAgentFactory,
+            PromptManager promptManager,
+            PlanStep step,
+            String sessionId) {
+        this.stateManager = stateManager;
+        this.eventBus = eventBus;
+        this.contextService = contextService;
+        this.contextAssembler = contextAssembler;
+        this.sessionStopService = sessionStopService;
+        this.reactAgentFactory = reactAgentFactory;
+        this.promptManager = promptManager;
+        this.step = step;
+        this.sessionId = sessionId;
     }
 
-    /**
-     * 执行单个步骤（使用 ReactAgent）
-     */
-    private StepResult executeStep(String sessionId, PlanStep step) {
+    @Override
+    public Map<String, Object> apply(OverAllState state) throws Exception {
+        String outputKey = "step_" + step.getStepIndex() + "_output";
+        String statusKey = "step_" + step.getStepIndex() + "_status";
+
         try {
+            // 检查是否需要停止
+            if (sessionStopService.shouldStop(sessionId)) {
+                log.info("[SingleWorkerNode] Session stopped: sessionId={}, stepId={}", sessionId, step.getStepId());
+                Map<String, Object> result = new HashMap<>();
+                result.put(outputKey, "Session stopped");
+                result.put(statusKey, "BLOCKED");
+                return result;
+            }
+
+            log.info("[SingleWorkerNode] Executing step: stepId={}, instruction={}", step.getStepId(), step.getInstruction());
+
+            // 发布开始事件
+            eventBus.publish(sessionId, new StepStartEvent(
+                    sessionId,
+                    step.getStepId(),
+                    step.getStepIndex(),
+                    step.getInstruction(),
+                    step.getAssignedAgentId(),
+                    step.getAssignedAgentName()
+            ));
+
             // 1. 加载 Worker 配置
             Agent worker = stateManager.loadAgent(step.getAssignedAgentId());
             if (worker == null) {
-                log.error("[ParallelExecutor] Worker not found: {}", step.getAssignedAgentId());
-                return StepResult.blocked("Worker not found: " + step.getAssignedAgentId());
+                log.error("[SingleWorkerNode] Worker not found: {}", step.getAssignedAgentId());
+                Map<String, Object> result = new HashMap<>();
+                result.put(outputKey, "Worker not found: " + step.getAssignedAgentId());
+                result.put(statusKey, "BLOCKED");
+                return result;
             }
 
             // 2. 组装上下文
             ExecutionPlan plan = stateManager.loadPlan(sessionId);
             String assembledContext = contextAssembler.assemble(plan, step.getStepIndex());
 
-            // 3. 使用 PromptManager 构建完整的 Worker Prompt（包含工作空间说明、执行协议等）
+            // 3. 使用 PromptManager 构建完整的 Worker Prompt
             String fullInstruction = promptManager.buildWorkerPromptWithAssembledContext(
                     assembledContext, worker, step);
 
@@ -158,7 +124,7 @@ public class ParallelExecutor {
 
             // 6. 配置 RunnableConfig
             RunnableConfig config = RunnableConfig.builder()
-                    .threadId(sessionId + "_" + step.getStepId()) // 使用唯一的 threadId
+                    .threadId(sessionId + "_" + step.getStepId())
                     .build();
 
             // 7. 使用 ReactAgent 流式执行
@@ -204,29 +170,53 @@ public class ParallelExecutor {
             String output = response.toString();
 
             // 8. 解析结果状态
-            return parseStepResult(output);
+            String status = parseStepStatus(output);
+
+            // 9. 更新步骤状态
+            if ("DONE".equals(status)) {
+                step.setStatus(StepStatus.DONE);
+                stateManager.updateStepStatus(sessionId, step.getStepId(), StepStatus.DONE, null);
+            } else if ("BLOCKED".equals(status)) {
+                String reason = extractAfterMarker(output, "BLOCKED:");
+                step.setStatus(StepStatus.BLOCKED);
+                step.setBlockedReason(reason);
+                stateManager.updateStepStatus(sessionId, step.getStepId(), StepStatus.BLOCKED, reason);
+            }
+
+            // 发布完成事件
+            eventBus.publish(sessionId, new StepCompletedEvent(
+                    sessionId,
+                    step.getStepId(),
+                    step.getStepIndex(),
+                    output
+            ));
+
+            // 返回结果到 state
+            Map<String, Object> result = new HashMap<>();
+            result.put(outputKey, output);
+            result.put(statusKey, status);
+            return result;
 
         } catch (Exception e) {
-            log.error("[ParallelExecutor] Failed to execute step", e);
-            return StepResult.blocked("执行失败: " + e.getMessage());
+            log.error("[SingleWorkerNode] Failed to execute step: stepId={}", step.getStepId(), e);
+            Map<String, Object> result = new HashMap<>();
+            result.put(outputKey, "执行失败: " + e.getMessage());
+            result.put(statusKey, "BLOCKED");
+            return result;
         }
     }
 
     /**
-     * 解析步骤结果
+     * 解析步骤状态
      */
-    private StepResult parseStepResult(String response) {
+    private String parseStepStatus(String response) {
         if (response.contains("BLOCKED:")) {
-            String reason = extractAfterMarker(response, "BLOCKED:");
-            return StepResult.blocked(reason);
+            return "BLOCKED";
         }
-
         if (response.contains("NEED_USER_INPUT:")) {
-            String question = extractAfterMarker(response, "NEED_USER_INPUT:");
-            return StepResult.needsUserInput(question);
+            return "NEED_USER_INPUT";
         }
-
-        return StepResult.success(response);
+        return "DONE";
     }
 
     private String extractAfterMarker(String response, String marker) {

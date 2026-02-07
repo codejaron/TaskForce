@@ -138,5 +138,12 @@ export const api = {
 
     getTopAgentsCost: (startDate: string, endDate: string, limit: number = 10) =>
       fetchJson<AgentCostDTO[]>(`/token-usage/top-agents-cost?startDate=${startDate}&endDate=${endDate}&limit=${limit}`),
+  },
+  skills: {
+    list: () => fetchJson<{skillId: string; name: string; path: string; enabled: boolean; createdAt?: string; updatedAt?: string}[]>('/skills'),
+    getById: (skillId: string) => fetchJson<{skillId: string; name: string; path: string; enabled: boolean; createdAt?: string; updatedAt?: string}>(`/skills/${skillId}`),
+    enable: (skillId: string) => fetchJson<void>(`/skills/${skillId}/enable`, { method: 'POST' }),
+    disable: (skillId: string) => fetchJson<void>(`/skills/${skillId}/disable`, { method: 'POST' }),
+    importFromGit: (request: {gitUrl: string; branch?: string; targetDirectory?: string}) => fetchJson<void>('/skills/import', { method: 'POST', body: JSON.stringify(request) }),
   }
  };

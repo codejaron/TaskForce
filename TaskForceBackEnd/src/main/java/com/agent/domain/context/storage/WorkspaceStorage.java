@@ -129,18 +129,18 @@ public class WorkspaceStorage {
      * 检查文件是否存在
      */
     public boolean exists(String sessionId, String relativePath) {
-        // 分离目录和文件名
-        int lastSlash = relativePath.lastIndexOf('/');
-        if (lastSlash < 0) {
-            // 根目录下的文件
-            return listFiles(sessionId, "").contains(relativePath);
+        String fullPath = getFullPath(sessionId, relativePath);
+        try {
+            Map<String, Object> args = new HashMap<>();
+            args.put("path", fullPath);
+
+            RemoteMcpClient.ToolCallResultDTO result = mcpClient.callTool("filesystem::read_file", args);
+
+            // 如果能读取文件，说明文件存在
+            return !result.isError();
+        } catch (Exception e) {
+            return false;
         }
-
-        String dir = relativePath.substring(0, lastSlash);
-        String fileName = relativePath.substring(lastSlash + 1);
-
-        List<String> files = listFiles(sessionId, dir);
-        return files.stream().anyMatch(f -> f.contains(fileName));
     }
 
 
