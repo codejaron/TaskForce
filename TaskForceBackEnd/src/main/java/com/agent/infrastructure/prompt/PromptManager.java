@@ -271,44 +271,54 @@ public class PromptManager {
      * @param step 当前步骤
      * @return 完整的Worker Prompt
      */
-    public String buildWorkerPromptWithAssembledContext(String assembledContext, Agent worker, PlanStep step) {
+    public String buildWorkerPromptWithAssembledContext(
+            String assembledContext, Agent worker, PlanStep step) {
+
         StringBuilder prompt = new StringBuilder();
 
-        // 1. 输出协议
-        prompt.append("""
-            
+        boolean hasDependencies = step.getDependsOn() != null
+                && !step.getDependsOn().isEmpty();
+
+        if (hasDependencies) {
+            prompt.append("""
+
             ## 工作空间
-            
-            目录结构:
-            ```
-            /workspace/{sessionId}/
-            ├── plan.md
-            ├── artifacts/
-            └── step_XXX/
-                ├── output.md
-                ├── summary.md
-                └── tools/
-            ```
-            
+
+            你有一个独立工作区用于保存产出。前置步骤的结论摘要已包含在下方上下文中，
+            你可以直接使用这些信息，无需额外查询。
+
             ## 执行要求
-            
-            1. 执行任务，调用所需工具
-            2. 完成后调用 native::write_step_summary 记录结论
+
+            1. 基于下方上下文中提供的前置步骤结论，执行当前任务
+            2. 调用所需工具完成工作
             3. 遇到阻塞输出 BLOCKED: 原因
             4. 需要用户输入输出 NEED_USER_INPUT: 问题
-            
+
             """);
+        } else {
+            prompt.append("""
 
+            ## 工作空间
 
-        // 2. 角色定义
+            你有一个独立工作区用于保存产出。
+
+            ## 执行要求
+
+            1. 你是独立执行的，直接开始你的任务，不要查找或等待其他步骤的结果
+            2. 调用所需工具完成工作
+            3. 遇到阻塞输出 BLOCKED: 原因
+            4. 需要用户输入输出 NEED_USER_INPUT: 问题
+
+            """);
+        }
+
+        // 角色定义
         prompt.append("【你的角色】\n");
-        prompt.append(worker.getSystemPrompt() != null ? worker.getSystemPrompt() : "执行任务").append("\n\n");
+        prompt.append(worker.getSystemPrompt() != null
+                ? worker.getSystemPrompt() : "执行任务").append("\n\n");
 
-        // 3. 组装的上下文（包含计划、历史步骤、当前步骤）
+        // 组装的上下文（ContextAssembler 已经按依赖链过滤好了）
         prompt.append(assembledContext);
-
-        log.debug("[PromptManager] Built Worker Prompt with assembled context: worker={}, contextLength={}",
-                worker.getName(), assembledContext.length());
 
         return prompt.toString();
     }
