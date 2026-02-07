@@ -441,26 +441,18 @@ public class RemoteMcpClient {
         }
 
         @Override
-        public String getName() {
-            return toolId;
-        }
-
-        @Override
-        public String getDescription() {
-            return toolInfo != null ? toolInfo.getDescription() : "Remote MCP tool: " + toolId;
-        }
-
-        @Override
         public ToolDefinition getToolDefinition() {
             // 如果没有 inputSchema，提供一个默认的空 schema
             String inputSchema = "{}";
             if (toolInfo != null && toolInfo.getInputSchema() != null) {
                 inputSchema = toolInfo.getInputSchema();
             }
-            
+
+            String description = toolInfo != null ? toolInfo.getDescription() : "Remote MCP tool: " + toolId;
+
             return ToolDefinition.builder()
                     .name(toolId)
-                    .description(getDescription())
+                    .description(description)
                     .inputSchema(inputSchema)
                     .build();
         }

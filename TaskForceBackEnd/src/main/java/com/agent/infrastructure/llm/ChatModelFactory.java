@@ -105,14 +105,20 @@ public class ChatModelFactory {
      * 创建 OpenAI 兼容模型
      */
     private ChatModel createOpenAiCompatibleModel(LLMProvider provider, String apiKey, String configuredModel) {
-        OpenAiApi openAiApi = new OpenAiApi(provider.getBaseUrl(), apiKey);
+        OpenAiApi openAiApi = OpenAiApi.builder()
+                .baseUrl(provider.getBaseUrl())
+                .apiKey(apiKey)
+                .build();
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
             .model(configuredModel != null ? configuredModel : "deepseek-chat")
             .streamUsage(true)
             .build();
 
-        return new OpenAiChatModel(openAiApi, options);
+        return OpenAiChatModel.builder()
+                .openAiApi(openAiApi)
+                .defaultOptions(options)
+                .build();
     }
 //    private ChatModel createOpenAiCompatibleModel(LLMProvider provider, String apiKey, String configuredModel) {
 //        // RestClient 代理配置
@@ -160,14 +166,19 @@ public class ChatModelFactory {
      */
     private ChatModel createOllamaModel(LLMProvider provider, String configuredModel) {
         // Ollama 通常不需要 API Key
-        OpenAiApi openAiApi = new OpenAiApi(provider.getBaseUrl());
+        OpenAiApi openAiApi = OpenAiApi.builder()
+                .baseUrl(provider.getBaseUrl())
+                .build();
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
             .model(configuredModel != null ? configuredModel : "llama2")
             .streamUsage(true)
             .build();
 
-        return new OpenAiChatModel(openAiApi, options);
+        return OpenAiChatModel.builder()
+                .openAiApi(openAiApi)
+                .defaultOptions(options)
+                .build();
     }
 
     /**

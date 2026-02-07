@@ -3,29 +3,34 @@ package com.agent.domain.orchestration.graph.node;
 import com.agent.domain.context.assembly.ContextAssembler;
 import com.agent.domain.context.service.ContextService;
 import com.agent.domain.orchestration.state.StateManager;
-import com.agent.domain.orchestration.model.TaskContext;
 import com.agent.domain.orchestration.model.ExecutionPlan;
 import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.domain.orchestration.model.StepResult;
 import com.agent.domain.orchestration.model.StepStatus;
+import com.agent.domain.orchestration.graph.parallel.ParallelExecutor;
+import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
-import com.agent.infrastructure.llm.LlmAdapter;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.service.SessionStopService;
+import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.alibaba.cloud.ai.graph.agent.ReactAgent;
+import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Worker Node
- * 负责执行单个计划步骤
+ * 负责按层级并行执行计划步骤
  */
 @Slf4j
 @Component
@@ -34,226 +39,133 @@ public class WorkerNode implements NodeAction {
 
     private final StateManager stateManager;
     private final EventBus eventBus;
-    private final LlmAdapter llmAdapter;
     private final PromptManager promptManager;
     private final ContextService contextService;
     private final ContextAssembler contextAssembler;
     private final SessionStopService sessionStopService;
-    
+    private final ReactAgentFactory reactAgentFactory;
+
+    private static final int MAX_REACT_ITERATIONS = 20; // 最大 ReAct 循环次数
+
     @Override
     public Map<String, Object> apply(OverAllState state) throws Exception {
         String sessionId = state.value("sessionId", "");
-        int stepIndex = state.value("currentStepIndex", 0);
-        
-        log.info("[WorkerNode] Executing step {}: sessionId={}", stepIndex, sessionId);
-        
+        int currentLayerIndex = state.value("currentLayerIndex", 0);
+
+        log.info("[WorkerNode] Executing layer {}: sessionId={}", currentLayerIndex, sessionId);
+
         // 检查是否需要停止
         if (sessionStopService.shouldStop(sessionId)) {
             log.info("[WorkerNode] Session stopped by user: sessionId={}", sessionId);
             eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "USER_STOP"));
             return Map.of("nextAction", "complete");
         }
-        
-        // 加载计划和当前步骤
+
+        // 加载计划
         ExecutionPlan plan = stateManager.loadPlan(sessionId);
-        
-        // 检查是否还有步骤
-        if (stepIndex >= plan.getSteps().size()) {
-            // 标记计划完成并发布事件
+
+        // 按层级分组步骤
+        Map<Integer, List<PlanStep>> layerMap = plan.getSteps().stream()
+                .collect(Collectors.groupingBy(PlanStep::getLayerIndex));
+
+        int maxLayer = layerMap.keySet().stream().max(Integer::compareTo).orElse(0);
+
+        // 检查当前层是否超出范围
+        if (currentLayerIndex > maxLayer) {
+            // 所有层级执行完成
             plan.markCompleted();
             stateManager.savePlan(plan);
-            
-            log.info("[WorkerNode] All steps completed: sessionId={}, totalSteps={}", 
-                    sessionId, plan.getSteps().size());
+
+            log.info("[WorkerNode] All layers completed: sessionId={}, totalLayers={}",
+                    sessionId, maxLayer + 1);
             eventBus.publish(sessionId, new SessionCompleteEvent(
-                sessionId,
-                "所有步骤已成功完成",
-                plan.getSteps().size()
+                    sessionId,
+                    "所有步骤已成功完成",
+                    plan.getSteps().size()
             ));
-            
+
             return Map.of("nextAction", "complete");
         }
-        
-        PlanStep step = plan.getSteps().get(stepIndex);
-        log.info("[WorkerNode] Executing step: stepId={}, instruction={}", 
-                step.getStepId(), step.getInstruction());
-        
-        // 发布事件
-        eventBus.publish(sessionId, new StepStartEvent(
-                sessionId,
-                step.getStepId(),
-                step.getStepIndex(),
-                step.getInstruction(),
-                step.getAssignedAgentId(),
-                step.getAssignedAgentName()
-        ));
-        
-        // 执行步骤
-        StepResult result = executeStep(sessionId, step);
-        
-        // 更新步骤状态
-        if (result.isSuccess()) {
-            step.setStatus(StepStatus.DONE);
-        } else if (result.isBlocked()) {
-            step.setStatus(StepStatus.BLOCKED);
-        }
-        stateManager.savePlan(plan);
-        
-        // 发布完成事件
-        eventBus.publish(sessionId, new StepCompletedEvent(
-                sessionId,
-                step.getStepId(),
-                step.getStepIndex(),
-                result.getOutput()
-        ));
-        
-        // 决定下一步
-        if (result.isBlocked()) {
+
+        // 获取当前层的步骤
+        List<PlanStep> layerSteps = layerMap.getOrDefault(currentLayerIndex, List.of());
+
+        if (layerSteps.isEmpty()) {
+            // 当前层没有步骤，跳到下一层
+            log.warn("[WorkerNode] Layer {} is empty, skipping to next layer", currentLayerIndex);
             return Map.of(
-                "nextAction", "replan",
-                "currentStepIndex", stepIndex
+                    "nextAction", "continue",
+                    "currentLayerIndex", currentLayerIndex + 1
             );
         }
-        
-        if (result.needsUserInput()) {
-            return Map.of(
-                "nextAction", "clarify",
-                "clarifyQuestion", result.getQuestion(),
-                "currentStepIndex", stepIndex
-            );
-        }
-        
-        // 继续下一步
-        int nextIndex = stepIndex + 1;
-        if (nextIndex >= plan.getSteps().size()) {
-            // 标记计划完成并发布事件
-            plan.markCompleted();
-            stateManager.savePlan(plan);
-            
-            log.info("[WorkerNode] All steps completed: sessionId={}, totalSteps={}", 
-                    sessionId, plan.getSteps().size());
-            eventBus.publish(sessionId, new SessionCompleteEvent(
-                sessionId,
-                "所有步骤已成功完成",
-                plan.getSteps().size()
-            ));
-            
-            return Map.of("nextAction", "complete");
-        }
-        
-        return Map.of(
-            "nextAction", "continue",
-            "currentStepIndex", nextIndex
+
+        log.info("[WorkerNode] Executing {} steps in layer {}", layerSteps.size(), currentLayerIndex);
+
+        // 发布层级开始事件
+        List<String> stepIds = layerSteps.stream().map(PlanStep::getStepId).toList();
+        eventBus.publish(sessionId, new LayerStartEvent(sessionId, currentLayerIndex, stepIds, layerSteps.size()));
+
+        // 创建 ParallelExecutor 并执行当前层
+        ParallelExecutor executor = new ParallelExecutor(
+                stateManager, eventBus, contextService, contextAssembler,
+                sessionStopService, reactAgentFactory
         );
-    }
-    
-    /**
-     * 执行步骤（简化版本，使用现有的 streamChat）
-     */
-    private StepResult executeStep(String sessionId, PlanStep step) {
-        try {
-            // 1. 加载 Worker 配置
-            Agent worker = stateManager.loadAgent(step.getAssignedAgentId());
-            if (worker == null) {
-                log.error("[WorkerNode] Worker not found: {}", step.getAssignedAgentId());
-                return StepResult.blocked("Worker not found: " + step.getAssignedAgentId());
+
+        Map<String, StepResult> results = executor.executeLayer(sessionId, layerSteps);
+
+        // 保存计划状态
+        stateManager.savePlan(plan);
+
+        // 统计成功和失败数量
+        long successCount = results.values().stream().filter(StepResult::isSuccess).count();
+        long failedCount = results.values().stream().filter(StepResult::isBlocked).count();
+
+        // 发布层级完成事件
+        eventBus.publish(sessionId, new LayerCompleteEvent(sessionId, currentLayerIndex, (int) successCount, (int) failedCount));
+
+        // 检查是否有步骤被阻塞或需要用户输入
+        for (Map.Entry<String, StepResult> entry : results.entrySet()) {
+            StepResult result = entry.getValue();
+
+            if (result.isBlocked()) {
+                log.warn("[WorkerNode] Step {} is blocked: {}", entry.getKey(), result.getOutput());
+                return Map.of(
+                        "nextAction", "replan",
+                        "currentLayerIndex", currentLayerIndex
+                );
             }
-            
-            // 2. 组装上下文（使用新的上下文系统，传入步骤指令）
-            String assembledContext = contextAssembler.assemble(sessionId, step.getStepIndex(), step.getInstruction());
-            
-            // 3. 构建 Prompt（使用组装的上下文）
-            String systemPrompt = promptManager.buildWorkerPromptWithAssembledContext(
-                    assembledContext, worker, step);
-            log.debug("[WorkerNode] Worker '{}' (步骤 {}) 收到的 Prompt:\n{}",
-                    worker.getName(), step.getStepId(), systemPrompt);
-            
-            StringBuilder response = new StringBuilder();
-            StringBuilder buffer = new StringBuilder();
-            final int FLUSH_THRESHOLD = 100;
-            
-            // 4. 创建流式消息记录
-            Long messageId = stateManager.createStreamingMessage(sessionId, step);
-            
-            // 5. 流式调用，边输出边持久化
-            llmAdapter.streamChat(Long.valueOf(step.getAssignedAgentId()), sessionId, step.getStepId(), step.getStepIndex(), systemPrompt, null)
-                    .doOnNext(token -> {
-                        response.append(token);
-                        buffer.append(token);
-                        eventBus.publish(sessionId, new WorkerDeltaEvent(sessionId, step.getStepId(), token));
-                        
-                        if (buffer.length() >= FLUSH_THRESHOLD) {
-                            stateManager.appendStreamingContent(messageId, buffer.toString());
-                            buffer.setLength(0);
-                        }
-                    })
-                    .doOnComplete(() -> {
-                        if (buffer.length() > 0) {
-                            stateManager.appendStreamingContent(messageId, buffer.toString());
-                        }
-                        stateManager.completeStreamingMessage(messageId, response.toString());
-                        
-                        // 保存步骤输出到上下文系统
-                        contextService.saveStepOutput(sessionId, step.getStepIndex(), response.toString());
-                    })
-                    .doOnError(e -> {
-                        if (buffer.length() > 0) {
-                            stateManager.appendStreamingContent(messageId, buffer.toString());
-                        }
-                        stateManager.completeStreamingMessage(messageId, response.toString());
-                        
-                        // 即使出错也保存输出
-                        contextService.saveStepOutput(sessionId, step.getStepIndex(), response.toString());
-                    })
-                    .blockLast();
-            
-            String output = response.toString();
-            log.debug("[WorkerNode] Worker '{}' 完整响应 ({}字符):\n{}",
-                    worker.getName(), output.length(), output);
-            
-            // 7. 解析结果状态
-            return parseStepResult(output);
-            
-        } catch (Exception e) {
-            log.error("[WorkerNode] Failed to execute step", e);
-            return StepResult.blocked("执行失败: " + e.getMessage());
-        }
-    }
-    
-    /**
-     * 解析步骤结果
-     */
-    private StepResult parseStepResult(String response) {
-        // 检查是否阻塞
-        if (response.contains("BLOCKED:")) {
-            String reason = extractAfterMarker(response, "BLOCKED:");
-            return StepResult.blocked(reason);
-        }
-        
-        // 检查是否需要用户输入
-        if (response.contains("NEED_USER_INPUT:")) {
-            String question = extractAfterMarker(response, "NEED_USER_INPUT:");
-            return StepResult.needsUserInput(question);
-        }
-        
-        // 正常完成
-        return StepResult.success(response);
-    }
-    
-    /**
-     * 提取标记后的内容
-     */
-    private String extractAfterMarker(String response, String marker) {
-        int idx = response.indexOf(marker);
-        if (idx >= 0) {
-            String after = response.substring(idx + marker.length()).trim();
-            // 取第一行
-            int newline = after.indexOf("\n");
-            if (newline > 0) {
-                return after.substring(0, newline).trim();
+
+            if (result.needsUserInput()) {
+                log.info("[WorkerNode] Step {} needs user input: {}", entry.getKey(), result.getQuestion());
+                return Map.of(
+                        "nextAction", "clarify",
+                        "clarifyQuestion", result.getQuestion(),
+                        "currentLayerIndex", currentLayerIndex
+                );
             }
-            return after;
         }
-        return response;
+
+        // 继续下一层
+        int nextLayerIndex = currentLayerIndex + 1;
+        if (nextLayerIndex > maxLayer) {
+            // 所有层级执行完成
+            plan.markCompleted();
+            stateManager.savePlan(plan);
+
+            log.info("[WorkerNode] All layers completed: sessionId={}, totalLayers={}",
+                    sessionId, maxLayer + 1);
+            eventBus.publish(sessionId, new SessionCompleteEvent(
+                    sessionId,
+                    "所有步骤已成功完成",
+                    plan.getSteps().size()
+            ));
+
+            return Map.of("nextAction", "complete");
+        }
+
+        return Map.of(
+                "nextAction", "continue",
+                "currentLayerIndex", nextLayerIndex
+        );
     }
 }

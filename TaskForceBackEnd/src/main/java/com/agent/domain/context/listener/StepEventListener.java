@@ -37,34 +37,11 @@ public class StepEventListener {
     @EventListener
     public void onPlanGenerated(PlanGeneratedEvent event) {
         try {
-            // 使用事件中的 formattedPlan
-            String planMarkdown = generatePlanMarkdown(event);
-            
-            // 保存到上下文系统
-            contextService.savePlan(event.getSessionId(), planMarkdown);
-            
-            log.info("计划已保存到上下文系统: sessionId={}, steps={}", 
+            // 计划现在存储在数据库中，不再需要保存到文件系统
+            log.info("计划已生成: sessionId={}, steps={}",
                     event.getSessionId(), event.getTotalSteps());
         } catch (Exception e) {
-            log.error("保存计划失败: sessionId={}", event.getSessionId(), e);
+            log.error("处理计划生成事件失败: sessionId={}", event.getSessionId(), e);
         }
-    }
-
-    
-    /**
-     * 生成计划 Markdown
-     */
-    private String generatePlanMarkdown(PlanGeneratedEvent event) {
-        StringBuilder md = new StringBuilder();
-        
-        md.append("# 执行计划\n\n");
-        md.append("**目标**: ").append(event.getGoal()).append("\n\n");
-        md.append("**总步骤数**: ").append(event.getTotalSteps()).append("\n\n");
-        md.append("**状态**: ").append(event.getStatus()).append("\n\n");
-        
-        md.append("## 步骤列表\n\n");
-        md.append(event.getFormattedPlan());
-        
-        return md.toString();
     }
 }

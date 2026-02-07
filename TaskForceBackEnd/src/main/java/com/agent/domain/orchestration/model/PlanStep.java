@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -26,6 +27,17 @@ public class PlanStep {
      * 步骤序号（从 1 开始）
      */
     private int stepIndex;
+
+    /**
+     * 层级索引（用于并行执行，同层可并行）
+     */
+    @Builder.Default
+    private int layerIndex = 0;
+
+    /**
+     * 依赖的步骤ID列表（用于并行执行的依赖关系）
+     */
+    private List<String> dependsOn;
 
     /**
      * 分配的 Agent ID

@@ -3,6 +3,8 @@ package com.agent.domain.context.assembly;
 import com.agent.domain.context.model.StepContext;
 import com.agent.domain.context.model.StepSummary;
 import com.agent.domain.context.storage.WorkspaceStorage;
+import com.agent.domain.orchestration.model.ExecutionPlan;
+import com.agent.domain.orchestration.model.PlanStep;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -23,44 +25,40 @@ public class ContextAssembler {
     private final ContextConfig config;
     
     /**
-     * 组装完整上下文
-     * @param sessionId 会话ID
+     * 组装完整上下文（使用 ExecutionPlan 对象）
+     * @param plan 执行计划对象
      * @param currentStepIndex 当前步骤索引
-     * @param currentStepInstruction 当前步骤的具体指令
      * @return 组装后的上下文 Markdown
      */
-    public String assemble(String sessionId, int currentStepIndex, String currentStepInstruction) {
+    public String assemble(ExecutionPlan plan, int currentStepIndex) {
         StringBuilder context = new StringBuilder();
-        
-        // 1. 加载计划
-        if (storage.exists(sessionId, "plan.md")) {
-            String plan = storage.readFile(sessionId, "plan.md");
-            context.append(renderPlan(plan, currentStepIndex));
-        }
-        
+
+        // 1. 渲染计划（从 ExecutionPlan 对象获取）
+        context.append(renderPlanFromObject(plan, currentStepIndex));
+
         // 2. 加载历史步骤索引
-        List<StepContext> steps = loadSteps(sessionId, currentStepIndex);
+        List<StepContext> steps = loadSteps(plan.getSessionId(), currentStepIndex);
         if (!steps.isEmpty()) {
             context.append("\n【历史步骤】\n\n");
             for (StepContext step : steps) {
                 context.append(renderStepIndex(step));
             }
         }
-        
+
         // 3. 最近一步完整输出（可选）
-        if (config.isIncludeRecentOutput() && currentStepIndex > 1 && !steps.isEmpty()) {
+        if (config.isIncludeRecentOutput() && currentStepIndex > 0 && !steps.isEmpty()) {
             StepContext lastStep = steps.get(steps.size() - 1);
             String outputPath = String.format("step_%03d/output.md", lastStep.getStepIndex());
-            if (storage.exists(sessionId, outputPath)) {
-                String output = storage.readFile(sessionId, outputPath);
+            if (storage.exists(plan.getSessionId(), outputPath)) {
+                String output = storage.readFile(plan.getSessionId(), outputPath);
                 context.append(renderRecentOutput(output));
             }
         }
-        
-        // 4. 当前步骤 + 目标复述
-        context.append(renderCurrentStep(currentStepIndex, currentStepInstruction));
 
-        
+        // 4. 当前步骤 + 目标复述
+        PlanStep currentStep = plan.getSteps().get(currentStepIndex);
+        context.append(renderCurrentStep(currentStepIndex, currentStep.getInstruction()));
+
         return context.toString();
     }
     
@@ -119,13 +117,36 @@ public class ContextAssembler {
     }
     
     /**
-     * 渲染计划
+     * 渲染计划（从 ExecutionPlan 对象）
      */
-    private String renderPlan(String plan, int currentStepIndex) {
+    private String renderPlanFromObject(ExecutionPlan plan, int currentStepIndex) {
         StringBuilder sb = new StringBuilder();
         sb.append("【执行计划】\n\n");
-        sb.append(plan);
-        sb.append("\n\n当前进度：").append(currentStepIndex).append("\n\n");
+        sb.append("**目标：** ").append(plan.getGoal()).append("\n\n");
+
+        // 渲染步骤列表
+        if (plan.getSteps() != null && !plan.getSteps().isEmpty()) {
+            sb.append("**步骤：**\n");
+            for (int i = 0; i < plan.getSteps().size(); i++) {
+                PlanStep step = plan.getSteps().get(i);
+                sb.append(i + 1).append(". ");
+
+                // 标记当前步骤
+                if (i == currentStepIndex) {
+                    sb.append("**[当前]** ");
+                } else if (i < currentStepIndex) {
+                    sb.append("✓ ");
+                }
+
+                sb.append(step.getInstruction());
+                if (step.getAssignedAgentName() != null) {
+                    sb.append(" (").append(step.getAssignedAgentName()).append(")");
+                }
+                sb.append("\n");
+            }
+        }
+
+        sb.append("\n当前进度：").append(currentStepIndex + 1).append("/").append(plan.getSteps().size()).append("\n\n");
         return sb.toString();
     }
     
