@@ -58,14 +58,15 @@ public class ContextService {
     }
     
     /**
-     * 保存计划
+     * 保存计划（已废弃，不再使用文件系统存储计划）
      * @param sessionId 会话ID
      * @param plan 计划内容
+     * @deprecated 计划现在存储在数据库中，不再使用文件系统
      */
+    @Deprecated
     public void savePlan(String sessionId, String plan) {
-        ensureWorkspaceInitialized(sessionId);
-        storage.writeFile(sessionId, "plan.md", plan);
-        log.info("保存计划: sessionId={}", sessionId);
+        // 不再写入文件系统
+        log.debug("savePlan() 已废弃，计划现在存储在数据库中: sessionId={}", sessionId);
     }
     
     /**

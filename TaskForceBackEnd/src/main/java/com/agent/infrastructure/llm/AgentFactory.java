@@ -11,11 +11,7 @@ import com.agent.infrastructure.persistence.mapper.LLMProviderMapper;
 import com.agent.service.ToolCallService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
-import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.memory.InMemoryChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.context.annotation.Lazy;
@@ -126,7 +122,7 @@ public class AgentFactory {
 
 
         // 8. 挂载工具（从 mcp-server 获取），并用 EventPublishingToolCallback 包装
-        List<FunctionCallback> allTools = new ArrayList<>();
+        List<ToolCallback> allTools = new ArrayList<>();
         AtomicInteger sequenceCounter = new AtomicInteger(0);
 
         // 8.1 添加远程 MCP 工具（从 mcp-server 获取）
@@ -153,7 +149,8 @@ public class AgentFactory {
             if (remoteTools.length > 0) {
                 for (ToolCallback callback : remoteTools) {
                     // 获取 serverName（从 toolId 中提取 providerName）
-                    String serverName = extractProviderName(callback.getName());
+                    String toolName = callback.getToolDefinition().name();
+                    String serverName = extractProviderName(toolName);
                     // 包装为事件发布回调
                     ToolCallback wrapped = wrapWithEventPublishing(
                             callback, sessionId, stepId, stepIndex, agentId, serverName, sequenceCounter
@@ -168,7 +165,7 @@ public class AgentFactory {
 
         // 8.2 注册到 ChatClient
         if (!allTools.isEmpty()) {
-            builder.defaultTools(allTools.toArray(new FunctionCallback[0]));
+            builder.defaultTools(allTools.toArray(new ToolCallback[0]));
             log.info("  Total tools attached to agent {}: {}", agent.getName(), allTools.size());
         } else {
             log.info("  No tools attached to agent {}", agent.getName());

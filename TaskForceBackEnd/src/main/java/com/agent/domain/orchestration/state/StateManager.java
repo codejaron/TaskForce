@@ -3,13 +3,19 @@ package com.agent.domain.orchestration.state;
 import com.agent.domain.orchestration.model.TaskContext;
 import com.agent.domain.orchestration.model.ExecutionPlan;
 import com.agent.domain.orchestration.model.PlanStep;
+import com.agent.domain.orchestration.model.StepStatus;
 import com.agent.domain.orchestration.repository.PlanRepository;
+import com.agent.infrastructure.persistence.entity.ExecutionPlanDO;
+import com.agent.infrastructure.persistence.entity.ExecutionPlanStepDO;
 import com.agent.infrastructure.persistence.entity.Message;
 import com.agent.infrastructure.persistence.entity.Agent;
+import com.agent.infrastructure.persistence.mapper.ExecutionPlanMapper;
+import com.agent.infrastructure.persistence.mapper.ExecutionPlanStepMapper;
 import com.agent.infrastructure.persistence.mapper.MessageMapper;
 import com.agent.service.AgentService;
 import com.agent.service.MessageService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +25,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
  * 状态管理器
@@ -30,6 +37,8 @@ import java.util.concurrent.TimeUnit;
 public class StateManager {
 
     private final PlanRepository planRepository;
+    private final ExecutionPlanMapper executionPlanMapper;
+    private final ExecutionPlanStepMapper executionPlanStepMapper;
     private final MessageMapper messageMapper;
     private final AgentService agentService;
     private final MessageService messageService;
@@ -38,53 +47,149 @@ public class StateManager {
     private final ObjectMapper objectMapper;
 
     private static final long PLAN_CACHE_TTL_MINUTES = 30;
+    private static final String META_FIELD = "meta";
 
     private static String planCacheKey(String sessionId) {
         return "plan:" + sessionId;
     }
 
+    private static String stepField(String stepId) {
+        return "step:" + stepId;
+    }
+
     // === Plan 操作 ===
 
     /**
-     * 加载计划（Cache-Aside）
+     * 加载计划（从 Redis Hash 读取，miss 时查 DB 回填）
      */
     public ExecutionPlan loadPlan(String sessionId) {
         String cacheKey = planCacheKey(sessionId);
 
-        // 1) Redis 优先
         try {
-            String json = redisTemplate.opsForValue().get(cacheKey);
-            if (json != null && !json.isBlank()) {
-                return objectMapper.readValue(json, ExecutionPlan.class);
+            // 1) 尝试从 Redis Hash 读取
+            Map<Object, Object> hashEntries = redisTemplate.opsForHash().entries(cacheKey);
+
+            if (!hashEntries.isEmpty()) {
+                // 从 Redis Hash 重建 ExecutionPlan
+                String metaJson = (String) hashEntries.get(META_FIELD);
+                if (metaJson != null && !metaJson.isBlank()) {
+                    ExecutionPlan plan = objectMapper.readValue(metaJson, ExecutionPlan.class);
+
+                    // 重建步骤列表
+                    List<PlanStep> steps = new ArrayList<>();
+                    for (Map.Entry<Object, Object> entry : hashEntries.entrySet()) {
+                        String key = (String) entry.getKey();
+                        if (key.startsWith("step:")) {
+                            String stepJson = (String) entry.getValue();
+                            PlanStep step = objectMapper.readValue(stepJson, PlanStep.class);
+                            steps.add(step);
+                        }
+                    }
+
+                    // 按 stepIndex 排序
+                    steps.sort(Comparator.comparingInt(PlanStep::getStepIndex));
+                    plan.setSteps(steps);
+
+                    return plan;
+                }
             }
         } catch (Exception e) {
-            // 缓存异常不能影响主流程
-            log.warn("[StateManager] Redis deserialize failed, fallback to DB: sessionId={}", sessionId, e);
+            log.warn("[StateManager] Redis Hash read failed, fallback to DB: sessionId={}", sessionId, e);
         }
 
         // 2) DB fallback
         ExecutionPlan plan = planRepository.findBySessionId(sessionId).orElse(null);
 
-        // 3) 回填缓存
+        // 3) 回填 Redis Hash
         if (plan != null) {
-            cachePlan(sessionId, plan);
+            cacheToRedisHash(sessionId, plan);
         }
+
         return plan;
     }
 
     /**
-     * 保存计划（更新DB + 删除缓存）
+     * 更新步骤状态（同时写 Redis field 和 MySQL 行）
+     */
+    public void updateStepStatus(String sessionId, String stepId, StepStatus status, String blockedReason) {
+        String cacheKey = planCacheKey(sessionId);
+        String fieldKey = stepField(stepId);
+
+        try {
+            // 1) 更新 MySQL
+            ExecutionPlanStepDO stepEntity = executionPlanStepMapper.findByPlanIdAndStepId(
+                    loadPlan(sessionId).getPlanId(), stepId);
+
+            if (stepEntity != null) {
+                stepEntity.setStatus(status.name());
+                stepEntity.setBlockedReason(blockedReason);
+                stepEntity.setUpdatedAt(LocalDateTime.now());
+                executionPlanStepMapper.updateById(stepEntity);
+            }
+
+            // 2) 更新 Redis Hash field
+            String stepJson = redisTemplate.opsForHash().get(cacheKey, fieldKey).toString();
+            if (stepJson != null && !stepJson.isBlank()) {
+                PlanStep step = objectMapper.readValue(stepJson, PlanStep.class);
+                step.setStatus(status);
+                step.setBlockedReason(blockedReason);
+
+                String updatedJson = objectMapper.writeValueAsString(step);
+                redisTemplate.opsForHash().put(cacheKey, fieldKey, updatedJson);
+                redisTemplate.expire(cacheKey, PLAN_CACHE_TTL_MINUTES, TimeUnit.MINUTES);
+            }
+        } catch (Exception e) {
+            log.error("[StateManager] Failed to update step status: sessionId={}, stepId={}", sessionId, stepId, e);
+        }
+    }
+
+    /**
+     * 更新计划元数据（单线程更新 meta field 和 plan 主表）
+     */
+    public void updatePlanMeta(ExecutionPlan plan) {
+        String cacheKey = planCacheKey(plan.getSessionId());
+
+        try {
+            // 1) 更新 MySQL（使用乐观锁）
+            ExecutionPlanDO entity = executionPlanMapper.selectById(plan.getPlanId());
+            if (entity != null) {
+                entity.setStatus(plan.getStatus().name());
+                entity.setCurrentStepIndex(plan.getCurrentStepIndex());
+                entity.setPauseReason(plan.getPauseReason());
+                entity.setPausedBy(plan.getPausedBy() != null ? plan.getPausedBy().name() : null);
+                entity.setPausedAtStepIndex(plan.getPausedAtStepIndex());
+                entity.setPausedAgentId(plan.getPausedAgentId());
+                entity.setPendingQuestion(plan.getPendingQuestion());
+                entity.setReplanCount(plan.getReplanCount());
+                entity.setUpdatedAt(LocalDateTime.now());
+
+                // MyBatis-Plus 会自动处理 @Version 乐观锁
+                int updated = executionPlanMapper.updateById(entity);
+                if (updated == 0) {
+                    log.warn("[StateManager] Optimistic lock failed for plan: {}", plan.getPlanId());
+                }
+            }
+
+            // 2) 更新 Redis Hash meta field
+            String metaJson = objectMapper.writeValueAsString(plan);
+            redisTemplate.opsForHash().put(cacheKey, META_FIELD, metaJson);
+            redisTemplate.expire(cacheKey, PLAN_CACHE_TTL_MINUTES, TimeUnit.MINUTES);
+
+        } catch (Exception e) {
+            log.error("[StateManager] Failed to update plan meta: planId={}", plan.getPlanId(), e);
+        }
+    }
+
+    /**
+     * 保存计划（完整保存，包括步骤）
+     * 注意：这个方法主要用于创建新计划，日常更新应使用 updatePlanMeta() 和 updateStepStatus()
      */
     public void savePlan(ExecutionPlan plan) {
         plan.setUpdatedAt(LocalDateTime.now());
         planRepository.save(plan);
 
-        // 删除 Redis 缓存，让下次读取时从 DB 加载最新数据
-        try {
-            redisTemplate.delete(planCacheKey(plan.getSessionId()));
-        } catch (Exception e) {
-            log.warn("[StateManager] Failed to evict plan cache: sessionId={}", plan.getSessionId(), e);
-        }
+        // 回填 Redis Hash
+        cacheToRedisHash(plan.getSessionId(), plan);
     }
 
     /**
@@ -99,17 +204,33 @@ public class StateManager {
         }
     }
 
-    private void cachePlan(String sessionId, ExecutionPlan plan) {
+    /**
+     * 将计划缓存到 Redis Hash
+     */
+    private void cacheToRedisHash(String sessionId, ExecutionPlan plan) {
+        String cacheKey = planCacheKey(sessionId);
+
         try {
-            String json = objectMapper.writeValueAsString(plan);
-            redisTemplate.opsForValue().set(
-                    planCacheKey(sessionId),
-                    json,
-                    PLAN_CACHE_TTL_MINUTES,
-                    TimeUnit.MINUTES
-            );
+            Map<String, String> hashMap = new HashMap<>();
+
+            // 1) 存储 meta field
+            String metaJson = objectMapper.writeValueAsString(plan);
+            hashMap.put(META_FIELD, metaJson);
+
+            // 2) 存储每个步骤为独立 field
+            if (plan.getSteps() != null) {
+                for (PlanStep step : plan.getSteps()) {
+                    String stepJson = objectMapper.writeValueAsString(step);
+                    hashMap.put(stepField(step.getStepId()), stepJson);
+                }
+            }
+
+            // 3) 批量写入 Redis Hash
+            redisTemplate.opsForHash().putAll(cacheKey, hashMap);
+            redisTemplate.expire(cacheKey, PLAN_CACHE_TTL_MINUTES, TimeUnit.MINUTES);
+
         } catch (Exception e) {
-            log.warn("[StateManager] Failed to cache plan: sessionId={}", sessionId, e);
+            log.warn("[StateManager] Failed to cache plan to Redis Hash: sessionId={}", sessionId, e);
         }
     }
 

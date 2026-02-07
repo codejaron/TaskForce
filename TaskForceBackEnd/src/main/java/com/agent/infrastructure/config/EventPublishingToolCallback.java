@@ -54,16 +54,6 @@ public class EventPublishingToolCallback implements ToolCallback {
     }
 
     @Override
-    public String getName() {
-        return delegate.getName();
-    }
-
-    @Override
-    public String getDescription() {
-        return delegate.getDescription();
-    }
-
-    @Override
     public ToolDefinition getToolDefinition() {
         return delegate.getToolDefinition();
     }

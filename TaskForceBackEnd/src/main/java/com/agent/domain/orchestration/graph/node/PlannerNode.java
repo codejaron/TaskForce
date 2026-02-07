@@ -4,6 +4,7 @@ import com.agent.domain.orchestration.state.StateManager;
 import com.agent.domain.orchestration.dto.PlannerResponseDTO;
 import com.agent.domain.orchestration.model.TaskContext;
 import com.agent.domain.orchestration.model.*;
+import com.agent.domain.orchestration.validator.DAGValidator;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
@@ -251,16 +252,38 @@ public class PlannerNode implements NodeAction {
                     log.warn("[PlannerNode] Steps is null or empty, returning cannot_plan");
                     return Map.of("nextAction", "cannot_plan");
                 }
-                
+
                 ExecutionPlan plan = convertDtoToPlan(sessionId, dto, workers);
                 log.debug("[PlannerNode] Plan created: planId={}, goal={}, steps={}",
                         plan.getPlanId(),
                         plan.getGoal(),
                         plan.getSteps() != null ? plan.getSteps().size() : "null");
 
+                // DAG 校验
+                DAGValidator.ValidationResult validationResult = DAGValidator.validate(plan.getSteps());
+                if (!validationResult.isValid()) {
+                    log.warn("[PlannerNode] DAG validation failed: {}", validationResult.getErrorMessage());
+
+                    // 降级为串行执行
+                    log.warn("[PlannerNode] Degrading to sequential execution");
+                    DAGValidator.degradeToSequential(plan.getSteps());
+                    eventBus.publish(sessionId, new PlanGeneratedEvent(sessionId, plan));
+                } else {
+                    // 应用层级索引
+                    Map<String, Integer> layerIndexMap = validationResult.getLayerIndexMap();
+                    for (PlanStep step : plan.getSteps()) {
+                        Integer layerIndex = layerIndexMap.get(step.getStepId());
+                        if (layerIndex != null) {
+                            step.setLayerIndex(layerIndex);
+                        }
+                    }
+                    log.info("[PlannerNode] DAG validation passed, {} layers detected",
+                            layerIndexMap.values().stream().max(Integer::compareTo).orElse(0) + 1);
+                    eventBus.publish(sessionId, new PlanGeneratedEvent(sessionId, plan));
+                }
+
                 stateManager.savePlan(plan);
-                eventBus.publish(sessionId, new PlanGeneratedEvent(sessionId, plan));
-                
+
                 log.info("[PlannerNode] Returning execution plan with {} steps", plan.getSteps().size());
                 return Map.of(
                     "nextAction", "execute",
@@ -296,22 +319,44 @@ public class PlannerNode implements NodeAction {
      * 将 DTO 转换为 ExecutionPlan
      */
     private ExecutionPlan convertDtoToPlan(String sessionId, PlannerResponseDTO dto, List<Agent> workers) {
-        List<PlanStep> steps = dto.getSteps().stream()
-                .map(stepDto -> {
-                    Agent agent = findAgentById(workers, stepDto.getAssignedAgentId());
-                    
-                    return PlanStep.builder()
-                            .stepId(UUID.randomUUID().toString())
-                            .stepIndex(stepDto.getStepIndex())
-                            .assignedAgentId(stepDto.getAssignedAgentId())
-                            .assignedAgentName(agent != null ? agent.getName() : "Unknown")
-                            .instruction(stepDto.getInstruction())
-                            .expectedOutput(stepDto.getExpectedOutput())
-                            .status(StepStatus.PENDING)
-                            .build();
-                })
-                .toList();
-        
+        // 1. 创建 stepIndex -> stepId 映射
+        Map<Integer, String> indexToIdMap = new HashMap<>();
+        List<PlanStep> steps = new ArrayList<>();
+
+        // 第一遍：创建步骤并建立索引映射
+        for (var stepDto : dto.getSteps()) {
+            String stepId = UUID.randomUUID().toString();
+            indexToIdMap.put(stepDto.getStepIndex(), stepId);
+
+            Agent agent = findAgentById(workers, stepDto.getAssignedAgentId());
+
+            PlanStep step = PlanStep.builder()
+                    .stepId(stepId)
+                    .stepIndex(stepDto.getStepIndex())
+                    .assignedAgentId(stepDto.getAssignedAgentId())
+                    .assignedAgentName(agent != null ? agent.getName() : "Unknown")
+                    .instruction(stepDto.getInstruction())
+                    .expectedOutput(stepDto.getExpectedOutput())
+                    .status(StepStatus.PENDING)
+                    .build();
+
+            steps.add(step);
+        }
+
+        // 第二遍：转换 dependsOn（从 stepIndex 转换为 stepId）
+        for (int i = 0; i < dto.getSteps().size(); i++) {
+            var stepDto = dto.getSteps().get(i);
+            var step = steps.get(i);
+
+            if (stepDto.getDependsOn() != null && !stepDto.getDependsOn().isEmpty()) {
+                List<String> dependsOnIds = stepDto.getDependsOn().stream()
+                        .map(indexToIdMap::get)
+                        .filter(Objects::nonNull)
+                        .toList();
+                step.setDependsOn(dependsOnIds);
+            }
+        }
+
         return ExecutionPlan.builder()
                 .planId(UUID.randomUUID().toString())
                 .sessionId(sessionId)

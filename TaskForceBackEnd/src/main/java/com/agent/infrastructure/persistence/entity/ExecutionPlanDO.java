@@ -3,6 +3,7 @@ package com.agent.infrastructure.persistence.entity;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.Version;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -45,8 +46,12 @@ public class ExecutionPlanDO {
     @TableField("replan_count")
     private Integer replanCount;
 
-    @TableField("steps_json")
-    private String stepsJson;
+    @Version
+    @TableField("version")
+    private Integer version;
+
+    @TableField("current_layer_index")
+    private Integer currentLayerIndex;
 
     @TableField("created_at")
     private LocalDateTime createdAt;

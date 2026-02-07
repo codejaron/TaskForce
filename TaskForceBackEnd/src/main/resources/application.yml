@@ -111,3 +111,13 @@ context:
   summary:
     fallback-enabled: true
 
+# ========== Skill 系统配置 ==========
+skill:
+  user-directory: ${SKILL_USER_DIR:}  # 用户 Skill 目录
+  project-directory: ${SKILL_PROJECT_DIR:}  # 项目 Skill 目录
+  auto-load: true  # 自动加载 Skill
+
+# ========== Sandbox 配置 ==========
+sandbox:
+  enabled: ${SANDBOX_ENABLED:false}  # 是否启用 Sandbox（默认关闭）
+

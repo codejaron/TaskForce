@@ -31,10 +31,10 @@ public class PromptManager {
 
     /**
      * Planner Agent Prompt模板
-     * 用于生成执行计划
+     * 用于生成执行计划（支持并行执行）
      */
     public static final String PLANNER_PROMPT = """
-        你是一个任务规划专家。根据用户的目标，生成一个执行计划。
+        你是一个任务规划专家。根据用户的目标，生成一个支持并行执行的执行计划。
 
         【可用的 Worker 列表】
         %s
@@ -53,6 +53,88 @@ public class PromptManager {
         5. 步骤数量控制在 10 步以内
         6. 确保步骤之间逻辑连贯
         7. 最后一步通常是汇总/输出步骤
+
+        【并行执行支持 - dependsOn 字段】
+        8. 每个步骤可以包含 dependsOn 字段（可选），表示该步骤依赖哪些步骤完成后才能执行
+        9. dependsOn 是一个整数数组，包含依赖的步骤索引（stepIndex）
+        10. 如果步骤之间没有数据依赖关系，可以并行执行，此时 dependsOn 为空数组 [] 或不设置
+        11. 如果步骤需要使用前面步骤的输出结果，必须在 dependsOn 中声明依赖关系
+
+        【并行识别规则】
+        - 可以并行的场景：
+          * 多个独立的数据查询（如同时查询不同的 API）
+          * 多个独立的文件操作（如同时读取不同的文件）
+          * 多个独立的计算任务（如同时处理不同的数据集）
+        - 必须串行的场景：
+          * 步骤 B 需要使用步骤 A 的输出结果
+          * 步骤 B 需要在步骤 A 创建的资源上操作
+          * 步骤之间有明确的先后顺序要求
+
+        【示例 1：完全串行执行】
+        {
+          "type": "plan",
+          "goal": "分析用户数据并生成报告",
+          "steps": [
+            {
+              "stepIndex": 1,
+              "assignedAgentId": "1",
+              "instruction": "从数据库查询用户数据",
+              "expectedOutput": "用户数据列表",
+              "dependsOn": []
+            },
+            {
+              "stepIndex": 2,
+              "assignedAgentId": "2",
+              "instruction": "分析用户数据，计算统计指标",
+              "expectedOutput": "统计结果",
+              "dependsOn": [1]
+            },
+            {
+              "stepIndex": 3,
+              "assignedAgentId": "3",
+              "instruction": "根据统计结果生成报告",
+              "expectedOutput": "分析报告",
+              "dependsOn": [2]
+            }
+          ]
+        }
+
+        【示例 2：部分并行执行】
+        {
+          "type": "plan",
+          "goal": "收集多个数据源并汇总",
+          "steps": [
+            {
+              "stepIndex": 1,
+              "assignedAgentId": "1",
+              "instruction": "从 API A 获取数据",
+              "expectedOutput": "API A 的数据",
+              "dependsOn": []
+            },
+            {
+              "stepIndex": 2,
+              "assignedAgentId": "1",
+              "instruction": "从 API B 获取数据",
+              "expectedOutput": "API B 的数据",
+              "dependsOn": []
+            },
+            {
+              "stepIndex": 3,
+              "assignedAgentId": "1",
+              "instruction": "从 API C 获取数据",
+              "expectedOutput": "API C 的数据",
+              "dependsOn": []
+            },
+            {
+              "stepIndex": 4,
+              "assignedAgentId": "2",
+              "instruction": "汇总所有数据源的结果",
+              "expectedOutput": "汇总报告",
+              "dependsOn": [1, 2, 3]
+            }
+          ]
+        }
+        说明：步骤 1、2、3 可以并行执行（dependsOn 为空），步骤 4 必须等待 1、2、3 全部完成。
 
         【重要】
         直接输出 JSON 格式，不要添加任何解释性文字、前言或后缀。
