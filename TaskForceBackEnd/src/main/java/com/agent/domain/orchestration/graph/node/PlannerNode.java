@@ -109,80 +109,50 @@ public class PlannerNode implements NodeAction {
                 Long plannerAgentId = getPlannerAgentId();
                 String plannerAgentName = getPlannerAgentName();
                 
-                // 创建流式消息记录
+                // 创建流式消息记录（只创建记录，不写入内容）
                 messageId = stateManager.createStreamingMessage(sessionId, plannerAgentId, plannerAgentName);
                 log.debug("[PlannerNode] Created streaming message: messageId={}", messageId);
-                
-                // 用于批量存储的缓冲区
-                StringBuilder buffer = new StringBuilder();
-                final int FLUSH_THRESHOLD = 100;
+
                 final Long finalMessageId = messageId;
-                
-                // 流式调用 LLM
+
+                // 流式调用 LLM（在内存中收集完整响应）
                 llmAdapter.streamChat(getPlannerAgentId(), sessionId, null, currentPrompt, null)
                         .doOnNext(token -> {
                             response.append(token);
-                            buffer.append(token);
-                            
-                            // 实时推送到前端
+
+                            // 仍然实时推送到前端
                             eventBus.publish(sessionId, new PlannerDeltaEvent(sessionId, token));
-                            
-                            // 达到阈值时存入数据库
-                            if (buffer.length() >= FLUSH_THRESHOLD) {
-                                try {
-                                    stateManager.appendStreamingContent(finalMessageId, buffer.toString());
-                                    buffer.setLength(0);
-                                } catch (Exception e) {
-                                    log.error("[PlannerNode] Failed to append streaming content", e);
-                                }
-                            }
                         })
                         .doOnComplete(() -> {
-                            // 流式结束后，存储剩余内容
-                            if (buffer.length() > 0) {
-                                try {
-                                    stateManager.appendStreamingContent(finalMessageId, buffer.toString());
-                                } catch (Exception e) {
-                                    log.error("[PlannerNode] Failed to append final content", e);
-                                }
-                            }
                             log.debug("[PlannerNode] Stream completed for messageId={}", finalMessageId);
                         })
                         .doOnError(e -> {
-                            // 即使出错也保存部分内容
-                            if (buffer.length() > 0) {
-                                try {
-                                    stateManager.appendStreamingContent(finalMessageId, buffer.toString());
-                                } catch (Exception ex) {
-                                    log.error("[PlannerNode] Failed to append content on error", ex);
-                                }
-                            }
                             log.error("[PlannerNode] Stream error for messageId={}", finalMessageId, e);
                         })
                         .blockLast();
                 
                 String fullResponse = response.toString();
                 log.debug("[PlannerNode] Raw LLM response (attempt {}):\n{}", attempt, fullResponse);
-                
+
                 // 使用 BeanOutputConverter 解析响应
                 PlannerResponseDTO dto = plannerOutputConverter.convert(fullResponse);
                 log.info("[PlannerNode] ✅ Successfully parsed response on attempt {}", attempt);
-                
-                // 解析成功，标记消息为 COMPLETED
+
+                // 解析成功，一次性写入完整内容到数据库
                 stateManager.completeStreamingMessage(messageId, fullResponse);
-                
+
                 return dto;
-                
+
             } catch (Exception e) {
                 lastException = e;
                 log.warn("[PlannerNode] ❌ Parse failed on attempt {}: {}", attempt, e.getMessage());
-                
-                // 即使解析失败，也标记消息为 COMPLETED（保留原始内容）
+
+                // 解析失败时保存部分内容并标记错误
                 if (messageId != null) {
                     try {
-                        stateManager.completeStreamingMessage(messageId, response.toString());
+                        stateManager.failStreamingMessage(messageId, response.toString(), e.getMessage());
                     } catch (Exception ex) {
-                        log.error("[PlannerNode] Failed to complete message on parse error", ex);
+                        log.error("[PlannerNode] Failed to mark message as failed on parse error", ex);
                     }
                 }
                 

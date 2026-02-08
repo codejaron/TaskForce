@@ -205,21 +205,7 @@ public class MessageService {
     }
     
     /**
-     * 追加内容（增量更新）
-     */
-    public void appendContent(Long messageId, String delta) {
-        if (messageId == null || delta == null || delta.isEmpty()) {
-            return;
-        }
-        try {
-            messageMapper.appendContent(messageId, delta);
-        } catch (Exception e) {
-            log.error("[MessageService] Failed to append content: messageId={}", messageId, e);
-        }
-    }
-    
-    /**
-     * 完成消息（更新状态和最终内容）
+     * 完成消息（一次性更新完整内容和状态）
      */
     @Transactional
     public void completeMessage(Long messageId, String finalContent) {
@@ -232,9 +218,8 @@ public class MessageService {
             msg.setContent(finalContent);
             msg.setStatus("COMPLETED");
             messageMapper.updateById(msg);
-            
+
             // 删除缓存，让下次重新加载
-            // 注意：这里可以选择直接更新缓存中的该条消息，但为了简化，我们直接删除缓存
             Message fullMsg = messageMapper.selectById(messageId);
             if (fullMsg != null) {
                 String key = recentListKey(fullMsg.getSessionId());
@@ -242,6 +227,37 @@ public class MessageService {
             }
         } catch (Exception e) {
             log.error("[MessageService] Failed to complete message: messageId={}", messageId, e);
+        }
+    }
+
+    /**
+     * 失败消息（保存部分内容并标记错误状态）
+     */
+    @Transactional
+    public void failMessage(Long messageId, String partialContent, String errorMessage) {
+        if (messageId == null) {
+            return;
+        }
+        try {
+            Message msg = new Message();
+            msg.setId(messageId);
+            // 将错误信息追加到内容末尾
+            String contentWithError = partialContent;
+            if (errorMessage != null && !errorMessage.isEmpty()) {
+                contentWithError = partialContent + "\n\n[ERROR]: " + errorMessage;
+            }
+            msg.setContent(contentWithError);
+            msg.setStatus("FAILED");
+            messageMapper.updateById(msg);
+
+            // 删除缓存，让下次重新加载
+            Message fullMsg = messageMapper.selectById(messageId);
+            if (fullMsg != null) {
+                String key = recentListKey(fullMsg.getSessionId());
+                redisTemplate.delete(key);
+            }
+        } catch (Exception e) {
+            log.error("[MessageService] Failed to mark message as failed: messageId={}", messageId, e);
         }
     }
 }

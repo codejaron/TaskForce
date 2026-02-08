@@ -161,10 +161,8 @@ public class ParallelExecutor {
                     .threadId(sessionId + "_" + step.getStepId()) // 使用唯一的 threadId
                     .build();
 
-            // 7. 使用 ReactAgent 流式执行
+            // 7. 使用 ReactAgent 流式执行（在内存中收集完整响应）
             StringBuilder response = new StringBuilder();
-            StringBuilder buffer = new StringBuilder();
-            final int FLUSH_THRESHOLD = 100;
 
             reactAgent.stream(fullInstruction, config)
                     .doOnNext(nodeOutput -> {
@@ -172,31 +170,20 @@ public class ParallelExecutor {
                             String chunk = streamingOutput.chunk();
                             if (chunk != null && !chunk.isEmpty()) {
                                 response.append(chunk);
-                                buffer.append(chunk);
 
-                                // 发布流式事件
+                                // 仍然发布实时事件给前端
                                 eventBus.publish(sessionId, new WorkerDeltaEvent(sessionId, step.getStepId(), chunk));
-
-                                // 批量持久化
-                                if (buffer.length() >= FLUSH_THRESHOLD) {
-                                    stateManager.appendStreamingContent(messageId, buffer.toString());
-                                    buffer.setLength(0);
-                                }
                             }
                         }
                     })
                     .doOnComplete(() -> {
-                        if (buffer.length() > 0) {
-                            stateManager.appendStreamingContent(messageId, buffer.toString());
-                        }
+                        // 完成时一次性写入数据库
                         stateManager.completeStreamingMessage(messageId, response.toString());
                         contextService.saveStepOutput(sessionId, step.getStepIndex(), response.toString());
                     })
                     .doOnError(e -> {
-                        if (buffer.length() > 0) {
-                            stateManager.appendStreamingContent(messageId, buffer.toString());
-                        }
-                        stateManager.completeStreamingMessage(messageId, response.toString());
+                        // 错误时保存部分内容
+                        stateManager.failStreamingMessage(messageId, response.toString(), e.getMessage());
                         contextService.saveStepOutput(sessionId, step.getStepIndex(), response.toString());
                     })
                     .blockLast();
