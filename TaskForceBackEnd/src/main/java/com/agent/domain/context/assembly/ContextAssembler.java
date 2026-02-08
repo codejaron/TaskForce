@@ -5,6 +5,7 @@ import com.agent.domain.context.model.StepSummary;
 import com.agent.domain.context.storage.WorkspaceStorage;
 import com.agent.domain.orchestration.model.ExecutionPlan;
 import com.agent.domain.orchestration.model.PlanStep;
+import com.agent.domain.orchestration.model.StepStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -27,17 +28,20 @@ public class ContextAssembler {
     /**
      * 组装完整上下文（使用 ExecutionPlan 对象）
      * @param plan 执行计划对象
-     * @param currentStepIndex 当前步骤索引
+     * @param currentStepIndex 当前步骤索引（从1开始）
      * @return 组装后的上下文 Markdown
      */
     public String assemble(ExecutionPlan plan, int currentStepIndex) {
         StringBuilder context = new StringBuilder();
 
+        // 将 stepIndex（从1开始）转换为数组索引（从0开始）
+        int arrayIndex = currentStepIndex - 1;
+
         // 1. 渲染计划（从 ExecutionPlan 对象获取）
-        context.append(renderPlanFromObject(plan, currentStepIndex));
+        context.append(renderPlanFromObject(plan, arrayIndex));
 
         // 2. 加载历史步骤索引（只加载依赖链上的步骤）
-        List<StepContext> steps = loadSteps(plan, currentStepIndex);
+        List<StepContext> steps = loadSteps(plan, arrayIndex);
         if (!steps.isEmpty()) {
             context.append("\n【历史步骤】\n\n");
             for (StepContext step : steps) {
@@ -46,8 +50,8 @@ public class ContextAssembler {
         }
 
         // 3. 直接依赖步骤的输出（优先用 summary，fallback 到 output）
-        if (config.isIncludeRecentOutput() && currentStepIndex < plan.getSteps().size()) {
-            PlanStep currentStep = plan.getSteps().get(currentStepIndex);
+        if (config.isIncludeRecentOutput() && arrayIndex < plan.getSteps().size()) {
+            PlanStep currentStep = plan.getSteps().get(arrayIndex);
             if (currentStep.getDependsOn() != null && !currentStep.getDependsOn().isEmpty()) {
                 Map<String, Integer> stepIdToIndex = new HashMap<>();
                 for (int i = 0; i < plan.getSteps().size(); i++) {
@@ -77,8 +81,8 @@ public class ContextAssembler {
 
 
         // 4. 当前步骤 + 目标复述
-        PlanStep currentStep = plan.getSteps().get(currentStepIndex);
-        context.append(renderCurrentStep(currentStepIndex, currentStep.getInstruction()));
+        PlanStep currentStep = plan.getSteps().get(arrayIndex);
+        context.append(renderCurrentStep(arrayIndex, currentStep.getInstruction()));
 
         return context.toString();
     }
@@ -209,32 +213,34 @@ public class ContextAssembler {
         Set<Integer> visibleSteps = collectDependencyChain(plan, currentStepIndex);
         visibleSteps.add(currentStepIndex); // 当前步骤也可见
 
-        // 渲染步骤列表
-        if (plan.getSteps() != null && !plan.getSteps().isEmpty()) {
-            sb.append("**步骤：**\n");
-            for (int i = 0; i < plan.getSteps().size(); i++) {
+        // 只渲染可见的步骤，不显示其他步骤
+        if (!visibleSteps.isEmpty()) {
+            sb.append("**相关步骤：**\n");
+
+            // 按索引排序，保持步骤顺序
+            List<Integer> sortedVisibleSteps = new ArrayList<>(visibleSteps);
+            Collections.sort(sortedVisibleSteps);
+
+            for (int i : sortedVisibleSteps) {
                 PlanStep step = plan.getSteps().get(i);
-
-                // 判断是否应该显示详细信息
-                boolean shouldShowDetails = visibleSteps.contains(i);
-
                 sb.append(i + 1).append(". ");
 
                 // 标记当前步骤
                 if (i == currentStepIndex) {
                     sb.append("**[当前]** ");
-                } else if (i < currentStepIndex) {
-                    sb.append("✓ ");
+                } else {
+                    // 使用实际的status字段判断完成状态
+                    if (step.getStatus() == StepStatus.DONE) {
+                        sb.append("✓ ");
+                    } else if (step.getStatus() == StepStatus.IN_PROGRESS) {
+                        sb.append("⏳ ");
+                    }
                 }
 
-                // 如果在可见范围内，显示详细指令；否则只显示占位符
-                if (shouldShowDetails) {
-                    sb.append(step.getInstruction());
-                    if (step.getAssignedAgentName() != null) {
-                        sb.append(" (").append(step.getAssignedAgentName()).append(")");
-                    }
-                } else {
-                    sb.append("[并行步骤，暂不可见]");
+                // 显示步骤指令
+                sb.append(step.getInstruction());
+                if (step.getAssignedAgentName() != null) {
+                    sb.append(" (").append(step.getAssignedAgentName()).append(")");
                 }
                 sb.append("\n");
             }
@@ -249,7 +255,7 @@ public class ContextAssembler {
      */
     private String renderStepIndex(StepContext step) {
         StringBuilder sb = new StringBuilder();
-        sb.append("## Step ").append(step.getStepIndex());
+        sb.append("## Step ").append(step.getStepIndex() + 1);
         if (step.getStepTitle() != null) {
             sb.append(": ").append(step.getStepTitle());
         }
@@ -286,10 +292,10 @@ public class ContextAssembler {
     private String renderDependencyOutput(int stepIndex, String content, boolean isSummary) {
         StringBuilder sb = new StringBuilder();
         if (isSummary) {
-            sb.append("【依赖步骤 ").append(stepIndex).append(" 的结论摘要】\n\n");
+            sb.append("【依赖步骤 ").append(stepIndex + 1).append(" 的结论摘要】\n\n");
             sb.append(content);
         } else {
-            sb.append("【依赖步骤 ").append(stepIndex).append(" 的输出（截断）】\n\n");
+            sb.append("【依赖步骤 ").append(stepIndex+1).append(" 的输出（截断）】\n\n");
             // 截断保护，避免单个依赖占用太多 token
             if (content.length() > 2000) {
                 sb.append(content, 0, 2000);
@@ -309,11 +315,12 @@ public class ContextAssembler {
     private String renderCurrentStep(int stepIndex, String instruction) {
         StringBuilder sb = new StringBuilder();
         sb.append("【当前步骤】\n");
-        sb.append("## Step ").append(stepIndex).append("\n\n");
+        sb.append("## Step ").append(stepIndex + 1).append("\n\n");
         sb.append(instruction).append("\n\n");
         sb.append("请执行当前步骤，完成后调用 write_step_summary 工具记录核心结论。\n\n");
         return sb.toString();
     }
-    
+
+
 
 }

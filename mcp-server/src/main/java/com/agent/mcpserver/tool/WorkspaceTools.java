@@ -99,8 +99,7 @@ public class WorkspaceTools {
     public Map<String, Object> writeStepSummary(
             @JsonProperty(value = "stepTitle", required = true) String stepTitle,
             @JsonProperty(value = "conclusion", required = true) String conclusion,
-            @JsonProperty(value = "findings") List<String> findings,
-            @JsonProperty(value = "nextSuggestion") String nextSuggestion
+            @JsonProperty(value = "findings") List<String> findings
     ) {
         try {
             String sessionId = SessionContext.getSessionId();
@@ -120,7 +119,7 @@ public class WorkspaceTools {
                     sessionId, stepIndex, stepTitle);
 
             // 生成 summary.md 内容
-            String markdown = generateSummaryMarkdown(stepTitle, conclusion, findings, nextSuggestion);
+            String markdown = generateSummaryMarkdown(stepTitle, conclusion, findings);
 
             // 构建文件路径
             String path = String.format("%s/%s/step_%03d/summary.md",
@@ -287,35 +286,6 @@ public class WorkspaceTools {
         return readStepFile(stepIndex, "tools/" + fileName);
     }
 
-    /**
-     * 读取执行计划
-     */
-    @Tool(
-            name = "cat_plan",
-            description = "读取当前会话的执行计划(plan.md)。无需参数。"
-    )
-    public Map<String, Object> catPlan() {
-        try {
-            String sessionId = SessionContext.getSessionId();
-            if (sessionId == null || sessionId.isEmpty()) {
-                return Map.of("success", false, "error", "无法获取当前会话ID");
-            }
-
-            String path = workspaceBasePath + "/" + sessionId + "/plan.md";
-            log.info("[WorkspaceTools] cat_plan: sessionId={}", sessionId);
-
-            String content = readFile(path, sessionId);
-            if (content == null) {
-                return Map.of("success", false, "error", "计划文件不存在");
-            }
-
-            return Map.of("success", true, "content", content);
-
-        } catch (Exception e) {
-            log.error("[WorkspaceTools] cat_plan failed", e);
-            return Map.of("success", false, "error", e.getMessage());
-        }
-    }
 
     // ==================== 内部方法 ====================
 
@@ -323,7 +293,7 @@ public class WorkspaceTools {
      * 生成摘要 Markdown
      */
     private String generateSummaryMarkdown(String stepTitle, String conclusion,
-                                           List<String> findings, String nextSuggestion) {
+                                           List<String> findings) {
         StringBuilder md = new StringBuilder();
         md.append("# ").append(stepTitle).append("\n\n");
         md.append("## 结论\n").append(conclusion).append("\n\n");
@@ -334,10 +304,6 @@ public class WorkspaceTools {
                 md.append("- ").append(finding).append("\n");
             }
             md.append("\n");
-        }
-
-        if (nextSuggestion != null && !nextSuggestion.isEmpty()) {
-            md.append("## 下一步建议\n").append(nextSuggestion).append("\n");
         }
 
         return md.toString();
