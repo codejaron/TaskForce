@@ -344,19 +344,7 @@ public class StateManager {
     }
 
     /**
-     * 追加流式内容（定期调用）
-     */
-    public void appendStreamingContent(Long messageId, String delta) {
-        if (messageId == null) return;
-        try {
-            messageService.appendContent(messageId, delta);
-        } catch (Exception e) {
-            log.error("[StateManager] Failed to append streaming content", e);
-        }
-    }
-
-    /**
-     * 完成流式消息
+     * 完成流式消息（一次性写入完整内容）
      */
     public void completeStreamingMessage(Long messageId, String finalContent) {
         if (messageId == null) return;
@@ -364,6 +352,18 @@ public class StateManager {
             messageService.completeMessage(messageId, finalContent);
         } catch (Exception e) {
             log.error("[StateManager] Failed to complete streaming message", e);
+        }
+    }
+
+    /**
+     * 失败流式消息（保存部分内容并标记错误状态）
+     */
+    public void failStreamingMessage(Long messageId, String partialContent, String errorMessage) {
+        if (messageId == null) return;
+        try {
+            messageService.failMessage(messageId, partialContent, errorMessage);
+        } catch (Exception e) {
+            log.error("[StateManager] Failed to mark streaming message as failed", e);
         }
     }
 

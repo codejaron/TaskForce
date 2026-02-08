@@ -109,14 +109,7 @@ function handleAsyncEvent(
   switch (eventType) {
     case 'planning_start':
       set({
-        workflowStatus: newStatus || 'PLANNING',
-        messages: [...messages, {
-          agentId: 'system',
-          agentName: 'System',
-          content: '🤔 正在分析你的需求并制定执行计划...',
-          timestamp: new Date().toISOString(),
-          type: 'text'
-        }]
+        workflowStatus: newStatus || 'PLANNING'
       });
       break;
 
@@ -149,67 +142,30 @@ function handleAsyncEvent(
 
     case 'need_clarification':
       set({
-        workflowStatus: newStatus || 'PAUSED',
-        messages: [...messages, {
-          agentId: 'system',
-          agentName: 'System',
-          content: `❓ 需要澄清: ${data.question}`,
-          timestamp: new Date().toISOString(),
-          type: 'text'
-        }]
+        workflowStatus: newStatus || 'PAUSED'
       });
       break;
 
     case 'plan_failed':
       set({
-        workflowStatus: newStatus || 'FAILED',
-        messages: [...messages, {
-          agentId: 'system',
-          agentName: 'System',
-          content: `❌ 无法生成计划: ${data.reason}`,
-          timestamp: new Date().toISOString(),
-          type: 'text'
-        }]
+        workflowStatus: newStatus || 'FAILED'
       });
       break;
 
     case 'layer_start':
       {
-        const layerIndex = getNum(data.layerIndex, 0);
-        const stepIds = Array.isArray(data.stepIds) ? data.stepIds : [];
-        const stepCount = getNum(data.stepCount, 0);
-
+        // Update status only, don't show system message
         set({
-          workflowStatus: newStatus || 'EXECUTING',
-          messages: [...messages, {
-            agentId: 'system',
-            agentName: 'System',
-            content: `🔄 开始执行第 ${layerIndex + 1} 层（${stepCount} 个并行步骤）`,
-            timestamp: new Date().toISOString(),
-            type: 'text',
-            layerIndex,
-            stepIds: stepIds as string[]
-          }]
+          workflowStatus: newStatus || 'EXECUTING'
         });
       }
       break;
 
     case 'layer_complete':
       {
-        const layerIndex = getNum(data.layerIndex, 0);
-        const successCount = getNum(data.successCount, 0);
-        const failedCount = getNum(data.failedCount, 0);
-
+        // Update status only, don't show system message
         set({
-          workflowStatus: newStatus || get().workflowStatus,
-          messages: [...messages, {
-            agentId: 'system',
-            agentName: 'System',
-            content: `✅ 第 ${layerIndex + 1} 层完成（成功: ${successCount}, 失败: ${failedCount}）`,
-            timestamp: new Date().toISOString(),
-            type: 'text',
-            layerIndex
-          }]
+          workflowStatus: newStatus || get().workflowStatus
         });
       }
       break;
@@ -265,27 +221,13 @@ function handleAsyncEvent(
 
     case 'step_blocked':
       set({
-        workflowStatus: newStatus || get().workflowStatus,
-        messages: [...messages, {
-          agentId: 'system',
-          agentName: 'System',
-          content: `⚠️ 步骤 ${data.stepIndex} 遇到阻塞: ${data.blockedReason}`,
-          timestamp: new Date().toISOString(),
-          type: 'text'
-        }]
+        workflowStatus: newStatus || get().workflowStatus
       });
       break;
 
     case 'replanning_start':
       set({
-        workflowStatus: newStatus || 'REPLANNING',
-        messages: [...messages, {
-          agentId: 'system',
-          agentName: 'System',
-          content: `🔄 正在重新规划: ${data.reason}`,
-          timestamp: new Date().toISOString(),
-          type: 'text'
-        }]
+        workflowStatus: newStatus || 'REPLANNING'
       });
       break;
 
@@ -295,14 +237,7 @@ function handleAsyncEvent(
 
     case 'plan_updated':
       set({
-        workflowStatus: newStatus || 'EXECUTING',
-        messages: [...messages, {
-          agentId: 'system',
-          agentName: 'System',
-          content: `📋 计划已更新 (重规划次数: ${data.replanCount})`,
-          timestamp: new Date().toISOString(),
-          type: 'text'
-        }]
+        workflowStatus: newStatus || 'EXECUTING'
       });
       break;
 
@@ -313,27 +248,13 @@ function handleAsyncEvent(
 
     case 'session_complete':
       set({
-        workflowStatus: 'COMPLETED',
-        messages: [...messages, {
-          agentId: 'system',
-          agentName: 'System',
-          content: `✅ 任务完成！共完成 ${data.totalStepsExecuted || 0} 个步骤`,
-          timestamp: new Date().toISOString(),
-          type: 'text'
-        }]
+        workflowStatus: 'COMPLETED'
       });
       break;
 
     case 'error':
       set({
         workflowStatus: 'FAILED',
-        messages: [...messages, {
-          agentId: 'system',
-          agentName: 'System',
-          content: `❌ 错误: ${getStr(data.error)}`,
-          timestamp: new Date().toISOString(),
-          type: 'text'
-        }],
         error: typeof data.error === 'string' ? data.error : 'Unknown error'
       });
       break;
