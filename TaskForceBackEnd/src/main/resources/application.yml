@@ -7,9 +7,15 @@ spring:
   profiles:
     active: local
 
-  autoconfigure:
-    exclude:
-      - org.springframework.ai.autoconfigure.openai.OpenAiAutoConfiguration
+  ai:
+    chat:
+      observations:
+        log-prompt: true
+        log-completion: true
+      client:
+        observations:
+          log-prompt: true
+          log-completion: true
   
   # ========== Nacos 服务发现 ==========
   cloud:

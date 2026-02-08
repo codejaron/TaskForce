@@ -5,6 +5,7 @@ import com.agent.service.ChannelModelService;
 import com.agent.infrastructure.persistence.entity.ChannelModel;
 import com.agent.infrastructure.persistence.mapper.LLMProviderMapper;
 import com.agent.common.util.EncryptionUtil;
+import io.micrometer.observation.ObservationRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
@@ -37,6 +38,7 @@ public class ChatModelFactory {
     private final LLMProviderMapper providerMapper;
     private final EncryptionUtil encryptionUtil;
     private final ChannelModelService channelModelService;
+    private final ObservationRegistry observationRegistry;
 
     /**
      * 内存缓存：key = "providerId:overrideModel"
@@ -118,6 +120,7 @@ public class ChatModelFactory {
         return OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(options)
+                .observationRegistry(observationRegistry)
                 .build();
     }
 //    private ChatModel createOpenAiCompatibleModel(LLMProvider provider, String apiKey, String configuredModel) {
@@ -178,6 +181,7 @@ public class ChatModelFactory {
         return OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(options)
+                .observationRegistry(observationRegistry)
                 .build();
     }
 

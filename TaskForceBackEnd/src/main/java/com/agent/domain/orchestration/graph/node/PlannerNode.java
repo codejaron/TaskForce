@@ -79,8 +79,7 @@ public class PlannerNode implements NodeAction {
         // 构建 Prompt
         String formatInstructions = plannerOutputConverter.getFormat();
         String prompt = promptManager.buildPlannerPrompt(workers, userGoal, formatInstructions);
-        
-        log.debug("[PlannerNode] Prompt:\n{}", prompt);
+
         
         // 流式调用 LLM（带重试机制）
         PlannerResponseDTO dto = generatePlanWithRetry(sessionId, prompt, 3);

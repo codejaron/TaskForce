@@ -88,22 +88,10 @@ public class WorkerReactNode implements NodeAction {
             ExecutionPlan plan = stateManager.loadPlan(sessionId);
             String assembledContext = contextAssembler.assemble(plan, step.getStepIndex());
 
-            // 记录组装后的上下文
-            log.info("[WorkerReactNode] ========== 组装后的上下文 ==========");
-            log.info("[WorkerReactNode] SessionId: {}, StepIndex: {}", sessionId, step.getStepIndex());
-            log.info("[WorkerReactNode] 上下文内容:\n{}", assembledContext);
-            log.info("[WorkerReactNode] ==========================================");
 
             // 3. 构建完整的 Worker Prompt
             String fullInstruction = promptManager.buildWorkerPromptWithAssembledContext(
                     assembledContext, worker, step);
-
-            // 记录完整的指令（发送给API的内容）
-            log.info("[WorkerReactNode] ========== 发送给API的完整Prompt ==========");
-            log.info("[WorkerReactNode] Agent: {} ({})", worker.getName(), worker.getId());
-            log.info("[WorkerReactNode] Model: {}, Temperature: {}", worker.getModel(), worker.getTemperature());
-            log.info("[WorkerReactNode] 完整指令:\n{}", fullInstruction);
-            log.info("[WorkerReactNode] ====================================================");
 
             // 4. 构建 ReactAgent
             ReactAgent reactAgent = reactAgentFactory.buildWorkerReactAgent(
