@@ -32,6 +32,7 @@ public class SessionController {
     private final SessionService sessionService;
     private final SessionStopService sessionStopService;
     private final AgentGraphRunner graphRunner;
+    private final com.agent.service.SingleChatService singleChatService;
 
     /**
      * 获取所有会话
@@ -204,10 +205,33 @@ public class SessionController {
     public Flux<ServerSentEvent<String>> resume(
             @PathVariable String sessionId,
             @RequestBody UserInputRequest request) {
-        
+
         return graphRunner.resume(sessionId, request.getMessage());
     }
-    
+
+    /**
+     * 单聊接口（SSE 流式响应）
+     * 用于与单个 Agent 进行简单对话，无需多 Agent 编排
+     */
+    @PostMapping("/{sessionId}/single-chat")
+    public Flux<ServerSentEvent<String>> singleChat(
+            @PathVariable String sessionId,
+            @RequestBody UserInputRequest request) {
+
+        // 验证 Session 类型
+        try {
+            Session session = sessionService.getSessionById(sessionId);
+            if (!"CHAT".equals(session.getType())) {
+                return Flux.error(new IllegalArgumentException("Session type must be CHAT"));
+            }
+        } catch (Exception e) {
+            log.error("Failed to validate session type", e);
+            return Flux.error(e);
+        }
+
+        return singleChatService.chat(sessionId, request.getMessage());
+    }
+
     /**
      * 用户输入请求 DTO
      */

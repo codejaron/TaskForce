@@ -60,7 +60,7 @@ export interface ChannelModel {
 export interface Session {
   id: string;
   name: string;
-  type: 'SINGLE' | 'GROUP';
+  type: 'SINGLE' | 'GROUP' | 'CHAT';
   status: string;
   currentRound: number;
   createdAt: string;
