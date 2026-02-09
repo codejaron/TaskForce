@@ -28,6 +28,89 @@ public class PromptManager {
     private final AgentToolService agentToolService;
     private final RemoteMcpClient remoteMcpClient;
 
+    /**
+     * 自定义 JSON Schema for Planner Response
+     * 使用 oneOf 定义三种响应类型的条件验证
+     */
+    public static final String PLANNER_JSON_SCHEMA = """
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["plan", "question", "cannot_plan"],
+              "description": "响应类型"
+            }
+          },
+          "required": ["type"],
+          "oneOf": [
+            {
+              "properties": {
+                "type": { "const": "plan" },
+                "goal": {
+                  "type": "string",
+                  "description": "用户目标的简洁描述"
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "stepIndex": {
+                        "type": "integer",
+                        "description": "步骤序号（从 1 开始）"
+                      },
+                      "assignedAgentId": {
+                        "type": "string",
+                        "description": "分配的 Worker ID（必须从可用 Worker 列表中选择）"
+                      },
+                      "instruction": {
+                        "type": "string",
+                        "description": "详细执行指令"
+                      },
+                      "expectedOutput": {
+                        "type": "string",
+                        "description": "期望输出格式"
+                      },
+                      "dependsOn": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "依赖的步骤索引列表（无依赖时使用空数组 []）",
+                        "default": []
+                      }
+                    },
+                    "required": ["stepIndex", "assignedAgentId", "instruction", "expectedOutput"]
+                  },
+                  "minItems": 1,
+                  "maxItems": 10
+                }
+              },
+              "required": ["type", "goal", "steps"]
+            },
+            {
+              "properties": {
+                "type": { "const": "question" },
+                "content": {
+                  "type": "string",
+                  "description": "需要用户澄清的问题"
+                }
+              },
+              "required": ["type", "content"]
+            },
+            {
+              "properties": {
+                "type": { "const": "cannot_plan" },
+                "reason": {
+                  "type": "string",
+                  "description": "无法完成规划的原因"
+                }
+              },
+              "required": ["type", "reason"]
+            }
+          ]
+        }
+        """;
 
     /**
      * Planner Agent Prompt模板
@@ -47,28 +130,12 @@ public class PromptManager {
 
         【规则】
         1. 如果用户目标模糊，优先选择 type=question 询问用户
-        2. 将目标分解为清晰的步骤
+        2. 将目标分解为清晰的步骤（少于10步）
         3. stepIndex 从 1 开始编号
-        4. 每个步骤必须分配给一个具体的 Worker（assignedAgentId 必须是可用 Worker 列表中的真实 ID）
-        5. 步骤数量控制在 10 步以内
-        6. 确保步骤之间逻辑连贯
-        7. 最后一步通常是汇总/输出步骤
-
-        【并行执行支持 - dependsOn 字段】
-        8. 每个步骤可以包含 dependsOn 字段（可选），表示该步骤依赖哪些步骤完成后才能执行
-        9. dependsOn 是一个整数数组，包含依赖的步骤索引（stepIndex）
-        10. 如果步骤之间没有数据依赖关系，可以并行执行，此时 dependsOn 为空数组 [] 或不设置
-        11. 如果步骤需要使用前面步骤的输出结果，必须在 dependsOn 中声明依赖关系
-
-        【并行识别规则】
-        - 可以并行的场景：
-          * 多个独立的数据查询（如同时查询不同的 API）
-          * 多个独立的文件操作（如同时读取不同的文件）
-          * 多个独立的计算任务（如同时处理不同的数据集）
-        - 必须串行的场景：
-          * 步骤 B 需要使用步骤 A 的输出结果
-          * 步骤 B 需要在步骤 A 创建的资源上操作
-          * 步骤之间有明确的先后顺序要求
+        4. assignedAgentId 必须是可用 Worker 列表中的真实 ID（严格验证）
+        5. dependsOn 是整数数组，包含依赖的步骤索引；无依赖时使用空数组 []
+        6. 可以并行的场景：如独立的数据查询、文件操作、计算任务等，不依赖于其他步骤结果
+        7. 必须串行的场景：步骤 B 需要使用步骤 A 的输出结果
 
         【示例 1：完全串行执行】
         {
@@ -134,7 +201,7 @@ public class PromptManager {
             }
           ]
         }
-        说明：步骤 1、2、3 可以并行执行（dependsOn 为空），步骤 4 必须等待 1、2、3 全部完成。
+        说明：步骤 1、2、3 的 dependsOn 为空数组，可以并行执行；步骤 4 依赖 [1, 2, 3]，必须等待前三步完成。
 
         【重要】
         直接输出 JSON 格式，不要添加任何解释性文字、前言或后缀。
@@ -212,17 +279,33 @@ public class PromptManager {
      * 构建 Planner Prompt
      * @param workers 可用的Worker列表
      * @param userGoal 用户目标
-     * @param formatInstructions BeanOutputParser 生成的格式说明
      * @return 完整的Planner Prompt
      */
-    public String buildPlannerPrompt(List<Agent> workers, String userGoal, String formatInstructions) {
+    public String buildPlannerPrompt(List<Agent> workers, String userGoal) {
         String rosterText = formatWorkerRoster(workers);
+        String formatInstructions = buildJsonSchemaInstructions(PLANNER_JSON_SCHEMA);
         String fullPrompt = String.format(PLANNER_PROMPT, rosterText, userGoal, formatInstructions);
 
         log.debug("[PromptManager] 构建 Planner Prompt, workers={}, goal={}",
                 workers.size(), userGoal);
 
         return fullPrompt;
+    }
+
+    /**
+     * 构建 JSON Schema 格式说明
+     * @param jsonSchema JSON Schema 字符串
+     * @return 格式化的指令文本
+     */
+    private String buildJsonSchemaInstructions(String jsonSchema) {
+        return String.format("""
+            Your response should be in JSON format.
+            Do not include any explanations, only provide a RFC8259 compliant JSON response following this format without deviation.
+            Do not include markdown code blocks in your response.
+            Remove the ```json markdown from the output.
+            Here is the JSON Schema instance your output must adhere to:
+            ```%s```
+            """, jsonSchema);
     }
 
     /**

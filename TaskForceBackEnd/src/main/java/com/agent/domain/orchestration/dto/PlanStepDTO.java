@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -43,7 +44,8 @@ public class PlanStepDTO {
     /**
      * 依赖的步骤索引列表（用于并行执行）
      * 例如：[1, 2] 表示当前步骤依赖步骤 1 和步骤 2 完成后才能执行
+     * 无依赖时为空数组 []
      */
     @JsonProperty("dependsOn")
-    private List<Integer> dependsOn;
+    private List<Integer> dependsOn = new ArrayList<>();
 }

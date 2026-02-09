@@ -70,10 +70,9 @@ public class PlannerNode implements NodeAction {
         String userGoal = determineUserGoal(sessionId, userInput);
         
         log.debug("[PlannerNode] User goal: {}", userGoal);
-        
-        // 构建 Prompt
-        String formatInstructions = plannerOutputConverter.getFormat();
-        String prompt = promptManager.buildPlannerPrompt(workers, userGoal, formatInstructions);
+
+        // 构建 Prompt（使用自定义 JSON Schema）
+        String prompt = promptManager.buildPlannerPrompt(workers, userGoal);
 
 
         // 流式调用 LLM（带重试机制）
@@ -290,11 +289,31 @@ public class PlannerNode implements NodeAction {
      * 将 DTO 转换为 ExecutionPlan
      */
     private ExecutionPlan convertDtoToPlan(String sessionId, PlannerResponseDTO dto, List<Agent> workers) {
-        // 1. 创建 stepIndex -> stepId 映射
+        // 第一遍：验证所有 Worker ID
+        List<String> invalidAgentIds = new ArrayList<>();
+        for (var stepDto : dto.getSteps()) {
+            Agent agent = findAgentById(workers, stepDto.getAssignedAgentId());
+            if (agent == null) {
+                invalidAgentIds.add(stepDto.getAssignedAgentId());
+            }
+        }
+
+        // 如果有无效 ID，拒绝整个计划
+        if (!invalidAgentIds.isEmpty()) {
+            String availableWorkerIds = workers.stream()
+                    .map(w -> String.valueOf(w.getId()))
+                    .collect(java.util.stream.Collectors.joining(", "));
+            String errorMsg = String.format("Invalid Worker IDs found: %s. Available Worker IDs: %s",
+                    invalidAgentIds, availableWorkerIds);
+            log.error("[PlannerNode] {}", errorMsg);
+            throw new IllegalArgumentException(errorMsg);
+        }
+
+        // 第二遍：创建 stepIndex -> stepId 映射
         Map<Integer, String> indexToIdMap = new HashMap<>();
         List<PlanStep> steps = new ArrayList<>();
 
-        // 第一遍：创建步骤并建立索引映射
+        // 创建步骤并建立索引映射
         for (var stepDto : dto.getSteps()) {
             String stepId = UUID.randomUUID().toString();
             indexToIdMap.put(stepDto.getStepIndex(), stepId);
@@ -314,7 +333,7 @@ public class PlannerNode implements NodeAction {
             steps.add(step);
         }
 
-        // 第二遍：转换 dependsOn（从 stepIndex 转换为 stepId）
+        // 第三遍：转换 dependsOn（从 stepIndex 转换为 stepId）
         for (int i = 0; i < dto.getSteps().size(); i++) {
             var stepDto = dto.getSteps().get(i);
             var step = steps.get(i);
