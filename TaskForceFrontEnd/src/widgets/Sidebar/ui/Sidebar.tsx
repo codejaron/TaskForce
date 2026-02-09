@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Users, Database, Bot, Server, Zap, PanelLeftClose, Settings, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Users, Database, Bot, Server, Zap, PanelLeftClose, Settings, Sparkles, MessageCircle } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -46,6 +46,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
       icon: Sparkles,
       label: t('sidebar.skills'),
       color: 'text-yellow-600'
+    },
+    {
+      path: '/single-chat',
+      icon: MessageCircle,
+      label: t('sidebar.singleChat'),
+      color: 'text-blue-600'
     },
     {
       path: '/a2a',
