@@ -4,7 +4,9 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication
+@SpringBootApplication(exclude = {
+        io.agentscope.runtime.autoconfigure.A2aAutoConfiguration.class
+})
 @EnableScheduling
 public class McpAgentApplication {
     public static void main(String[] args) {

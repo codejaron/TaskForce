@@ -71,6 +71,11 @@
       <artifactId>spring-ai-alibaba-sandbox</artifactId>
     </dependency>
 
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>spring-boot-starter-runtime-a2a</artifactId>
+      <version>1.0.2</version>
+    </dependency>
     <!-- Lombok -->
     <dependency>
       <groupId>org.projectlombok</groupId>

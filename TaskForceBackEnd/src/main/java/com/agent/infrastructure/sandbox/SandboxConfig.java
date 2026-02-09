@@ -1,8 +1,10 @@
 package com.agent.infrastructure.sandbox;
 
 import com.alibaba.cloud.ai.sandbox.RuntimeFunctionToolCallback;
-import com.alibaba.cloud.ai.sandbox.tools.base.SaaBasePythonRunner;
-import com.alibaba.cloud.ai.sandbox.tools.base.SaaBaseShellRunner;
+import io.agentscope.runtime.sandbox.box.BaseSandbox;
+import io.agentscope.runtime.sandbox.manager.ManagerConfig;
+import io.agentscope.runtime.sandbox.manager.SandboxService;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -12,37 +14,49 @@ import org.springframework.context.annotation.Configuration;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Sandbox 工具配置类
- * 提供 Python 和 Shell 执行器
- */
 @Slf4j
 @Configuration
 @ConditionalOnProperty(prefix = "sandbox", name = "enabled", havingValue = "true", matchIfMissing = false)
 public class SandboxConfig {
 
-    /**
-     * 创建 Python 执行器工具
-     */
+    private SandboxService sandboxService;
+    private BaseSandbox sandbox;
+
     @Bean
-    public SaaPythonExecutor saaPythonExecutor() {
-        log.info("Creating SaaPythonExecutor");
-        return new SaaPythonExecutor();
+    public SandboxService sandboxService() {
+        log.info("[Sandbox] Creating SandboxService...");
+        ManagerConfig config = ManagerConfig.builder().build();
+        SandboxService service = new SandboxService(config);
+        service.start();
+        this.sandboxService = service;
+        log.info("[Sandbox] SandboxService started");
+        return this.sandboxService;
     }
 
-    /**
-     * 创建 Shell 执行器工具
-     */
     @Bean
-    public SaaShellExecutor saaShellExecutor() {
-        log.info("Creating SaaShellExecutor");
-        return new SaaShellExecutor();
+    public BaseSandbox baseSandbox(SandboxService sandboxService) {
+        log.info("[Sandbox] Creating BaseSandbox (Docker container will start on first use)...");
+        this.sandbox = new BaseSandbox(sandboxService, "system", "global");
+        log.info("[Sandbox] BaseSandbox created");
+        return this.sandbox;
     }
 
-    /**
-     * 创建 Sandbox 工具列表
-     * 返回所有 Sandbox 工具的 ToolCallback 列表
-     */
+    @Bean
+    public SaaPythonExecutor saaPythonExecutor(BaseSandbox baseSandbox) {
+        SaaPythonExecutor executor = new SaaPythonExecutor();
+        executor.setSandbox(baseSandbox);
+        log.info("[Sandbox] SaaPythonExecutor created, sandbox injected");
+        return executor;
+    }
+
+    @Bean
+    public SaaShellExecutor saaShellExecutor(BaseSandbox baseSandbox) {
+        SaaShellExecutor executor = new SaaShellExecutor();
+        executor.setSandbox(baseSandbox);
+        log.info("[Sandbox] SaaShellExecutor created, sandbox injected");
+        return executor;
+    }
+
     @Bean
     public List<ToolCallback> sandboxTools(
             SaaPythonExecutor pythonExecutor,
@@ -50,17 +64,36 @@ public class SandboxConfig {
 
         List<ToolCallback> tools = new ArrayList<>();
 
-        // 添加 Python 执行器
         RuntimeFunctionToolCallback<?, ?> pythonTool = pythonExecutor.buildTool();
         tools.add(pythonTool);
-        log.info("Added Python executor tool: {}", pythonTool.getToolDefinition().name());
+        log.info("[Sandbox] Added tool: {}", pythonTool.getToolDefinition().name());
 
-        // 添加 Shell 执行器
         RuntimeFunctionToolCallback<?, ?> shellTool = shellExecutor.buildTool();
         tools.add(shellTool);
-        log.info("Added Shell executor tool: {}", shellTool.getToolDefinition().name());
+        log.info("[Sandbox] Added tool: {}", shellTool.getToolDefinition().name());
 
-        log.info("Created {} sandbox tools", tools.size());
+        log.info("[Sandbox] Total sandbox tools: {}", tools.size());
         return tools;
+    }
+
+    @PreDestroy
+    public void cleanup() {
+        log.info("[Sandbox] Shutting down...");
+        try {
+            if (sandbox != null && !sandbox.isClosed()) {
+                sandbox.close();
+                log.info("[Sandbox] BaseSandbox closed (Docker container stopped)");
+            }
+        } catch (Exception e) {
+            log.warn("[Sandbox] Error closing sandbox: {}", e.getMessage());
+        }
+        try {
+            if (sandboxService != null) {
+                sandboxService.close();
+                log.info("[Sandbox] SandboxService closed");
+            }
+        } catch (Exception e) {
+            log.warn("[Sandbox] Error closing SandboxService: {}", e.getMessage());
+        }
     }
 }
