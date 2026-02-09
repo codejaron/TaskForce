@@ -1,7 +1,7 @@
 package com.agent.infrastructure.agent;
 
 import com.agent.infrastructure.agent.hook.ModelCallLimitHook;
-import com.agent.infrastructure.config.EventPublishingToolCallback;
+import com.agent.infrastructure.agent.interceptor.EventPublishingToolInterceptor;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.llm.ChatModelFactory;
 import com.agent.infrastructure.mcp.RemoteMcpClient;
@@ -15,6 +15,7 @@ import com.agent.infrastructure.persistence.entity.Session;
 import com.agent.infrastructure.persistence.entity.SessionAgent;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.agent.hook.Hook;
+import com.alibaba.cloud.ai.graph.agent.hook.summarization.SummarizationHook;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -111,8 +112,8 @@ public class ReactAgentFactory {
                 .maxTokens(agent.getMaxTokens())
                 .build();
 
-        // 4. 加载工具
-        List<ToolCallback> tools = loadTools(agentId, agent.getName(), sessionId, stepId, stepIndex);
+        // 4. 加载工具（不再包装，由 interceptor 统一处理）
+        List<ToolCallback> tools = loadTools(agentId, agent.getName());
 
         // 5. 创建 Hooks
         List<Hook> hooks = new ArrayList<>();
@@ -127,7 +128,13 @@ public class ReactAgentFactory {
             log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());
         }
 
-        // 6. 构建 ReactAgent
+        // 6. 创建 Interceptor（统一处理工具调用事件发布和持久化）
+        AtomicInteger sequenceCounter = new AtomicInteger(0);
+        EventPublishingToolInterceptor toolInterceptor = new EventPublishingToolInterceptor(
+                sessionId, stepId, stepIndex, agentId, eventBus, toolCallService, sequenceCounter
+        );
+
+        // 7. 构建 ReactAgent
         ReactAgent reactAgent = ReactAgent.builder()
                 .name(agent.getName())
                 .model(chatModel)
@@ -136,6 +143,7 @@ public class ReactAgentFactory {
                 .systemPrompt(agent.getSystemPrompt())
                 .tools(tools)
                 .hooks(hooks)
+                .interceptors(toolInterceptor)  // 注册 interceptor
                 .saver(checkpointSaver)
                 .build();
 
@@ -144,75 +152,49 @@ public class ReactAgentFactory {
     }
 
     /**
-     * 加载 Agent 的工具列表（包装为 EventPublishingToolCallback）
+     * 加载 Agent 的工具列表（不再包装，由 interceptor 统一处理）
      */
-    private List<ToolCallback> loadTools(Long agentId, String agentName, String sessionId, String stepId, Integer stepIndex) {
+    private List<ToolCallback> loadTools(Long agentId, String agentName) {
         List<ToolCallback> allTools = new ArrayList<>();
-        AtomicInteger sequenceCounter = new AtomicInteger(0);
 
         // 获取启用的工具 ID
         List<String> enabledToolIds = new ArrayList<>(agentToolService.getEnabledToolIds(agentId));
         log.info("  Agent {} enabled tool IDs from DB: {}", agentName, enabledToolIds);
 
-        // 只在多智能体编排场景（stepId 不为 null）下自动添加 native 工具
-        // 单聊场景下不添加这些工具，避免 workspace 工具调用问题
-        if (stepId != null) {
-            try {
-                var allAvailableTools = remoteMcpClient.listTools();
-                List<String> nativeToolIds = allAvailableTools.stream()
-                        .filter(tool -> tool.getId() != null && tool.getId().startsWith("native::"))
-                        .map(tool -> tool.getId())
-                        .toList();
+        // 自动添加 native 工具（所有 Agent 默认拥有）
+        try {
+            var allAvailableTools = remoteMcpClient.listTools();
+            List<String> nativeToolIds = allAvailableTools.stream()
+                    .filter(tool -> tool.getId() != null && tool.getId().startsWith("native::"))
+                    .map(tool -> tool.getId())
+                    .toList();
 
-                if (!nativeToolIds.isEmpty()) {
-                    enabledToolIds.addAll(nativeToolIds);
-                    log.info("  Auto-added {} native tools to agent {}", nativeToolIds.size(), agentName);
-                }
-            } catch (Exception e) {
-                log.warn("  Failed to fetch native tools: {}", e.getMessage());
+            if (!nativeToolIds.isEmpty()) {
+                enabledToolIds.addAll(nativeToolIds);
+                log.info("  Auto-added {} native tools to agent {}", nativeToolIds.size(), agentName);
             }
-        } else {
-            log.info("  Skipping native tools for single-chat scenario");
+        } catch (Exception e) {
+            log.warn("  Failed to fetch native tools: {}", e.getMessage());
         }
 
-        // 从 MCP Server 获取工具回调并包装
+        // 从 MCP Server 获取工具回调（不再包装）
         if (!enabledToolIds.isEmpty()) {
             ToolCallback[] remoteTools = remoteMcpClient.getToolCallbacks(enabledToolIds);
             log.info("  MCP Client returned {} tools for {} requested IDs", remoteTools.length, enabledToolIds.size());
 
             if (remoteTools.length > 0) {
                 for (ToolCallback callback : remoteTools) {
-                    // 获取 serverName（从 toolId 中提取 providerName）
                     String toolName = callback.getToolDefinition().name();
-                    String serverName = extractProviderName(toolName);
-
-                    log.debug("  Loading tool: {} (server: {})", toolName, serverName);
-
-                    // 包装为事件发布回调
-                    ToolCallback wrapped = new EventPublishingToolCallback(
-                            callback, sessionId, stepId, stepIndex, agentId, serverName,
-                            eventBus, toolCallService, sequenceCounter
-                    );
-                    allTools.add(wrapped);
+                    log.debug("  Loading tool: {}", toolName);
+                    allTools.add(callback);
                 }
-                log.info("  Attached {} MCP tools (with event publishing)", remoteTools.length);
+                log.info("  Attached {} MCP tools", remoteTools.length);
             } else {
                 log.warn("  No valid MCP tools found for IDs: {}", enabledToolIds);
             }
         }
 
         return allTools;
-    }
-
-    /**
-     * 从工具 ID 中提取 Provider 名称
-     * 格式: {providerName}::{toolName}
-     */
-    private String extractProviderName(String toolId) {
-        if (toolId != null && toolId.contains("::")) {
-            return toolId.substring(0, toolId.indexOf("::"));
-        }
-        return "unknown";
     }
 
     /**
@@ -242,8 +224,8 @@ public class ReactAgentFactory {
         ChatModel chatModel = chatModelFactory.createChatModel(agent.getProviderId(), overrideModel);
         log.info("  Using LLM Provider: {} with model: {}", agent.getProviderId(), overrideModel);
 
-        // 3. 加载工具（stepId 和 stepIndex 传 null，因为单聊场景不需要步骤追踪）
-        List<ToolCallback> tools = loadTools(agentId, agent.getName(), sessionId, null, null);
+        // 3. 加载工具（不再包装，由 interceptor 统一处理）
+        List<ToolCallback> tools = loadTools(agentId, agent.getName());
 
         // 4. 构建 ChatClient（挂 MessageChatMemoryAdvisor + MCP 工具）
         ChatClient chatClient = ChatClient.builder(chatModel)
@@ -258,18 +240,39 @@ public class ReactAgentFactory {
                         .build())
                 .build();
 
-        // 5. 构建 ReactAgent
+        // 5. 创建 Interceptor（统一处理工具调用事件发布和持久化）
+        AtomicInteger sequenceCounter = new AtomicInteger(0);
+        EventPublishingToolInterceptor toolInterceptor = new EventPublishingToolInterceptor(
+                sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter
+        );
+
+        // 6. 创建 Hooks
+        List<Hook> hooks = new ArrayList<>();
+
+        // 6.1 添加 SummarizationHook（智能摘要，替代简单截断）
+        // 使用相同的模型进行摘要（可以配置为更便宜的模型）
+        SummarizationHook summarizationHook = SummarizationHook.builder()
+                .model(chatModel)
+                .maxTokensBeforeSummary(4000)  // 超过 4000 tokens 触发摘要
+                .messagesToKeep(8)  // 保留最近 8 条消息
+                .build();
+        hooks.add(summarizationHook);
+        log.info("  Added SummarizationHook (maxTokens: 4000, keepMessages: 8)");
+
+        // 6.2 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
+        if (skillsAgentHook != null) {
+            hooks.add(skillsAgentHook);
+            log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());
+        }
+
+        // 7. 构建 ReactAgent
         com.alibaba.cloud.ai.graph.agent.Builder builder = ReactAgent.builder()
                 .name(agent.getName())
                 .chatClient(chatClient)
                 .tools(tools)  // 🔧 修复：同时传递 tools 给 ReactAgent
+                .interceptors(toolInterceptor)  // 注册 interceptor
+                .hooks(hooks)  // 注册 hooks
                 .saver(checkpointSaver);
-
-        // 5.1 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
-        if (skillsAgentHook != null) {
-            builder.hooks(List.of(skillsAgentHook));
-            log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());
-        }
 
         ReactAgent reactAgent = builder.build();
 

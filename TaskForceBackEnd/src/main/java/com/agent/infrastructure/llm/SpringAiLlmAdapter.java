@@ -59,7 +59,7 @@ public class SpringAiLlmAdapter implements LlmAdapter {
         }
 
         try {
-            ChatClient client = agentFactory.buildClientForDatabaseAgent(agentId, sessionId != null ? sessionId : "default", stepId, stepIndex);
+            ChatClient client = agentFactory.buildClientForDatabaseAgent(agentId, sessionId != null ? sessionId : "default");
             log.info("[LlmAdapter] ChatClient created successfully");
 
             String prompt = promptManager.combinePrompts(systemPrompt, userMessage);
