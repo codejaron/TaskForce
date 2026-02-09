@@ -15,6 +15,7 @@ import com.agent.infrastructure.event.events.WorkerDeltaEvent;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.service.SessionStopService;
+import com.agent.service.SessionExecutionTracker;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
@@ -22,9 +23,11 @@ import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.Disposable;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Worker ReactAgent 节点
@@ -39,6 +42,7 @@ public class WorkerReactNode implements NodeAction {
     private final ContextService contextService;
     private final ContextAssembler contextAssembler;
     private final SessionStopService sessionStopService;
+    private final SessionExecutionTracker executionTracker;
     private final ReactAgentFactory reactAgentFactory;
     private final PromptManager promptManager;
     private final PlanStep step;
@@ -52,19 +56,6 @@ public class WorkerReactNode implements NodeAction {
 
         log.info("[WorkerReactNode] Executing step: sessionId={}, stepId={}, stepIndex={}",
                 sessionId, step.getStepId(), step.getStepIndex());
-
-        // 检查是否需要停止
-        if (sessionStopService.shouldStop(sessionId)) {
-            log.info("[WorkerReactNode] Session stopped: sessionId={}, stepId={}",
-                    sessionId, step.getStepId());
-            return Map.of(
-                    "stepId", step.getStepId(),
-                    "stepIndex", step.getStepIndex(),
-                    "status", StepStatus.BLOCKED.name(),
-                    "output", "Session stopped",
-                    "layerIndex", layerIndex
-            );
-        }
 
         // 发布开始事件
         eventBus.publish(sessionId, new StepStartEvent(
@@ -113,8 +104,27 @@ public class WorkerReactNode implements NodeAction {
 
             // 7. 使用 ReactAgent 流式执行（在内存中收集完整响应）
             StringBuilder response = new StringBuilder();
+            AtomicBoolean cancelled = new AtomicBoolean(false);
 
             reactAgent.stream(fullInstruction, config)
+                    .doOnSubscribe(subscription -> {
+                        // 注册 Disposable 到跟踪器
+                        Disposable disposable = new Disposable() {
+                            @Override
+                            public void dispose() {
+                                cancelled.set(true);
+                                subscription.cancel();
+                            }
+
+                            @Override
+                            public boolean isDisposed() {
+                                return cancelled.get();
+                            }
+                        };
+                        executionTracker.registerDisposable(sessionId, disposable);
+                        log.debug("[WorkerReactNode] Registered stream disposable for session: {}, step: {}",
+                                sessionId, step.getStepId());
+                    })
                     .doOnNext(nodeOutput -> {
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
@@ -135,6 +145,13 @@ public class WorkerReactNode implements NodeAction {
                         // 错误时保存部分内容
                         stateManager.failStreamingMessage(messageId, response.toString(), e.getMessage());
                         contextService.saveStepOutput(sessionId, step.getStepIndex(), response.toString());
+                    })
+                    .doOnCancel(() -> log.info("[WorkerReactNode] Stream cancelled: sessionId={}, step={}",
+                            sessionId, step.getStepId()))
+                    .doFinally(signalType -> {
+                        // 清理已完成的任务
+                        executionTracker.cleanup(sessionId);
+                        log.debug("[WorkerReactNode] Cleaned up session: {}", sessionId);
                     })
                     .blockLast();
 

@@ -169,7 +169,7 @@ public class GroupChatController {
     @PostMapping("/group-chat/{sessionId}/stop")
     public ResponseEntity<Void> stop(@PathVariable String sessionId) {
         log.info("[API] Stop session: sessionId={}", sessionId);
-        sessionStopService.markStop(sessionId);
+        sessionStopService.markStopAndCancel(sessionId);
         return ResponseEntity.ok().build();
     }
 }

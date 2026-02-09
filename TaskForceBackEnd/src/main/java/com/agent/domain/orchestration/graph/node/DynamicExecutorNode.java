@@ -15,6 +15,7 @@ import com.agent.infrastructure.event.events.SessionCompleteEvent;
 import com.agent.infrastructure.event.events.SessionPauseEvent;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.service.SessionStopService;
+import com.agent.service.SessionExecutionTracker;
 import com.alibaba.cloud.ai.graph.*;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
@@ -42,6 +43,7 @@ public class DynamicExecutorNode implements NodeAction {
     private final ContextService contextService;
     private final ContextAssembler contextAssembler;
     private final SessionStopService sessionStopService;
+    private final SessionExecutionTracker executionTracker;
     private final ReactAgentFactory reactAgentFactory;
     private final PromptManager promptManager;
 
@@ -132,7 +134,7 @@ public class DynamicExecutorNode implements NodeAction {
                 String nodeId = "worker_" + step.getStepIndex();
                 WorkerReactNode workerNode = new WorkerReactNode(
                         stateManager, eventBus, contextService, contextAssembler,
-                        sessionStopService, reactAgentFactory, promptManager, step
+                        sessionStopService, executionTracker, reactAgentFactory, promptManager, step
                 );
                 subGraph.addNode(nodeId, node_async(workerNode));
             }

@@ -5,6 +5,7 @@ import com.agent.domain.orchestration.dto.PlannerResponseDTO;
 import com.agent.domain.orchestration.model.TaskContext;
 import com.agent.domain.orchestration.model.*;
 import com.agent.domain.orchestration.validator.DAGValidator;
+import com.agent.exception.SessionStoppedException;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
@@ -53,13 +54,7 @@ public class PlannerNode implements NodeAction {
         String userInput = state.value("userInput", "");
         
         log.info("[PlannerNode] Starting: sessionId={}, userInput={}", sessionId, userInput);
-        
-        // 检查是否需要停止
-        if (sessionStopService.shouldStop(sessionId)) {
-            log.info("[PlannerNode] Session stopped by user: sessionId={}", sessionId);
-            eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "USER_STOP"));
-            return Map.of("nextAction", "cannot_plan");
-        }
+
         if (userInput != null && !userInput.isBlank()) {
             stateManager.recordUserInput(sessionId, requestId, userInput);
             log.info("[PlannerNode] Recorded user input: sessionId={}", sessionId);
@@ -80,10 +75,17 @@ public class PlannerNode implements NodeAction {
         String formatInstructions = plannerOutputConverter.getFormat();
         String prompt = promptManager.buildPlannerPrompt(workers, userGoal, formatInstructions);
 
-        
+
         // 流式调用 LLM（带重试机制）
-        PlannerResponseDTO dto = generatePlanWithRetry(sessionId, prompt, 3);
-        
+        PlannerResponseDTO dto;
+        try {
+            dto = generatePlanWithRetry(sessionId, prompt, 3);
+        } catch (SessionStoppedException e) {
+            log.info("[PlannerNode] Session stopped during planning: sessionId={}", sessionId);
+            eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "USER_STOP"));
+            return Map.of("nextAction", "cannot_plan");
+        }
+
         // 解析结果
         return convertDtoToResult(sessionId, dto, workers);
     }
@@ -93,16 +95,16 @@ public class PlannerNode implements NodeAction {
      */
     private PlannerResponseDTO generatePlanWithRetry(String sessionId, String initialPrompt, int maxRetries)
             throws Exception {
-        
+
         String currentPrompt = initialPrompt;
         Exception lastException = null;
-        
+
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             log.info("[PlannerNode] Attempt {}/{} to generate plan", attempt, maxRetries);
-            
+
             StringBuilder response = new StringBuilder();
             Long messageId = null;
-            
+
             try {
                 // 获取 Planner Agent 信息
                 Long plannerAgentId = getPlannerAgentId();

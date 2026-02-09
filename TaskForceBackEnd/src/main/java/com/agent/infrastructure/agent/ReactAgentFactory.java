@@ -13,6 +13,7 @@ import com.agent.service.SessionService;
 import com.agent.service.ToolCallService;
 import com.agent.infrastructure.persistence.entity.Session;
 import com.agent.infrastructure.persistence.entity.SessionAgent;
+import com.alibaba.cloud.ai.graph.agent.Builder;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.agent.hook.Hook;
 import com.alibaba.cloud.ai.graph.agent.hook.summarization.SummarizationHook;
@@ -266,7 +267,7 @@ public class ReactAgentFactory {
         }
 
         // 7. 构建 ReactAgent
-        com.alibaba.cloud.ai.graph.agent.Builder builder = ReactAgent.builder()
+        Builder builder = ReactAgent.builder()
                 .name(agent.getName())
                 .chatClient(chatClient)
                 .tools(tools)  // 🔧 修复：同时传递 tools 给 ReactAgent

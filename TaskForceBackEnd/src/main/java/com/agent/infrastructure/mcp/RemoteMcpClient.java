@@ -1,6 +1,7 @@
 package com.agent.infrastructure.mcp;
 
 import com.agent.domain.tool.ToolInfo;
+import com.agent.service.SessionExecutionTracker;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
@@ -23,9 +24,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * 远程 MCP 客户端
@@ -38,22 +38,16 @@ public class RemoteMcpClient {
     private static final String MCP_SERVICE_NAME = "mcp-server";
     private static final int MAX_RETRY_ATTEMPTS = 3;
     private static final long RETRY_DELAY_MS = 1000;
-    
-    // 专用于执行阻塞操作的线程池
-    private static final ExecutorService blockingExecutor = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r);
-        t.setName("mcp-client-blocking-" + t.getId());
-        t.setDaemon(true);
-        return t;
-    });
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final LoadBalancerClient loadBalancerClient;
+    private final SessionExecutionTracker executionTracker;
 
-    public RemoteMcpClient(ObjectMapper objectMapper, LoadBalancerClient loadBalancerClient) {
+    public RemoteMcpClient(ObjectMapper objectMapper, LoadBalancerClient loadBalancerClient, SessionExecutionTracker executionTracker) {
         this.objectMapper = objectMapper;
         this.loadBalancerClient = loadBalancerClient;
+        this.executionTracker = executionTracker;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -67,7 +61,7 @@ public class RemoteMcpClient {
     private String getMcpServerUrl() {
         int attempts = 0;
         Exception lastException = null;
-        
+
         while (attempts < MAX_RETRY_ATTEMPTS) {
             try {
                 ServiceInstance instance = loadBalancerClient.choose(MCP_SERVICE_NAME);
@@ -91,59 +85,20 @@ public class RemoteMcpClient {
                 }
             }
         }
-        
+
         String errorMsg = String.format(
-            "Failed to discover mcp-server after %d attempts. Please ensure mcp-server is running and registered in Nacos.",
-            MAX_RETRY_ATTEMPTS
+                "Failed to discover mcp-server after %d attempts. Please ensure mcp-server is running and registered in Nacos.",
+                MAX_RETRY_ATTEMPTS
         );
         log.error(errorMsg, lastException);
         throw new RuntimeException(errorMsg, lastException);
     }
 
     /**
-     * 辅助方法：在专用线程池中执行阻塞操作
-     * 用于避免在 Reactor 事件循环线程中执行阻塞调用
-     */
-    @SuppressWarnings("unchecked")
-    private <T> T executeBlocking(BlockingOperation<T> operation) {
-        try {
-            // 在专用线程池中执行阻塞操作
-            Future<T> future = blockingExecutor.submit(() -> {
-                try {
-                    return operation.execute();
-                } catch (RuntimeException e) {
-                    throw e;
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            });
-            return future.get(); // 阻塞等待结果，但是在专用线程池中执行
-        } catch (java.util.concurrent.ExecutionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof RuntimeException) {
-                throw (RuntimeException) cause;
-            }
-            throw new RuntimeException(cause);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Operation interrupted", e);
-        }
-    }
-
-    /**
-     * 函数式接口，用于支持抛出异常的阻塞操作
-     */
-    @FunctionalInterface
-    private interface BlockingOperation<T> {
-        T execute() throws Exception;
-    }
-
-    /**
      * 获取所有可用工具列表
      */
     public List<ToolInfo> listTools() {
-        return executeBlocking(() -> {
-            try {
+        try {
                 String url = getMcpServerUrl() + "/api/tools";
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
@@ -174,7 +129,7 @@ public class RemoteMcpClient {
                             if (dto.getName() != null && dto.getName().contains("::")) {
                                 serverName = dto.getName().split("::")[0];
                             }
-                            
+
                             // 将 inputSchema 对象转为 JSON 字符串
                             String inputSchemaJson = "{}";
                             if (dto.getInputSchema() != null) {
@@ -184,7 +139,7 @@ public class RemoteMcpClient {
                                     log.warn("Failed to serialize inputSchema for tool: {}", dto.getName(), e);
                                 }
                             }
-                            
+
                             return ToolInfo.builder()
                                     .id(dto.getName())
                                     .name(dto.getName())
@@ -196,19 +151,17 @@ public class RemoteMcpClient {
                         })
                         .collect(Collectors.toList());
 
-            } catch (Exception e) {
-                log.error("Failed to list tools from mcp-server", e);
-                throw new RuntimeException("Failed to list tools from mcp-server", e);
-            }
-        });
+        } catch (Exception e) {
+            log.error("Failed to list tools from mcp-server", e);
+            throw new RuntimeException("Failed to list tools from mcp-server", e);
+        }
     }
 
     /**
      * 获取所有 Provider 列表
      */
     public List<Map<String, Object>> listProviders() {
-        return executeBlocking(() -> {
-            try {
+        try {
                 String url = getMcpServerUrl() + "/api/providers";
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
@@ -233,19 +186,17 @@ public class RemoteMcpClient {
 
                 return apiResponse.getData();
 
-            } catch (Exception e) {
-                log.error("Failed to list providers from mcp-server", e);
-                throw new RuntimeException("Failed to list providers from mcp-server", e);
-            }
-        });
+        } catch (Exception e) {
+            log.error("Failed to list providers from mcp-server", e);
+            throw new RuntimeException("Failed to list providers from mcp-server", e);
+        }
     }
 
     /**
      * 注册新的 Provider
      */
     public Map<String, Object> registerProvider(Map<String, Object> config) {
-        return executeBlocking(() -> {
-            try {
+        try {
                 String url = getMcpServerUrl() + "/api/providers";
                 String jsonBody = objectMapper.writeValueAsString(config);
 
@@ -273,19 +224,17 @@ public class RemoteMcpClient {
 
                 return apiResponse.getData();
 
-            } catch (Exception e) {
-                log.error("Failed to register provider", e);
-                throw new RuntimeException("Failed to register provider", e);
-            }
-        });
+        } catch (Exception e) {
+            log.error("Failed to register provider", e);
+            throw new RuntimeException("Failed to register provider", e);
+        }
     }
 
     /**
      * 删除 Provider
      */
     public Map<String, Object> deleteProvider(String providerId) {
-        return executeBlocking(() -> {
-            try {
+        try {
                 String url = getMcpServerUrl() + "/api/providers/" + providerId;
 
                 HttpRequest request = HttpRequest.newBuilder()
@@ -311,95 +260,139 @@ public class RemoteMcpClient {
 
                 return apiResponse.getData();
 
-            } catch (Exception e) {
-                log.error("Failed to delete provider: {}", providerId, e);
-                throw new RuntimeException("Failed to delete provider: " + providerId, e);
+        } catch (Exception e) {
+            log.error("Failed to delete provider: {}", providerId, e);
+            throw new RuntimeException("Failed to delete provider: " + providerId, e);
+        }
+    }
+
+    /**
+     * 异步调用工具（支持取消）
+     */
+    public CompletableFuture<ToolCallResultDTO> callToolAsync(String toolId, Map<String, Object> args, String sessionId, Integer stepIndex) {
+        try {
+            String url = getMcpServerUrl() + "/mcp";
+
+            // 构建 JSON-RPC 请求
+            JsonRpcRequest rpcRequest = new JsonRpcRequest();
+            rpcRequest.setJsonrpc("2.0");
+            rpcRequest.setMethod("tools/call");
+            rpcRequest.setId(java.util.UUID.randomUUID().toString());
+
+            Map<String, Object> params = new java.util.HashMap<>();
+            params.put("name", toolId);
+            params.put("arguments", args != null ? args : new java.util.HashMap<>());
+            rpcRequest.setParams(params);
+
+            String jsonBody = objectMapper.writeValueAsString(rpcRequest);
+
+            // 构建 HTTP 请求
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .timeout(Duration.ofSeconds(120));
+
+            // 添加 sessionId Header
+            if (sessionId != null && !sessionId.isEmpty()) {
+                requestBuilder.header("X-Session-Id", sessionId);
+                log.debug("Calling tool {} with sessionId: {}", toolId, sessionId);
             }
-        });
+
+            // 添加 stepIndex Header
+            if (stepIndex != null) {
+                requestBuilder.header("X-Step-Index", stepIndex.toString());
+                log.debug("Calling tool {} with stepIndex: {}", toolId, stepIndex);
+            }
+
+            HttpRequest request = requestBuilder.build();
+
+            // 异步发送请求
+            CompletableFuture<HttpResponse<String>> responseFuture = httpClient
+                    .sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                    .orTimeout(120, TimeUnit.SECONDS);
+
+            // 注册到跟踪器
+            if (sessionId != null) {
+                executionTracker.registerFuture(sessionId, responseFuture);
+                log.debug("[RemoteMcpClient] Registered future for session: {}", sessionId);
+            }
+
+            // 处理响应
+            return responseFuture
+                    .thenApply(response -> {
+                        try {
+                            if (response.statusCode() != 200) {
+                                throw new RuntimeException("Failed to call tool: HTTP " + response.statusCode());
+                            }
+
+                            // 解析 JSON-RPC 响应
+                            JsonRpcResponse rpcResponse = objectMapper.readValue(
+                                    response.body(),
+                                    JsonRpcResponse.class
+                            );
+
+                            // 检查错误
+                            if (rpcResponse.getError() != null) {
+                                throw new RuntimeException("Tool call error: " + rpcResponse.getError().getMessage());
+                            }
+
+                            // 解析结果为 ToolCallResultDTO
+                            if (rpcResponse.getResult() != null) {
+                                return objectMapper.convertValue(rpcResponse.getResult(), ToolCallResultDTO.class);
+                            }
+
+                            // 如果没有结果，返回空结果
+                            ToolCallResultDTO emptyResult = new ToolCallResultDTO();
+                            emptyResult.setContent(new java.util.ArrayList<>());
+                            emptyResult.setIsError(false);
+                            return emptyResult;
+
+                        } catch (Exception e) {
+                            log.error("Failed to parse tool response: {}", toolId, e);
+                            throw new RuntimeException("Failed to parse tool response: " + toolId, e);
+                        }
+                    })
+                    .whenComplete((result, error) -> {
+                        // 清理已完成的任务
+                        if (sessionId != null) {
+                            executionTracker.cleanup(sessionId);
+                            log.debug("[RemoteMcpClient] Cleaned up session: {}", sessionId);
+                        }
+                        if (error != null) {
+                            log.error("Tool call failed: {}", toolId, error);
+                        }
+                    });
+
+        } catch (Exception e) {
+            log.error("Failed to initiate tool call: {}", toolId, e);
+            return CompletableFuture.failedFuture(e);
+        }
     }
 
     public ToolCallResultDTO callTool(String toolId, Map<String, Object> args) {
         return callTool(toolId, args, null, null);
     }
 
-    // 带 sessionId 的版本（向后兼容）
-    public ToolCallResultDTO callTool(String toolId, Map<String, Object> args, String sessionId) {
-        return callTool(toolId, args, sessionId, null);
-    }
 
-    // 新增带 sessionId 和 stepIndex 的版本
+
+    // 同步版本（向后兼容，内部调用异步版本）
     public ToolCallResultDTO callTool(String toolId, Map<String, Object> args, String sessionId, Integer stepIndex) {
-        return executeBlocking(() -> {
-            try {
-                String url = getMcpServerUrl() + "/mcp";
-
-                // 构建 JSON-RPC 请求
-                JsonRpcRequest rpcRequest = new JsonRpcRequest();
-                rpcRequest.setJsonrpc("2.0");
-                rpcRequest.setMethod("tools/call");
-                rpcRequest.setId(java.util.UUID.randomUUID().toString());
-
-                Map<String, Object> params = new java.util.HashMap<>();
-                params.put("name", toolId);
-                params.put("arguments", args != null ? args : new java.util.HashMap<>());
-                rpcRequest.setParams(params);
-
-                String jsonBody = objectMapper.writeValueAsString(rpcRequest);
-
-                // 构建 HTTP 请求
-                HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                        .timeout(Duration.ofSeconds(120));
-
-                // 添加 sessionId Header
-                if (sessionId != null && !sessionId.isEmpty()) {
-                    requestBuilder.header("X-Session-Id", sessionId);
-                    log.debug("Calling tool {} with sessionId: {}", toolId, sessionId);
-                }
-
-                // 添加 stepIndex Header
-                if (stepIndex != null) {
-                    requestBuilder.header("X-Step-Index", stepIndex.toString());
-                    log.debug("Calling tool {} with stepIndex: {}", toolId, stepIndex);
-                }
-
-                HttpRequest request = requestBuilder.build();
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-                if (response.statusCode() != 200) {
-                    throw new RuntimeException("Failed to call tool: HTTP " + response.statusCode());
-                }
-
-                // 解析 JSON-RPC 响应
-                JsonRpcResponse rpcResponse = objectMapper.readValue(
-                        response.body(),
-                        JsonRpcResponse.class
-                );
-
-                // 检查错误
-                if (rpcResponse.getError() != null) {
-                    throw new RuntimeException("Tool call error: " + rpcResponse.getError().getMessage());
-                }
-
-                // 解析结果为 ToolCallResultDTO
-                if (rpcResponse.getResult() != null) {
-                    return objectMapper.convertValue(rpcResponse.getResult(), ToolCallResultDTO.class);
-                }
-
-                // 如果没有结果，返回空结果
-                ToolCallResultDTO emptyResult = new ToolCallResultDTO();
-                emptyResult.setContent(new java.util.ArrayList<>());
-                emptyResult.setIsError(false);
-                return emptyResult;
-
-            } catch (Exception e) {
-                log.error("Failed to call tool: {}", toolId, e);
-                throw new RuntimeException("Failed to call tool: " + toolId, e);
-            }
-        });
+        try {
+            return callToolAsync(toolId, args, sessionId, stepIndex).get(120, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            log.error("Tool call timeout: {}", toolId, e);
+            throw new RuntimeException("Tool call timeout: " + toolId, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("Tool call interrupted: {}", toolId, e);
+            throw new RuntimeException("Tool call interrupted: " + toolId, e);
+        } catch (ExecutionException e) {
+            log.error("Tool call execution failed: {}", toolId, e);
+            throw new RuntimeException("Tool call execution failed: " + toolId, e.getCause());
+        }
     }
+
 
     /**
      * 获取工具回调（用于 AgentFactory）
@@ -415,7 +408,7 @@ public class RemoteMcpClient {
         } catch (Exception e) {
             log.error("Failed to fetch tool definitions", e);
         }
-        
+
         return toolIds.stream()
                 .map(toolId -> {
                     ToolInfo toolInfo = toolInfoMap.get(toolId);
@@ -555,7 +548,7 @@ public class RemoteMcpClient {
     public static class ToolCallResultDTO {
         private List<ContentItem> content;
         private Boolean isError;
-        
+
         /**
          * 提取文本内容
          */
@@ -571,12 +564,12 @@ public class RemoteMcpClient {
             }
             return sb.toString();
         }
-        
+
         public boolean isError() {
             return isError != null && isError;
         }
     }
-    
+
     @Data
     public static class ContentItem {
         private String type;

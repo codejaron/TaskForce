@@ -7,6 +7,7 @@ import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.domain.orchestration.model.StepResult;
 import com.agent.domain.orchestration.model.StepStatus;
 import com.agent.domain.orchestration.state.StateManager;
+import com.agent.exception.SessionStoppedException;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.StepCompletedEvent;
@@ -15,6 +16,7 @@ import com.agent.infrastructure.event.events.WorkerDeltaEvent;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.service.SessionStopService;
+import com.agent.service.SessionExecutionTracker;
 import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
@@ -23,11 +25,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.Disposable;
+import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 并行执行器
@@ -42,6 +48,7 @@ public class ParallelExecutor {
     private final ContextService contextService;
     private final ContextAssembler contextAssembler;
     private final SessionStopService sessionStopService;
+    private final SessionExecutionTracker executionTracker;
     private final ReactAgentFactory reactAgentFactory;
     private final PromptManager promptManager;
 
@@ -63,16 +70,8 @@ public class ParallelExecutor {
         List<Mono<Void>> stepMonos = new ArrayList<>();
 
         for (PlanStep step : layerSteps) {
-            Mono<Void> stepMono = Mono.fromRunnable(() -> {
+            Mono<Void> stepMono = Mono.fromCallable(() -> {
                 try {
-                    // 检查是否需要停止
-                    if (sessionStopService.shouldStop(sessionId)) {
-                        log.info("[ParallelExecutor] Session stopped: sessionId={}, stepId={}",
-                                sessionId, step.getStepId());
-                        results.put(step.getStepId(), StepResult.blocked("Session stopped"));
-                        return;
-                    }
-
                     log.info("[ParallelExecutor] Executing step: stepId={}, instruction={}",
                             step.getStepId(), step.getInstruction());
 
@@ -105,17 +104,63 @@ public class ParallelExecutor {
                             result.getOutput()
                     ));
 
+                    return null;
+
+                } catch (SessionStoppedException e) {
+                    log.info("[ParallelExecutor] Session stopped during step execution: sessionId={}, stepId={}",
+                            sessionId, step.getStepId());
+                    results.put(step.getStepId(), StepResult.blocked("Session stopped"));
+                    return null;
                 } catch (Exception e) {
                     log.error("[ParallelExecutor] Failed to execute step: stepId={}", step.getStepId(), e);
                     results.put(step.getStepId(), StepResult.blocked("执行失败: " + e.getMessage()));
+                    return null;
                 }
+            })
+            .then()  // 转换为 Mono<Void>
+            .subscribeOn(Schedulers.boundedElastic())
+            .timeout(Duration.ofMinutes(10))
+            .onErrorResume(e -> {
+                if (e instanceof SessionStoppedException) {
+                    log.info("[ParallelExecutor] Step cancelled by stop signal: stepId={}", step.getStepId());
+                    results.put(step.getStepId(), StepResult.blocked("Session stopped"));
+                } else {
+                    log.error("[ParallelExecutor] Step execution error: stepId={}", step.getStepId(), e);
+                    results.put(step.getStepId(), StepResult.blocked("执行失败: " + e.getMessage()));
+                }
+                return Mono.empty();
             });
 
             stepMonos.add(stepMono);
         }
 
-        // 并行执行所有步骤
+        // 并行执行所有步骤，并注册 Disposable
+        // 用于跟踪取消状态
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+
         Flux.merge(stepMonos)
+                .doOnSubscribe(subscription -> {
+                    // 注册 Disposable 到跟踪器
+                    Disposable trackableDisposable = new Disposable() {
+                        @Override
+                        public void dispose() {
+                            cancelled.set(true);
+                            subscription.cancel();
+                        }
+
+                        @Override
+                        public boolean isDisposed() {
+                            return cancelled.get();
+                        }
+                    };
+                    executionTracker.registerDisposable(sessionId, trackableDisposable);
+                    log.debug("[ParallelExecutor] Registered parallel execution disposable for session: {}", sessionId);
+                })
+                .doFinally(signalType -> {
+                    // 清理已完成的任务
+                    executionTracker.cleanup(sessionId);
+                    log.debug("[ParallelExecutor] Cleaned up session: {}", sessionId);
+                })
                 .then()
                 .block();
 
