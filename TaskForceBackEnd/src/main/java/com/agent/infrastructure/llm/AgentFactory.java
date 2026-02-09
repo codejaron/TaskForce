@@ -2,26 +2,19 @@ package com.agent.infrastructure.llm;
 
 import com.agent.domain.tool.ToolInfo;
 import com.agent.infrastructure.mcp.RemoteMcpClient;
-import com.agent.infrastructure.config.EventPublishingToolCallback;
-import com.agent.infrastructure.event.EventBus;
 import com.agent.service.AgentToolService;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.persistence.mapper.AgentMapper;
 import com.agent.infrastructure.persistence.mapper.LLMProviderMapper;
-import com.agent.service.ToolCallService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 智能体工厂
@@ -42,52 +35,36 @@ public class AgentFactory {
     private final AgentMapper agentMapper;
     private final LLMProviderMapper providerMapper;
     private final AgentToolService agentToolService; // Agent工具服务
-    private final EventBus eventBus;
-    private final ToolCallService toolCallService;
 
     public AgentFactory(
             RemoteMcpClient remoteMcpClient,
             ChatModelFactory chatModelFactory,
             AgentMapper agentMapper,
             LLMProviderMapper providerMapper,
-            AgentToolService agentToolService,
-            EventBus eventBus,
-            @Lazy ToolCallService toolCallService) {
+            AgentToolService agentToolService) {
         this.remoteMcpClient = remoteMcpClient;
         this.chatModelFactory = chatModelFactory;
         this.agentMapper = agentMapper;
         this.providerMapper = providerMapper;
         this.agentToolService = agentToolService;
-        this.eventBus = eventBus;
-        this.toolCallService = toolCallService;
     }
 
 
     /**
-     * 根据数据库中的 Agent ID 构建 ChatClient（向后兼容，不带 stepId）
-     */
-    public ChatClient buildClientForDatabaseAgent(Long agentId, String sessionId) {
-        return buildClientForDatabaseAgent(agentId, sessionId, null, null);
-    }
-
-    /**
-     * 根据数据库中的 Agent ID 构建 ChatClient（支持工具调用事件追踪）
+     * 根据数据库中的 Agent ID 构建 ChatClient
      *
      * @param agentId   数据库中的智能体ID
      * @param sessionId 会话ID
-     * @param stepId    步骤ID（用于工具调用事件关联，可为 null）
-     * @param stepIndex 步骤索引（用于工具调用事件关联，可为 null）
      * @return ChatClient
      */
-    public ChatClient buildClientForDatabaseAgent(Long agentId, String sessionId, String stepId, Integer stepIndex) {
+    public ChatClient buildClientForDatabaseAgent(Long agentId, String sessionId) {
         // 1. 从数据库加载 Agent
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
             throw new RuntimeException("Agent not found: " + agentId);
         }
 
-        log.info("Building ChatClient for database agent: {} (id: {}, stepId: {}, stepIndex: {})", 
-                agent.getName(), agentId, stepId, stepIndex);
+        log.info("Building ChatClient for database agent: {} (id: {})", agent.getName(), agentId);
 
         // 2. 确定使用的 ChatModel
         // 强制要求Agent配置Provider
@@ -121,13 +98,12 @@ public class AgentFactory {
         builder.defaultOptions(clientOptions);
 
 
-        // 8. 挂载工具（从 mcp-server 获取），并用 EventPublishingToolCallback 包装
+        // 8. 挂载工具（从 mcp-server 获取）
         List<ToolCallback> allTools = new ArrayList<>();
-        AtomicInteger sequenceCounter = new AtomicInteger(0);
 
         // 8.1 添加远程 MCP 工具（从 mcp-server 获取）
         List<String> enabledToolIds = new ArrayList<>(agentToolService.getEnabledToolIds(agentId));
-        
+
         // 8.1.1 自动添加所有 native 工具（所有 Agent 默认拥有）
         try {
             List<ToolInfo> allAvailableTools = remoteMcpClient.listTools();
@@ -135,7 +111,7 @@ public class AgentFactory {
                     .filter(tool -> tool.getId() != null && tool.getId().startsWith("native::"))
                     .map(ToolInfo::getId)
                     .toList();
-            
+
             if (!nativeToolIds.isEmpty()) {
                 enabledToolIds.addAll(nativeToolIds);
                 log.info("  Auto-added {} native tools to agent {}", nativeToolIds.size(), agent.getName());
@@ -143,21 +119,14 @@ public class AgentFactory {
         } catch (Exception e) {
             log.warn("  Failed to fetch native tools: {}", e.getMessage());
         }
-        
+
         if (!enabledToolIds.isEmpty()) {
             ToolCallback[] remoteTools = remoteMcpClient.getToolCallbacks(enabledToolIds);
             if (remoteTools.length > 0) {
                 for (ToolCallback callback : remoteTools) {
-                    // 获取 serverName（从 toolId 中提取 providerName）
-                    String toolName = callback.getToolDefinition().name();
-                    String serverName = extractProviderName(toolName);
-                    // 包装为事件发布回调
-                    ToolCallback wrapped = wrapWithEventPublishing(
-                            callback, sessionId, stepId, stepIndex, agentId, serverName, sequenceCounter
-                    );
-                    allTools.add(wrapped);
+                    allTools.add(callback);
                 }
-                log.info("  Attached {} MCP tools (with event publishing)", remoteTools.length);
+                log.info("  Attached {} MCP tools", remoteTools.length);
             } else {
                 log.warn("  No valid MCP tools found");
             }
@@ -172,40 +141,5 @@ public class AgentFactory {
         }
 
         return builder.build();
-    }
-
-    /**
-     * 用 EventPublishingToolCallback 包装工具回调（MCP 工具）
-     */
-    private ToolCallback wrapWithEventPublishing(
-            ToolCallback delegate,
-            String sessionId,
-            String stepId,
-            Integer stepIndex,
-            Long agentId,
-            String serverName,
-            AtomicInteger sequenceCounter) {
-        return new EventPublishingToolCallback(
-                delegate,
-                sessionId,
-                stepId,
-                stepIndex,
-                agentId,
-                serverName,
-                eventBus,
-                toolCallService,
-                sequenceCounter
-        );
-    }
-
-    /**
-     * 从工具 ID 中提取 Provider 名称
-     * 格式: {providerName}::{toolName}
-     */
-    private String extractProviderName(String toolId) {
-        if (toolId != null && toolId.contains("::")) {
-            return toolId.substring(0, toolId.indexOf("::"));
-        }
-        return "unknown";
     }
 }
