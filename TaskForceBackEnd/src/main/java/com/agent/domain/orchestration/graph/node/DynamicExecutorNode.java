@@ -138,7 +138,7 @@ public class DynamicExecutorNode implements NodeAction {
             }
         }
 
-        // 构建层级连接
+        // 构建层级连接 - 统一使用 batch addEdge 处理所有层级
         String prevNode = START;
 
         for (int i = 0; i < layers.size(); i++) {
@@ -146,47 +146,31 @@ public class DynamicExecutorNode implements NodeAction {
             List<String> nodeIds = layer.stream()
                     .map(s -> "worker_" + s.getStepIndex())
                     .toList();
+            List<String> stepIds = layer.stream().map(PlanStep::getStepId).toList();
+            int layerIndex = i;
 
-            // 注意：层级开始事件会在实际执行时由 WorkerReactNode 或 DispatchNode 触发
-            // 这里不发布，避免重复
+            // 层级开始节点（发布 LayerStartEvent）
+            String startId = "layer_start_" + i;
+            subGraph.addNode(startId, node_async(state -> {
+                eventBus.publish(sessionId, new LayerStartEvent(sessionId, layerIndex, stepIds, nodeIds.size()));
+                return Map.of();
+            }));
+            subGraph.addEdge(prevNode, startId);
 
-            if (nodeIds.size() == 1) {
-                // 单节点层：直接连接
-                subGraph.addEdge(prevNode, nodeIds.get(0));
-                prevNode = nodeIds.get(0);
+            // 使用 batch addEdge 连接到所有 workers（自动处理并行）
+            subGraph.addEdge(startId, nodeIds);
 
-                // 单节点也需要发布层级开始事件
-                List<String> stepIds = layer.stream().map(PlanStep::getStepId).toList();
-                eventBus.publish(sessionId, new LayerStartEvent(sessionId, i, stepIds, 1));
-            } else {
-                // 多节点层：插入 dispatch 和 aggregator
-                String dispatchId = "dispatch_" + i;
-                String aggId = "agg_" + i;
+            // 层级结束节点（发布 LayerCompleteEvent）
+            String endId = "layer_end_" + i;
+            subGraph.addNode(endId, node_async(state -> {
+                eventBus.publish(sessionId, new LayerCompleteEvent(sessionId, layerIndex, 0, 0));
+                return Map.of();
+            }));
 
-                List<String> stepIds = layer.stream().map(PlanStep::getStepId).toList();
+            // 使用 batch addEdge 从所有 workers 聚合（自动 ALL_OF 聚合）
+            subGraph.addEdge(nodeIds, endId);
 
-                // 添加 dispatch 节点（pass-through + 发布层级开始事件）
-                subGraph.addNode(dispatchId, node_async(new DispatchNode(i, stepIds, eventBus)));
-                subGraph.addEdge(prevNode, dispatchId);
-
-                // dispatch -> 并行 workers
-                for (String nodeId : nodeIds) {
-                    subGraph.addEdge(dispatchId, nodeId);
-                }
-
-                // 添加 aggregator 节点（收集结果 + 发布层级完成事件）
-                subGraph.addNode(aggId, node_async(new LayerAggregatorNode(i, eventBus)));
-
-                // 并行 workers -> aggregator
-                for (String nodeId : nodeIds) {
-                    subGraph.addEdge(nodeId, aggId);
-                }
-
-                prevNode = aggId;
-            }
-
-            // 发布层级完成事件（这里是预期的，实际完成会在 aggregator 中发布）
-            // 注意：这里只是占位，实际的完成事件应该在执行后发布
+            prevNode = endId;
         }
 
         // 连接到 END
