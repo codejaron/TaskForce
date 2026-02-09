@@ -8,6 +8,7 @@ import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.service.SessionStopService;
+import com.agent.service.SessionExecutionTracker;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -24,6 +25,7 @@ public class DynamicExecutorConfiguration {
     private final ContextService contextService;
     private final ContextAssembler contextAssembler;
     private final SessionStopService sessionStopService;
+    private final SessionExecutionTracker executionTracker;
     private final ReactAgentFactory reactAgentFactory;
     private final PromptManager promptManager;
 
@@ -35,6 +37,7 @@ public class DynamicExecutorConfiguration {
                 contextService,
                 contextAssembler,
                 sessionStopService,
+                executionTracker,
                 reactAgentFactory,
                 promptManager
         );

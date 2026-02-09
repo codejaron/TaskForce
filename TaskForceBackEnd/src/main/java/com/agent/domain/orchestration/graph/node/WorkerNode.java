@@ -8,11 +8,13 @@ import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.domain.orchestration.model.StepResult;
 import com.agent.domain.orchestration.model.StepStatus;
 import com.agent.domain.orchestration.graph.parallel.ParallelExecutor;
+import com.agent.exception.SessionStoppedException;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.service.SessionStopService;
+import com.agent.service.SessionExecutionTracker;
 import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
@@ -41,6 +43,7 @@ public class WorkerNode implements NodeAction {
     private final ContextService contextService;
     private final ContextAssembler contextAssembler;
     private final SessionStopService sessionStopService;
+    private final SessionExecutionTracker executionTracker;
     private final ReactAgentFactory reactAgentFactory;
     private final PromptManager promptManager;
 
@@ -52,13 +55,6 @@ public class WorkerNode implements NodeAction {
         int currentLayerIndex = state.value("currentLayerIndex", 0);
 
         log.info("[WorkerNode] Executing layer {}: sessionId={}", currentLayerIndex, sessionId);
-
-        // 检查是否需要停止
-        if (sessionStopService.shouldStop(sessionId)) {
-            log.info("[WorkerNode] Session stopped by user: sessionId={}", sessionId);
-            eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "USER_STOP"));
-            return Map.of("nextAction", "complete");
-        }
 
         // 加载计划
         ExecutionPlan plan = stateManager.loadPlan(sessionId);
@@ -107,10 +103,18 @@ public class WorkerNode implements NodeAction {
         // 创建 ParallelExecutor 并执行当前层
         ParallelExecutor executor = new ParallelExecutor(
                 stateManager, eventBus, contextService, contextAssembler,
-                sessionStopService, reactAgentFactory, promptManager
+                sessionStopService, executionTracker, reactAgentFactory, promptManager
         );
 
-        Map<String, StepResult> results = executor.executeLayer(sessionId, layerSteps);
+        Map<String, StepResult> results;
+        try {
+            results = executor.executeLayer(sessionId, layerSteps);
+        } catch (SessionStoppedException e) {
+            log.info("[WorkerNode] Session stopped during layer execution: sessionId={}, layer={}",
+                    sessionId, currentLayerIndex);
+            eventBus.publish(sessionId, new SessionPauseEvent(sessionId, "USER_STOP"));
+            return Map.of("nextAction", "complete");
+        }
 
         // 保存计划状态
         stateManager.savePlan(plan);

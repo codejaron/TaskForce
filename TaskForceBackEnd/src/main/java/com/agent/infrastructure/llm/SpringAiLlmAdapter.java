@@ -5,6 +5,7 @@ import com.agent.infrastructure.llm.AgentFactory;
 import com.agent.infrastructure.prompt.PromptManager;
 import com.agent.infrastructure.persistence.mapper.AgentMapper;
 import com.agent.service.SessionStopService;
+import com.agent.service.SessionExecutionTracker;
 import com.agent.service.TokenUsageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,7 +14,10 @@ import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
+import reactor.core.Disposable;
 
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -28,6 +32,7 @@ public class SpringAiLlmAdapter implements LlmAdapter {
 
     private final AgentFactory agentFactory;
     private final SessionStopService sessionStopService;
+    private final SessionExecutionTracker executionTracker;
     private final PromptManager promptManager;
     private final TokenUsageService tokenUsageService;
     private final AgentMapper agentMapper;
@@ -52,12 +57,6 @@ public class SpringAiLlmAdapter implements LlmAdapter {
         log.info("[LlmAdapter] streamChat called: agentId={}, sessionId={}, stepId={}, stepIndex={}, promptLen={}",
                 agentId, sessionId, stepId, stepIndex, systemPrompt != null ? systemPrompt.length() : 0);
 
-        // 如果有 sessionId，先检查是否已停止
-        if (sessionId != null && sessionStopService.shouldStop(sessionId)) {
-            log.info("[LlmAdapter] Session already stopped before stream start: sessionId={}", sessionId);
-            return Flux.empty();
-        }
-
         try {
             ChatClient client = agentFactory.buildClientForDatabaseAgent(agentId, sessionId != null ? sessionId : "default");
             log.info("[LlmAdapter] ChatClient created successfully");
@@ -67,18 +66,33 @@ public class SpringAiLlmAdapter implements LlmAdapter {
             // 用于累计Usage数据
             AtomicReference<Usage> usageHolder = new AtomicReference<>();
 
+            // 用于跟踪取消状态
+            AtomicBoolean cancelled = new AtomicBoolean(false);
+
             Flux<String> stream = client.prompt()
                     .user(prompt)
                     .stream()
                     .chatResponse()
-                    .takeWhile(chatResponse -> {
-                        // 在每个 chunk 到达时检查停止标志
-                        if (sessionId != null && sessionStopService.shouldStop(sessionId)) {
-                            log.info("[LlmAdapter] Stream interrupted by stop signal: sessionId={}", sessionId);
-                            return false;
+                    .doOnSubscribe(subscription -> {
+                        // 注册 Disposable 到跟踪器
+                        if (sessionId != null) {
+                            Disposable disposable = new Disposable() {
+                                @Override
+                                public void dispose() {
+                                    cancelled.set(true);
+                                    subscription.cancel();
+                                }
+
+                                @Override
+                                public boolean isDisposed() {
+                                    return cancelled.get();
+                                }
+                            };
+                            executionTracker.registerDisposable(sessionId, disposable);
+                            log.debug("[LlmAdapter] Registered stream disposable for session: {}", sessionId);
                         }
-                        return true;
                     })
+                    .timeout(Duration.ofMinutes(5))  // 5 分钟超时
                     .doOnNext(chatResponse -> {
                         // 累计Usage（最后一个chunk会包含完整的usage信息）
                         if (chatResponse.getMetadata() != null) {
@@ -104,7 +118,14 @@ public class SpringAiLlmAdapter implements LlmAdapter {
                         recordTokenUsageAsync(agentId, sessionId, usageHolder.get());
                     })
                     .doOnError(e -> log.error("[LlmAdapter] Stream error", e))
-                    .doOnCancel(() -> log.info("[LlmAdapter] Stream cancelled: sessionId={}", sessionId));
+                    .doOnCancel(() -> log.info("[LlmAdapter] Stream cancelled: sessionId={}", sessionId))
+                    .doFinally(signalType -> {
+                        // 清理已完成的任务
+                        if (sessionId != null) {
+                            executionTracker.cleanup(sessionId);
+                            log.debug("[LlmAdapter] Cleaned up session: {}", sessionId);
+                        }
+                    });
 
             return stream;
 

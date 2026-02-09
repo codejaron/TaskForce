@@ -17,17 +17,30 @@ import java.util.concurrent.TimeUnit;
 public class SessionStopService {
 
     private final StringRedisTemplate redisTemplate;
+    private final SessionExecutionTracker executionTracker;
 
     private static final String STOP_KEY_PREFIX = "session:stop:";
     private static final long STOP_FLAG_TTL_SECONDS = 300; // 5 分钟过期
 
     /**
-     * 标记会话需要停止
+     * 标记会话需要停止（旧方法，保留向后兼容）
      */
     public void markStop(String sessionId) {
+        markStopAndCancel(sessionId);
+    }
+
+    /**
+     * 标记会话需要停止并主动取消所有任务
+     */
+    public void markStopAndCancel(String sessionId) {
         String key = STOP_KEY_PREFIX + sessionId;
+        // 1. 设置停止标志
         redisTemplate.opsForValue().set(key, "1", STOP_FLAG_TTL_SECONDS, TimeUnit.SECONDS);
         log.info("[StopService] Marked stop: sessionId={}", sessionId);
+
+        // 2. 主动取消所有任务
+        executionTracker.cancelAll(sessionId);
+        log.info("[StopService] Cancelled all tasks: sessionId={}", sessionId);
     }
 
     /**

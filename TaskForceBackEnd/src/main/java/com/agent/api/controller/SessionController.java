@@ -173,8 +173,8 @@ public class SessionController {
     @PostMapping("/{sessionId}/stop")
     public ApiResponse<Void> stopSession(@PathVariable String sessionId) {
         try {
-            // 标记停止标志，让后端流检测并中断
-            sessionStopService.markStop(sessionId);
+            // 标记停止标志并主动取消所有任务
+            sessionStopService.markStopAndCancel(sessionId);
 
             // 状态更新由 SessionPauseEvent 触发，不在这里手动更新
 
