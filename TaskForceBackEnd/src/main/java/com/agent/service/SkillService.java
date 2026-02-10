@@ -5,6 +5,7 @@ import com.agent.infrastructure.persistence.entity.Skill;
 import com.agent.infrastructure.persistence.mapper.SkillMapper;
 import com.agent.infrastructure.skill.DbFilteredSkillRegistry;
 import com.alibaba.cloud.ai.graph.skills.SkillMetadata;
+import com.alibaba.cloud.ai.graph.skills.registry.filesystem.FileSystemSkillRegistry;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
@@ -31,21 +32,25 @@ public class SkillService {
 
     private final SkillMapper skillMapper;
     private final DbFilteredSkillRegistry skillRegistry;
+    private final FileSystemSkillRegistry fileSystemSkillRegistry;
 
     @Value("${skill.user-directory}")
     private String userSkillsDirectory;
 
-    public SkillService(SkillMapper skillMapper, DbFilteredSkillRegistry skillRegistry) {
+    public SkillService(SkillMapper skillMapper,
+                       DbFilteredSkillRegistry skillRegistry,
+                       FileSystemSkillRegistry fileSystemSkillRegistry) {
         this.skillMapper = skillMapper;
         this.skillRegistry = skillRegistry;
+        this.fileSystemSkillRegistry = fileSystemSkillRegistry;
     }
 
     /**
-     * 列出所有 Skill
+     * 列出所有 Skill（包括禁用的，用于前端显示）
      */
     public List<SkillDTO> listAll() {
-        // 从文件系统加载所有 Skill
-        List<SkillMetadata> allSkills = skillRegistry.listAll();
+        // 从文件系统加载所有 Skill（不过滤）
+        List<SkillMetadata> allSkills = fileSystemSkillRegistry.listAll();
 
         // 查询数据库中的 Skill 状态
         List<Skill> dbSkills = skillMapper.selectList(null);
@@ -81,8 +86,8 @@ public class SkillService {
      * 获取 Skill 详情
      */
     public SkillDTO getById(String skillId) {
-        // 从文件系统获取 Skill 元数据
-        Optional<SkillMetadata> metadataOpt = skillRegistry.get(skillId);
+        // 从文件系统获取 Skill 元数据（不过滤）
+        Optional<SkillMetadata> metadataOpt = fileSystemSkillRegistry.get(skillId);
         if (metadataOpt.isEmpty()) {
             throw new RuntimeException("Skill not found: " + skillId);
         }
@@ -132,8 +137,8 @@ public class SkillService {
      * 更新 Skill 状态
      */
     private void updateSkillStatus(String skillId, boolean enabled) {
-        // 检查 Skill 是否存在
-        Optional<SkillMetadata> metadataOpt = skillRegistry.get(skillId);
+        // 检查 Skill 是否存在（从文件系统检查，不过滤）
+        Optional<SkillMetadata> metadataOpt = fileSystemSkillRegistry.get(skillId);
         if (metadataOpt.isEmpty()) {
             throw new RuntimeException("Skill not found: " + skillId);
         }
