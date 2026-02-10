@@ -95,13 +95,13 @@ export const McpMarketplacePage: React.FC = () => {
         config = JSON.parse(jsonInput);
       } catch (e: unknown) {
         const error = e as Error;
-        setJsonError('JSON 格式错误：' + error.message);
+        setJsonError(t('mcp.jsonFormatError') + error.message);
         return;
       }
 
       // Validate required fields
       if (!config.command && !config.sseUrl) {
-        setJsonError('缺少必填字段: command 或 sseUrl');
+        setJsonError(t('mcp.missingRequiredFields'));
         return;
       }
 
@@ -206,100 +206,6 @@ export const McpMarketplacePage: React.FC = () => {
           </button>
         </div>
 
-        {/* Connected Servers */}
-        <div className="mb-10">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Server size={20} className="text-orange-600" />
-            {t('mcp.servers')} ({servers.length})
-          </h2>
-
-          {servers.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center shadow-sm">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-orange-50 flex items-center justify-center">
-                <Server size={32} className="text-orange-600" />
-              </div>
-              <h3 className="text-lg font-semibold font-heading text-gray-900 mb-2">No Servers Connected</h3>
-              <p className="text-gray-600 mb-4">Connect your first MCP server to start using tools</p>
-              <button
-                onClick={() => setShowJsonEditor(true)}
-                className="inline-flex items-center gap-2 text-orange-600 hover:text-orange-700 cursor-pointer transition-colors duration-200"
-              >
-                <Plus size={16} />
-                Connect Server
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {servers.map(server => {
-                const serverTools = tools.filter(t => t.serverName === server.name);
-
-                return (
-                  <div
-                    key={server.id}
-                    className="bg-white border border-gray-200 rounded-2xl overflow-hidden hover:border-gray-300 hover:shadow-md transition-all duration-200"
-                  >
-                    <div className="p-6">
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className={clsx(
-                            "w-12 h-12 rounded-xl flex items-center justify-center",
-                            server.type === 'STDIO'
-                              ? "bg-gradient-to-br from-blue-500 to-cyan-600"
-                              : "bg-gradient-to-br from-green-500 to-emerald-600"
-                          )}>
-                            {server.type === 'STDIO' ? <Terminal size={24} className="text-white" /> : <Globe size={24} className="text-white" />}
-                          </div>
-                          <div>
-                            <h3 className="font-bold text-lg text-white">{server.name}</h3>
-                            <span className="text-xs text-gray-400">{server.type}</span>
-                          </div>
-                        </div>
-                        <span className={clsx(
-                          "flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full font-medium",
-                          server.connected
-                            ? "bg-green-500/10 text-green-400 border border-green-500/20"
-                            : "bg-red-500/10 text-red-400 border border-red-500/20"
-                        )}>
-                          {server.connected ? <CheckCircle size={12} /> : <XCircle size={12} />}
-                          {server.connected ? 'Connected' : 'Disconnected'}
-                        </span>
-                      </div>
-
-                      {/* Command/URL */}
-                      <div className="bg-black/30 rounded-xl p-3 font-mono text-xs text-gray-400 mb-4 overflow-x-auto">
-                        {server.type === 'STDIO' ? (
-                          <>
-                            <span className="text-blue-400">{server.command}</span>
-                            {server.args && server.args.length > 0 && (
-                              <span className="text-gray-500"> {server.args.join(' ')}</span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-green-400">{server.sseUrl}</span>
-                        )}
-                      </div>
-
-                      {/* Tools count */}
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-400 flex items-center gap-1">
-                          <Database size={14} />
-                          {serverTools.length} tools
-                        </span>
-                        <button
-                          onClick={() => server.id && deleteServer(server.id)}
-                          className="p-2 hover:bg-red-500/20 rounded-lg text-gray-400 hover:text-red-400 transition-colors"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
         {/* Available Tools */}
         <div>
           <div className="flex items-center justify-between mb-4">
@@ -388,7 +294,7 @@ export const McpMarketplacePage: React.FC = () => {
 
             {Object.keys(toolsByServer).length === 0 && (
               <div className="text-center py-12 text-gray-500">
-                {toolSearch ? 'No tools match your search' : 'No tools available. Connect MCP servers first.'}
+                {toolSearch ? t('mcp.noToolsMatch') : t('mcp.noToolsAvailable')}
               </div>
             )}
           </div>
@@ -403,10 +309,10 @@ export const McpMarketplacePage: React.FC = () => {
               <div>
                 <h2 className="text-2xl font-bold font-heading text-gray-900 flex items-center gap-2">
                   <FileCode size={24} className="text-purple-600" />
-                  添加 MCP 工具 (JSON 配置)
+                  {t('mcp.addToolJsonTitle')}
                 </h2>
                 <p className="text-sm text-gray-600 mt-1">
-                  粘贴标准 MCP 配置 JSON 快速添加工具
+                  {t('mcp.addToolJsonDesc')}
                 </p>
               </div>
               <button onClick={() => setShowJsonEditor(false)} className="text-gray-600 hover:text-gray-900 transition-colors duration-200 cursor-pointer">
@@ -418,24 +324,24 @@ export const McpMarketplacePage: React.FC = () => {
               {/* Tool Key Input */}
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  工具唯一标识 *
+                  {t('mcp.toolKeyLabel')} *
                 </label>
                 <input
                   type="text"
                   value={toolKeyInput}
                   onChange={e => setToolKeyInput(e.target.value)}
-                  placeholder="例如: github, weather, filesystem"
+                  placeholder={t('mcp.toolKeyPlaceholder')}
                   className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-900 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none shadow-sm"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  用于在配置文件中唯一标识此工具，建议使用小写字母和下划线
+                  {t('mcp.toolKeyHint')}
                 </p>
               </div>
 
               {/* JSON Input */}
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  工具配置 JSON *
+                  {t('mcp.toolConfigLabel')} *
                 </label>
                 <textarea
                   value={jsonInput}
@@ -458,41 +364,6 @@ export const McpMarketplacePage: React.FC = () => {
                   </div>
                 )}
               </div>
-
-              {/* Configuration Templates */}
-              <div>
-                <p className="text-sm font-medium text-gray-700 mb-2">快速模板：</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setJsonInput(TEMPLATE_PYTHON)}
-                    className="text-left p-3 bg-white border border-gray-300 rounded-lg hover:border-purple-500 transition-colors duration-200 cursor-pointer"
-                  >
-                    <p className="text-gray-900 text-sm font-medium">Python MCP 工具</p>
-                    <p className="text-gray-600 text-xs">已安装的 Python 包</p>
-                  </button>
-                  <button
-                    onClick={() => setJsonInput(TEMPLATE_NPX)}
-                    className="text-left p-3 bg-white border border-gray-300 rounded-lg hover:border-purple-500 transition-colors duration-200 cursor-pointer"
-                  >
-                    <p className="text-gray-900 text-sm font-medium">NPX MCP 工具</p>
-                    <p className="text-gray-600 text-xs">NPM 包直接运行</p>
-                  </button>
-                  <button
-                    onClick={() => setJsonInput(TEMPLATE_LOCAL_SCRIPT)}
-                    className="text-left p-3 bg-white border border-gray-300 rounded-lg hover:border-purple-500 transition-colors duration-200 cursor-pointer"
-                  >
-                    <p className="text-gray-900 text-sm font-medium">本地脚本</p>
-                    <p className="text-gray-600 text-xs">自定义 Python 脚本</p>
-                  </button>
-                  <button
-                    onClick={() => setJsonInput(TEMPLATE_ENV_VARS)}
-                    className="text-left p-3 bg-white border border-gray-300 rounded-lg hover:border-purple-500 transition-colors duration-200 cursor-pointer"
-                  >
-                    <p className="text-gray-900 text-sm font-medium">带环境变量</p>
-                    <p className="text-gray-600 text-xs">使用环境变量占位符</p>
-                  </button>
-                </div>
-              </div>
             </div>
 
             <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
@@ -500,7 +371,7 @@ export const McpMarketplacePage: React.FC = () => {
                 onClick={() => setShowJsonEditor(false)}
                 className="px-6 py-2.5 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-colors duration-200 cursor-pointer"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleAddToolFromJson}
@@ -508,7 +379,7 @@ export const McpMarketplacePage: React.FC = () => {
                 className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl transition-colors duration-200 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer shadow-sm"
               >
                 <Plus size={20} />
-                添加工具
+                {t('mcp.addTool')}
               </button>
             </div>
           </div>
