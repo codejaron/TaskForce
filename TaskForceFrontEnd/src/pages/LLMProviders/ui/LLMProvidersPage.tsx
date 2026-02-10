@@ -41,6 +41,7 @@ export function LLMProvidersPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<LLMProvider | null>(null);
   const [showApiKey, setShowApiKey] = useState<Record<number, boolean>>({});
+  const [decryptedApiKeys, setDecryptedApiKeys] = useState<Record<number, string>>({});
   const [expandedProvider, setExpandedProvider] = useState<number | null>(null);
   const [providerModels, setProviderModels] = useState<Record<number, ChannelModel[]>>({});
   const [loadingModels, setLoadingModels] = useState<number | null>(null);
@@ -89,6 +90,23 @@ export function LLMProvidersPage() {
       setExpandedProvider(providerId);
       loadProviderModels(providerId);
     }
+  };
+
+  const toggleShowApiKey = async (providerId: number) => {
+    const isCurrentlyShown = showApiKey[providerId];
+
+    if (!isCurrentlyShown && !decryptedApiKeys[providerId]) {
+      // 需要获取解密的 API Key
+      try {
+        const result = await api.llmProviders.getApiKey(providerId);
+        setDecryptedApiKeys(prev => ({ ...prev, [providerId]: result.apiKey }));
+      } catch (error) {
+        console.error('Failed to get API key:', error);
+        return;
+      }
+    }
+
+    setShowApiKey(prev => ({ ...prev, [providerId]: !prev[providerId] }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -280,10 +298,12 @@ export function LLMProvidersPage() {
                       <Key size={14} className="text-gray-600" />
                       <span className="text-gray-600">API Key:</span>
                       <span className="text-gray-900 font-mono text-xs">
-                        {showApiKey[provider.id] ? provider.apiKey : '••••••••••••'}
+                        {showApiKey[provider.id]
+                          ? (decryptedApiKeys[provider.id] || provider.apiKey || '••••••••••••')
+                          : (provider.apiKey || '••••••••••••')}
                       </span>
                       <button
-                        onClick={() => setShowApiKey(prev => ({ ...prev, [provider.id]: !prev[provider.id] }))}
+                        onClick={() => toggleShowApiKey(provider.id)}
                         className="text-gray-600 hover:text-gray-900 transition-colors duration-200 cursor-pointer"
                       >
                         {showApiKey[provider.id] ? <EyeOff size={14} /> : <Eye size={14} />}

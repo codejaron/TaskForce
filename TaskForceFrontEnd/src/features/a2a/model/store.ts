@@ -473,7 +473,7 @@ export const useA2AStore = create<A2AState>((set, get) => ({
 
   fetchSessions: async () => {
     try {
-      const sessions = await api.sessions.list();
+      const sessions = await api.sessions.listByType('GROUP');
       set({ sessions });
     } catch (error: unknown) {
       console.warn("Failed to fetch sessions:", error);
