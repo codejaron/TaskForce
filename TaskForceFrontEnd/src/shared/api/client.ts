@@ -65,6 +65,7 @@ export const api = {
   },
   sessions: {
     list: () => fetchJson<Session[]>('/sessions'),
+    listByType: (type: string) => fetchJson<Session[]>(`/sessions/type/${type}`),
     create: (data: { name: string; type: string; agentIds: number[] }) =>
       fetchJson<Session>('/sessions/create', { method: 'POST', body: JSON.stringify(data) }),
     stop: (sessionId: string) =>
@@ -86,6 +87,7 @@ export const api = {
   llmProviders: {
     list: () => fetchJson<LLMProvider[]>('/providers'),
     get: (id: number) => fetchJson<LLMProvider>(`/providers/${id}`),
+    getApiKey: (id: number) => fetchJson<{apiKey: string}>(`/providers/${id}/api-key`),
     create: (data: Partial<LLMProvider>) => fetchJson<LLMProvider>('/providers', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<LLMProvider>) => fetchJson<LLMProvider>(`/providers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: number) => fetchJson<{success: boolean}>(`/providers/${id}`, { method: 'DELETE' }),

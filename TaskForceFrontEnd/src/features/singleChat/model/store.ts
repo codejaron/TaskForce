@@ -32,10 +32,8 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
 
   fetchSessions: async () => {
     try {
-      const allSessions = await api.sessions.list();
-      // 只显示 CHAT 类型的会话
-      const chatSessions = allSessions.filter(s => s.type === 'CHAT');
-      set({ sessions: chatSessions });
+      const sessions = await api.sessions.listByType('CHAT');
+      set({ sessions });
     } catch (error: unknown) {
       console.warn("Failed to fetch single-chat sessions:", error);
       set({ sessions: [], error: error instanceof Error ? error.message : String(error) });

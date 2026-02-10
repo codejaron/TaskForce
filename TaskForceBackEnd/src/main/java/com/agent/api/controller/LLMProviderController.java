@@ -48,8 +48,10 @@ public class LLMProviderController {
     public ApiResponse<LLMProvider> createProvider(@Valid @RequestBody LLMProviderRequest request) {
         try {
             LLMProvider provider = providerService.createProvider(request);
-            // 清除敏感字段
-            provider.setApiKey(null);
+            // 返回脱敏的 API Key
+            if (provider.getApiKey() != null && !provider.getApiKey().isEmpty()) {
+                provider.setApiKey(maskApiKey(provider.getApiKey()));
+            }
             return ApiResponse.success("渠道创建成功", provider);
         } catch (Exception e) {
             log.error("Create provider failed", e);
@@ -67,7 +69,10 @@ public class LLMProviderController {
     ) {
         try {
             LLMProvider provider = providerService.updateProvider(providerId, request);
-            provider.setApiKey(null);
+            // 返回脱敏的 API Key
+            if (provider.getApiKey() != null && !provider.getApiKey().isEmpty()) {
+                provider.setApiKey(maskApiKey(provider.getApiKey()));
+            }
             return ApiResponse.success("渠道更新成功", provider);
         } catch (Exception e) {
             log.error("Update provider failed", e);
@@ -96,8 +101,12 @@ public class LLMProviderController {
     public ApiResponse<List<LLMProvider>> getAllProviders() {
         try {
             List<LLMProvider> providers = providerService.getAllProviders();
-            // 不返回敏感信息
-            providers.forEach(p -> p.setApiKey(null));
+            // 返回脱敏的 API Key
+            providers.forEach(p -> {
+                if (p.getApiKey() != null && !p.getApiKey().isEmpty()) {
+                    p.setApiKey(maskApiKey(p.getApiKey()));
+                }
+            });
             return ApiResponse.success(providers);
         } catch (Exception e) {
             log.error("Get all providers failed", e);
@@ -112,10 +121,34 @@ public class LLMProviderController {
     public ApiResponse<LLMProvider> getProvider(@PathVariable Long providerId) {
         try {
             LLMProvider provider = providerService.getProviderById(providerId);
-            provider.setApiKey(null);
+            // 返回脱敏的 API Key
+            if (provider.getApiKey() != null && !provider.getApiKey().isEmpty()) {
+                provider.setApiKey(maskApiKey(provider.getApiKey()));
+            }
             return ApiResponse.success(provider);
         } catch (Exception e) {
             log.error("Get provider failed", e);
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 获取解密后的完整 API Key
+     */
+    @GetMapping("/{providerId}/api-key")
+    public ApiResponse<Map<String, String>> getDecryptedApiKey(@PathVariable Long providerId) {
+        try {
+            LLMProvider provider = providerService.getProviderById(providerId);
+            String encryptedApiKey = provider.getApiKey();
+            String decryptedApiKey = "";
+
+            if (encryptedApiKey != null && !encryptedApiKey.isEmpty()) {
+                decryptedApiKey = encryptionUtil.decrypt(encryptedApiKey);
+            }
+
+            return ApiResponse.success(Map.of("apiKey", decryptedApiKey));
+        } catch (Exception e) {
+            log.error("Get decrypted API key failed", e);
             return ApiResponse.error(e.getMessage());
         }
     }
@@ -258,6 +291,41 @@ public class LLMProviderController {
         } catch (Exception e) {
             log.error("Failed to fetch models for provider {}", providerId, e);
             return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 脱敏 API Key，只显示前后几位
+     * 例如：sk-1234567890abcdef -> sk-****cdef
+     */
+    private String maskApiKey(String encryptedApiKey) {
+        if (encryptedApiKey == null || encryptedApiKey.isEmpty()) {
+            return "";
+        }
+
+        try {
+            // 先解密
+            String apiKey = encryptionUtil.decrypt(encryptedApiKey);
+
+            if (apiKey.length() <= 8) {
+                return "****";
+            }
+
+            // 显示前缀（如 sk-）和最后4位
+            String prefix = "";
+            String suffix = apiKey.substring(apiKey.length() - 4);
+
+            // 如果是 OpenAI 格式的 key (sk-xxx)
+            if (apiKey.startsWith("sk-")) {
+                prefix = "sk-";
+            } else if (apiKey.length() > 4) {
+                prefix = apiKey.substring(0, Math.min(4, apiKey.length() - 4));
+            }
+
+            return prefix + "****" + suffix;
+        } catch (Exception e) {
+            log.error("Failed to mask API key", e);
+            return "****";
         }
     }
 }
