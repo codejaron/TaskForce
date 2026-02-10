@@ -145,5 +145,25 @@ export const api = {
     enable: (skillId: string) => fetchJson<void>(`/skills/${skillId}/enable`, { method: 'POST' }),
     disable: (skillId: string) => fetchJson<void>(`/skills/${skillId}/disable`, { method: 'POST' }),
     importFromGit: (request: {gitUrl: string; branch?: string; targetDirectory?: string}) => fetchJson<void>('/skills/import', { method: 'POST', body: JSON.stringify(request) }),
+    uploadSkill: async (files: File[]) => {
+      const formData = new FormData();
+      files.forEach(file => {
+        formData.append('files', file);
+      });
+      const res = await fetch(`${API_BASE}/skills/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) {
+        throw new Error(`API Error: ${res.statusText}`);
+      }
+      const json = await res.json();
+      if (json && typeof json === 'object' && 'code' in json && 'message' in json) {
+        const apiResponse = json as ApiResponse<void>;
+        if (apiResponse.code !== 200) {
+          throw new Error(apiResponse.message || 'API request failed');
+        }
+      }
+    },
   }
  };

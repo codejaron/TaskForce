@@ -7,6 +7,7 @@ import com.agent.service.SkillService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -65,16 +66,22 @@ public class SkillController {
     }
 
     /**
-     * 从 Git 导入 Skill
+     * 导入 Skill（从本地文件夹）
      */
     @PostMapping("/import")
-    public ApiResponse<Void> importFromGit(@Validated @RequestBody SkillImportRequest request) {
-        log.info("Importing skill from Git: {}", request.getGitUrl());
-        skillService.importFromGit(
-                request.getGitUrl(),
-                request.getBranch(),
-                request.getTargetDirectory()
-        );
+    public ApiResponse<Void> importSkill(@Validated @RequestBody SkillImportRequest request) {
+        log.info("Importing skill from folder: {}", request.getSourcePath());
+        skillService.importFromFolder(request.getSourcePath());
+        return ApiResponse.success(null);
+    }
+
+    /**
+     * 上传并导入 Skill（从浏览器文件夹选择）
+     */
+    @PostMapping("/upload")
+    public ApiResponse<Void> uploadSkill(@RequestParam("files") MultipartFile[] files) {
+        log.info("Uploading skill: {} files", files.length);
+        skillService.importFromUpload(files);
         return ApiResponse.success(null);
     }
 }

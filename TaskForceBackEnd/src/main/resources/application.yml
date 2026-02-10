@@ -7,6 +7,13 @@ spring:
   profiles:
     active: local
 
+  # ========== 文件上传配置 ==========
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 100MB      # 单个文件最大 100MB
+      max-request-size: 500MB   # 整个请求最大 500MB
+
   ai:
     chat:
       observations:

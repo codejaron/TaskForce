@@ -5,15 +5,11 @@ import lombok.Data;
 import jakarta.validation.constraints.NotBlank;
 
 /**
- * Skill Git 导入请求
+ * Skill 文件夹导入请求
  */
 @Data
 public class SkillImportRequest {
 
-    @NotBlank(message = "Git URL cannot be blank")
-    private String gitUrl;
-
-    private String branch;
-
-    private String targetDirectory;
+    @NotBlank(message = "Source folder path cannot be blank")
+    private String sourcePath;  // 包含 skill 的文件夹绝对路径
 }

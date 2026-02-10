@@ -11,9 +11,9 @@ export interface Skill {
 }
 
 export interface SkillImportRequest {
-  gitUrl: string;
-  branch?: string;
+  sourcePath: string;
   targetDirectory?: string;
+  copyMode?: boolean;
 }
 
 export const skillsApi = {
@@ -48,9 +48,32 @@ export const skillsApi = {
   },
 
   /**
-   * 从 Git 导入 Skill
+   * 从本地文件夹导入 Skill
    */
-  async importFromGit(request: SkillImportRequest): Promise<void> {
+  async importFromFolder(request: SkillImportRequest): Promise<void> {
     await apiClient.post('/api/skills/import', request);
+  },
+
+  /**
+   * 上传文件夹导入 Skill
+   */
+  async uploadSkill(files: File[], targetDirectory?: string): Promise<void> {
+    const formData = new FormData();
+
+    // 添加所有文件
+    files.forEach(file => {
+      formData.append('files', file);
+    });
+
+    // 添加目标目录（可选）
+    if (targetDirectory) {
+      formData.append('targetDirectory', targetDirectory);
+    }
+
+    await apiClient.post('/api/skills/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
   },
 };
