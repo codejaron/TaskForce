@@ -128,10 +128,10 @@ export const SkillsPage: React.FC = () => {
               <div
                 key={skill.skillId}
                 className={clsx(
-                  'bg-white dark:bg-gray-800 rounded-lg border p-4 transition-all',
+                  'rounded-lg border p-4 transition-all',
                   skill.enabled
-                    ? 'border-green-200 dark:border-green-800'
-                    : 'border-gray-200 dark:border-gray-700 opacity-60'
+                    ? 'bg-white dark:bg-gray-800 border-green-200 dark:border-green-800'
+                    : 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-800'
                 )}
               >
                 <div className="flex items-start justify-between mb-3">
@@ -145,9 +145,9 @@ export const SkillsPage: React.FC = () => {
                       'p-2 rounded-lg transition-colors',
                       skill.enabled
                         ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50'
-                        : 'bg-gray-100 dark:bg-gray-700 text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                        : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50'
                     )}
-                    title={skill.enabled ? 'Disable' : 'Enable'}
+                    title={skill.enabled ? '禁用' : '启用'}
                   >
                     {skill.enabled ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
                   </button>
@@ -158,10 +158,15 @@ export const SkillsPage: React.FC = () => {
                     {skill.enabled ? (
                       <CheckCircle className="w-4 h-4 text-green-500" />
                     ) : (
-                      <XCircle className="w-4 h-4 text-gray-400" />
+                      <XCircle className="w-4 h-4 text-red-500" />
                     )}
-                    <span className="text-gray-600 dark:text-gray-400">
-                      {skill.enabled ? 'Enabled' : 'Disabled'}
+                    <span className={clsx(
+                      'font-medium',
+                      skill.enabled
+                        ? 'text-green-600 dark:text-green-400'
+                        : 'text-red-600 dark:text-red-400'
+                    )}>
+                      {skill.enabled ? '已启用' : '未启用'}
                     </span>
                   </div>
                   <div className="text-xs text-gray-500 dark:text-gray-400">
