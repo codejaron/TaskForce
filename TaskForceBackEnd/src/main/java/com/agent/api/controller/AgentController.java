@@ -4,7 +4,7 @@ import com.agent.service.AgentToolService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.agent.api.request.AgentRequest;
 import com.agent.api.response.AgentResponse;
-import com.agent.domain.tool.AgentToolDetail;
+import com.agent.api.dto.AgentToolDetail;
 import com.agent.api.response.ApiResponse;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.persistence.entity.LLMProvider;

@@ -1,4 +1,4 @@
-package com.agent.infrastructure.config;
+package com.agent.api.exception;
 
 import com.agent.api.response.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -80,7 +80,7 @@ public class GlobalExceptionHandler {
         log.error("Runtime exception", e);
         return ApiResponse.error(400, e.getMessage());
     }
-    
+
     /**
      * 处理参数校验异常
      */
@@ -96,7 +96,7 @@ public class GlobalExceptionHandler {
         log.error("Validation exception: {}", errors);
         return ApiResponse.error(400, "参数校验失败");
     }
-    
+
     /**
      * 处理所有其他异常
      */

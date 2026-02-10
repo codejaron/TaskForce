@@ -1,6 +1,6 @@
-package com.agent.domain.tool;
+package com.agent.api.dto;
 
-import com.agent.domain.tool.ToolInfo;
+import com.agent.common.dto.ToolInfo;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;

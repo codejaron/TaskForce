@@ -1,4 +1,4 @@
-package com.agent.exception;
+package com.agent.common.exception;
 
 /**
  * 会话停止异常

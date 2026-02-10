@@ -1,6 +1,6 @@
 package com.agent.infrastructure.mcp;
 
-import com.agent.domain.tool.ToolInfo;
+import com.agent.common.dto.ToolInfo;
 import com.agent.service.SessionExecutionTracker;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;

@@ -5,7 +5,7 @@ import com.agent.domain.orchestration.dto.PlannerResponseDTO;
 import com.agent.domain.orchestration.model.TaskContext;
 import com.agent.domain.orchestration.model.*;
 import com.agent.domain.orchestration.validator.DAGValidator;
-import com.agent.exception.SessionStoppedException;
+import com.agent.common.exception.SessionStoppedException;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;

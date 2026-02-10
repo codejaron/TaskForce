@@ -1,6 +1,6 @@
 package com.agent.infrastructure.llm;
 
-import com.agent.domain.tool.ToolInfo;
+import com.agent.common.dto.ToolInfo;
 import com.agent.infrastructure.mcp.RemoteMcpClient;
 import com.agent.service.AgentToolService;
 import com.agent.infrastructure.persistence.entity.Agent;
