@@ -8,7 +8,7 @@ import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.domain.orchestration.model.StepResult;
 import com.agent.domain.orchestration.model.StepStatus;
 import com.agent.domain.orchestration.graph.parallel.ParallelExecutor;
-import com.agent.exception.SessionStoppedException;
+import com.agent.common.exception.SessionStoppedException;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.*;

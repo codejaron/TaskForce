@@ -4,7 +4,7 @@ import com.agent.domain.orchestration.model.TaskContext;
 import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.infrastructure.persistence.entity.Message;
 import com.agent.infrastructure.persistence.entity.Agent;
-import com.agent.domain.tool.ToolInfo;
+import com.agent.common.dto.ToolInfo;
 import com.agent.service.AgentToolService;
 import com.agent.infrastructure.mcp.RemoteMcpClient;
 import lombok.RequiredArgsConstructor;

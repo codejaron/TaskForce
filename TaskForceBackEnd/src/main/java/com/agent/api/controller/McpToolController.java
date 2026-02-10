@@ -2,7 +2,7 @@ package com.agent.api.controller;
 
 import com.agent.infrastructure.mcp.RemoteMcpClient;
 import com.agent.api.response.ApiResponse;
-import com.agent.domain.tool.ToolInfo;
+import com.agent.common.dto.ToolInfo;
 import com.agent.service.AgentToolService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

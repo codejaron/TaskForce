@@ -1,6 +1,6 @@
 package com.agent.api.response;
 
-import com.agent.domain.tool.AgentToolDetail;
+import com.agent.api.dto.AgentToolDetail;
 import com.agent.infrastructure.persistence.entity.Agent;
 import lombok.AllArgsConstructor;
 import lombok.Builder;

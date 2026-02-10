@@ -1,4 +1,4 @@
-package com.agent.domain.tool;
+package com.agent.common.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -45,4 +45,3 @@ public class ToolInfo {
      */
     private String inputSchema;
 }
-

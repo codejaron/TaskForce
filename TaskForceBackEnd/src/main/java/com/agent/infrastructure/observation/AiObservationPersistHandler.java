@@ -1,4 +1,4 @@
-package com.agent.infrastructure.config;
+package com.agent.infrastructure.observation;
 
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationHandler;
