@@ -8,9 +8,15 @@ import com.alibaba.cloud.ai.graph.skills.SkillMetadata;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -25,6 +31,9 @@ public class SkillService {
 
     private final SkillMapper skillMapper;
     private final DbFilteredSkillRegistry skillRegistry;
+
+    @Value("${skill.user-directory}")
+    private String userSkillsDirectory;
 
     public SkillService(SkillMapper skillMapper, DbFilteredSkillRegistry skillRegistry) {
         this.skillMapper = skillMapper;
@@ -158,68 +167,221 @@ public class SkillService {
     }
 
     /**
-     * 从 Git 导入 Skill
+     * 从本地文件夹导入 Skill
+     * @param sourcePath 包含 skill 的文件夹绝对路径
      */
     @Transactional
-    public void importFromGit(String gitUrl, String branch, String targetDirectory) {
-        log.info("Importing skill from Git: url={}, branch={}, target={}", gitUrl, branch, targetDirectory);
-
-        if (branch == null || branch.isEmpty()) {
-            branch = "main";
-        }
+    public void importFromFolder(String sourcePath) {
+        log.info("Importing skill from folder: sourcePath={}", sourcePath);
 
         try {
-            // 1. 克隆仓库到临时目录
-            String tempDir = System.getProperty("java.io.tmpdir") + "/skill-import-" + System.currentTimeMillis();
-            cloneRepository(gitUrl, branch, tempDir);
+            // 1. 验证源文件夹存在且可访问
+            validateSourceFolder(sourcePath);
 
-            // 2. 验证 Skill 结构
-            validateSkillStructure(tempDir);
+            // 2. 验证 skill 结构
+            validateSkillStructure(sourcePath);
 
-            // 3. 提取 Skill 名称
-            String skillName = extractSkillName(tempDir);
+            // 3. 提取 skill 名称
+            String skillName = extractSkillName(sourcePath);
 
-            // 4. 移动到目标目录
-            String finalPath = moveToTargetDirectory(tempDir, targetDirectory, skillName);
+            // 4. 复制到目标目录（总是使用复制模式）
+            String finalPath = copyToTargetDirectory(sourcePath, skillName);
 
-            // 5. 录入数据库
+            // 5. 注册到数据库
             registerSkillInDatabase(skillName, finalPath);
 
-            // 6. 重新加载 Skill Registry
+            // 6. 重新加载 skill 注册表
             skillRegistry.reload();
 
-            log.info("Successfully imported skill: {} from {}", skillName, gitUrl);
+            log.info("Successfully imported skill '{}' from folder: {}", skillName, sourcePath);
 
         } catch (Exception e) {
-            log.error("Failed to import skill from Git: {}", gitUrl, e);
+            log.error("Failed to import skill from folder: {}", sourcePath, e);
             throw new RuntimeException("Failed to import skill: " + e.getMessage(), e);
         }
     }
 
     /**
-     * 克隆 Git 仓库
+     * 从上传的文件导入 Skill
+     * @param files 上传的文件（必须包含 SKILL.md）
      */
-    private void cloneRepository(String gitUrl, String branch, String targetPath) {
-        try {
-            ProcessBuilder pb = new ProcessBuilder(
-                    "git", "clone", "--branch", branch, "--depth", "1", gitUrl, targetPath
-            );
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
+    @Transactional
+    public void importFromUpload(MultipartFile[] files) {
+        log.info("Importing skill from upload: {} files", files.length);
 
-            int exitCode = process.waitFor();
-            if (exitCode != 0) {
-                throw new RuntimeException("Git clone failed with exit code: " + exitCode);
+        if (files == null || files.length == 0) {
+            throw new RuntimeException("No files uploaded");
+        }
+
+        try {
+            // 1. 为上传的文件创建临时目录
+            String tempDir = System.getProperty("java.io.tmpdir") + "/skill-upload-" + System.currentTimeMillis();
+            File tempDirFile = new File(tempDir);
+            tempDirFile.mkdirs();
+
+            log.info("Saving uploaded files to temporary directory: {}", tempDir);
+
+            // 2. 保存所有上传的文件到临时目录，保留文件夹结构
+            for (MultipartFile file : files) {
+                String originalFilename = file.getOriginalFilename();
+                if (originalFilename == null || originalFilename.isEmpty()) {
+                    continue;
+                }
+
+                // 处理来自 webkitdirectory 的相对路径
+                // 浏览器发送的路径格式如 "skill-name/SKILL.md" 或 "skill-name/scripts/run.sh"
+                Path filePath = Paths.get(tempDir, originalFilename);
+                File targetFile = filePath.toFile();
+
+                // 如果需要，创建父目录
+                File parentDir = targetFile.getParentFile();
+                if (parentDir != null && !parentDir.exists()) {
+                    parentDir.mkdirs();
+                }
+
+                // 保存文件
+                file.transferTo(targetFile);
+                log.debug("Saved file: {}", originalFilename);
             }
 
-            log.info("Successfully cloned repository to: {}", targetPath);
+            // 3. 查找 skill 根目录
+            // 上传的文件可能在子目录中（例如 temp/skill-name/SKILL.md）
+            String skillRootPath = findSkillRootDirectory(tempDir);
+
+            // 4. 验证 skill 结构
+            validateSkillStructure(skillRootPath);
+
+            // 5. 提取 skill 名称
+            String skillName = extractSkillName(skillRootPath);
+
+            // 6. 复制到目标目录
+            String finalPath = copyToTargetDirectory(skillRootPath, skillName);
+
+            // 7. 注册到数据库
+            registerSkillInDatabase(skillName, finalPath);
+
+            // 8. 重新加载 skill 注册表
+            skillRegistry.reload();
+
+            // 9. 清理临时目录
+            deleteDirectory(tempDirFile);
+
+            log.info("Successfully imported skill '{}' from upload", skillName);
+
         } catch (Exception e) {
-            throw new RuntimeException("Failed to clone repository: " + e.getMessage(), e);
+            log.error("Failed to import skill from upload", e);
+            throw new RuntimeException("Failed to import skill: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 在上传的文件中查找 skill 根目录
+     * 处理文件上传时带有父文件夹的情况
+     */
+    private String findSkillRootDirectory(String tempDir) {
+        File tempDirFile = new File(tempDir);
+
+        // 检查 SKILL.md 是否直接在临时目录中
+        File skillMd = new File(tempDirFile, "SKILL.md");
+        if (skillMd.exists()) {
+            return tempDir;
+        }
+
+        // 检查是否有单个子目录包含 SKILL.md
+        File[] subdirs = tempDirFile.listFiles(File::isDirectory);
+        if (subdirs != null && subdirs.length == 1) {
+            File subdir = subdirs[0];
+            skillMd = new File(subdir, "SKILL.md");
+            if (skillMd.exists()) {
+                return subdir.getAbsolutePath();
+            }
+        }
+
+        // 如果未找到，返回临时目录，让验证失败并给出清晰的错误信息
+        return tempDir;
+    }
+
+    /**
+     * 验证源文件夹存在且可访问
+     * @param sourcePath 源文件夹路径
+     */
+    private void validateSourceFolder(String sourcePath) {
+        File sourceDir = new File(sourcePath);
+
+        // 检查是否存在
+        if (!sourceDir.exists()) {
+            throw new RuntimeException("Source folder does not exist: " + sourcePath);
+        }
+
+        // 检查是否为目录
+        if (!sourceDir.isDirectory()) {
+            throw new RuntimeException("Source path is not a directory: " + sourcePath);
+        }
+
+        // 检查是否可读
+        if (!sourceDir.canRead()) {
+            throw new RuntimeException("Source folder is not readable: " + sourcePath);
+        }
+
+        // 安全检查：验证绝对路径
+        if (!sourceDir.isAbsolute()) {
+            throw new RuntimeException("Source path must be absolute: " + sourcePath);
+        }
+
+        // 安全检查：防止路径遍历攻击
+        try {
+            String canonicalPath = sourceDir.getCanonicalPath();
+            if (canonicalPath.contains("..")) {
+                throw new RuntimeException("Invalid path: path traversal detected");
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to validate path: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 复制文件夹到目标目录
+     * @param sourcePath 源文件夹路径
+     * @param skillName 提取的 skill 名称
+     * @return 导入的 skill 最终路径
+     */
+    private String copyToTargetDirectory(String sourcePath, String skillName) {
+        try {
+            // 使用配置的默认目录
+            String targetDirectory = userSkillsDirectory;
+
+            // 如果目标目录不存在，创建它
+            File targetDir = new File(targetDirectory);
+            if (!targetDir.exists()) {
+                targetDir.mkdirs();
+            }
+
+            // 构建最终路径
+            String finalPath = targetDirectory + "/" + skillName;
+            File finalDir = new File(finalPath);
+
+            // 如果已存在同名 skill，先删除
+            if (finalDir.exists()) {
+                log.info("Deleting existing skill at: {}", finalPath);
+                deleteDirectory(finalDir);
+            }
+
+            // 复制目录
+            File sourceDir = new File(sourcePath);
+            log.info("Copying skill from {} to {}", sourcePath, finalPath);
+            copyDirectory(sourceDir, finalDir);
+
+            return finalPath;
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to copy skill to target directory: " + e.getMessage(), e);
         }
     }
 
     /**
      * 验证 Skill 结构
+     * 必需：SKILL.md
+     * 可选：scripts/, references/, assets/
      */
     private void validateSkillStructure(String skillPath) {
         java.io.File skillDir = new java.io.File(skillPath);
@@ -227,15 +389,10 @@ public class SkillService {
             throw new RuntimeException("Skill directory does not exist: " + skillPath);
         }
 
-        // 检查必需的文件和目录
+        // 检查必需的文件：SKILL.md
         java.io.File skillMd = new java.io.File(skillDir, "SKILL.md");
         if (!skillMd.exists()) {
             throw new RuntimeException("SKILL.md not found in skill directory");
-        }
-
-        java.io.File scriptsDir = new java.io.File(skillDir, "scripts");
-        if (!scriptsDir.exists() || !scriptsDir.isDirectory()) {
-            throw new RuntimeException("scripts/ directory not found in skill directory");
         }
 
         log.info("Skill structure validation passed");
@@ -265,45 +422,6 @@ public class SkillService {
         }
 
         return dirName;
-    }
-
-    /**
-     * 移动到目标目录
-     */
-    private String moveToTargetDirectory(String sourcePath, String targetDirectory, String skillName) {
-        try {
-            // 如果未指定目标目录，使用默认目录
-            if (targetDirectory == null || targetDirectory.isEmpty()) {
-                targetDirectory = System.getProperty("user.home") + "/skills";
-            }
-
-            java.io.File targetDir = new java.io.File(targetDirectory);
-            if (!targetDir.exists()) {
-                targetDir.mkdirs();
-            }
-
-            String finalPath = targetDirectory + "/" + skillName;
-            java.io.File finalDir = new java.io.File(finalPath);
-
-            // 如果目标已存在，先删除
-            if (finalDir.exists()) {
-                deleteDirectory(finalDir);
-            }
-
-            // 移动目录
-            java.io.File sourceDir = new java.io.File(sourcePath);
-            if (!sourceDir.renameTo(finalDir)) {
-                // 如果 rename 失败，尝试复制
-                copyDirectory(sourceDir, finalDir);
-                deleteDirectory(sourceDir);
-            }
-
-            log.info("Moved skill to: {}", finalPath);
-            return finalPath;
-
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to move skill to target directory: " + e.getMessage(), e);
-        }
     }
 
     /**
