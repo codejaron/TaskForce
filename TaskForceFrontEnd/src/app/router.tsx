@@ -3,6 +3,7 @@ import { DashboardPage } from '../pages/Dashboard/ui/DashboardPage';
 import { AgentWorkshopPage } from '../pages/AgentWorkshop/ui/AgentWorkshopPage';
 import { McpMarketplacePage } from '../pages/McpMarketplace/ui/McpMarketplacePage';
 import { A2AStudioPage } from '../pages/A2AStudio/ui/A2AStudioPage';
+import { TeamStudioPage } from '../pages/TeamStudio/ui/TeamStudioPage';
 import { SingleChatPage } from '../pages/SingleChat/ui/SingleChatPage';
 import { LLMProvidersPage } from '../pages/LLMProviders/ui/LLMProvidersPage';
 import { SystemConfigPage } from '../pages/SystemConfig/ui/SystemConfigPage';
@@ -29,6 +30,10 @@ export const router = createBrowserRouter([
       {
         path: 'single-chat',
         element: <SingleChatPage />,
+      },
+      {
+        path: 'team-studio',
+        element: <TeamStudioPage />,
       },
       {
         path: 'a2a',

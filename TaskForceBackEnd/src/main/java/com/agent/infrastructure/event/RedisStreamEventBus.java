@@ -28,10 +28,13 @@ public class RedisStreamEventBus implements EventBus {
 
     private static final String STREAM_KEY_PREFIX = "sse:stream:";
     private static final String CHANNEL_PREFIX = "sse:notify:";
+    private static final String WORKER_STREAM_KEY_PREFIX = "sse:worker:stream:";
+    private static final String WORKER_CHANNEL_PREFIX = "sse:worker:notify:";
     private static final Duration STREAM_TTL = Duration.ofHours(1);
     private static final long STREAM_MAX_LEN = 10000;
 
     private final Map<String, SubscriptionContext> subscriptions = new ConcurrentHashMap<>();
+    private final Map<String, SubscriptionContext> workerSubscriptions = new ConcurrentHashMap<>();
 
     public RedisStreamEventBus(StringRedisTemplate redisTemplate,
                                RedisMessageListenerContainer listenerContainer,
@@ -199,6 +202,95 @@ public class RedisStreamEventBus implements EventBus {
     public boolean hasSubscribers(String sessionId) {
         SubscriptionContext ctx = subscriptions.get(sessionId);
         return ctx != null && ctx.sink.currentSubscriberCount() > 0;
+    }
+
+    @Override
+    public Flux<OrchestrationEvent> subscribeWorker(String sessionId, String instanceId) {
+        return subscribeWorker(sessionId, instanceId, null);
+    }
+
+    public Flux<OrchestrationEvent> subscribeWorker(String sessionId, String instanceId, String lastEventId) {
+        String workerKey = sessionId + ":" + instanceId;
+        String streamKey = WORKER_STREAM_KEY_PREFIX + workerKey;
+        String channel = WORKER_CHANNEL_PREFIX + workerKey;
+
+        // 关闭旧的订阅
+        SubscriptionContext oldCtx = workerSubscriptions.get(workerKey);
+        if (oldCtx != null) {
+            cleanupWorker(workerKey, oldCtx);
+        }
+
+        // 创建新的订阅上下文
+        SubscriptionContext ctx = new SubscriptionContext();
+        ctx.lastReadId = (lastEventId != null && !lastEventId.isEmpty()) ? lastEventId : "0";
+        ctx.channel = channel;
+        workerSubscriptions.put(workerKey, ctx);
+
+        // 1. 读取历史消息
+        readAndEmit(streamKey, ctx);
+
+        // 2. 创建 MessageListener
+        MessageListener listener = (message, pattern) -> {
+            readAndEmit(streamKey, ctx);
+        };
+        ctx.listener = listener;
+
+        // 3. 订阅 Pub/Sub
+        listenerContainer.addMessageListener(listener, new ChannelTopic(channel));
+
+        log.info("[RedisStreamEventBus] Subscribed to worker: sessionId={}, instanceId={}, lastEventId={}",
+                sessionId, instanceId, lastEventId);
+
+        return ctx.sink.asFlux()
+                .doOnCancel(() -> {
+                    log.info("[RedisStreamEventBus] Worker SSE cancelled: sessionId={}, instanceId={}",
+                            sessionId, instanceId);
+                    cleanupWorker(workerKey, ctx);
+                })
+                .doOnTerminate(() -> {
+                    log.info("[RedisStreamEventBus] Worker SSE terminated: sessionId={}, instanceId={}",
+                            sessionId, instanceId);
+                });
+    }
+
+    @Override
+    public void publishToWorker(String sessionId, String instanceId, OrchestrationEvent event) {
+        String workerKey = sessionId + ":" + instanceId;
+        String streamKey = WORKER_STREAM_KEY_PREFIX + workerKey;
+        String channel = WORKER_CHANNEL_PREFIX + workerKey;
+
+        try {
+            Map<String, String> eventMap = new HashMap<>();
+            eventMap.put("eventType", event.getEventType());
+            eventMap.put("eventData", objectMapper.writeValueAsString(event));
+            eventMap.put("eventClass", event.getClass().getName());
+
+            StringRecord record = StringRecord.of(eventMap).withStreamKey(streamKey);
+            RecordId recordId = redisTemplate.opsForStream().add(record);
+
+            redisTemplate.opsForStream().trim(streamKey, STREAM_MAX_LEN, true);
+            redisTemplate.expire(streamKey, STREAM_TTL);
+
+            // Pub/Sub 通知
+            redisTemplate.convertAndSend(channel, recordId.getValue());
+
+            log.debug("[RedisStreamEventBus] Published to worker: sessionId={}, instanceId={}, type={}",
+                    sessionId, instanceId, event.getEventType());
+
+        } catch (Exception e) {
+            log.error("[RedisStreamEventBus] Publish to worker failed: sessionId={}, instanceId={}",
+                    sessionId, instanceId, e);
+        }
+    }
+
+    private void cleanupWorker(String workerKey, SubscriptionContext ctx) {
+        // 移除 MessageListener
+        if (ctx.listener != null && ctx.channel != null) {
+            listenerContainer.removeMessageListener(ctx.listener, new ChannelTopic(ctx.channel));
+        }
+        ctx.close();
+        workerSubscriptions.remove(workerKey, ctx);
+        log.info("[RedisStreamEventBus] Cleaned up worker subscription: workerKey={}", workerKey);
     }
 
     private static class SubscriptionContext {

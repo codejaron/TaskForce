@@ -1,4 +1,4 @@
-import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO, ToolCallDTO } from './types';
+import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO, ToolCallDTO, TeamStartRequest, TeamMessage, TaskBoard, WorkerInstance } from './types';
 
 const API_BASE = '/api';
 
@@ -167,5 +167,30 @@ export const api = {
         }
       }
     },
+  },
+  team: {
+    startTeamSession: (sessionId: string, userGoal: string) =>
+      fetchJson<void>('/v2/team/session/start', {
+        method: 'POST',
+        body: JSON.stringify({ sessionId, userGoal })
+      }),
+    sendMessageToLead: (sessionId: string, message: string) =>
+      fetchJson<void>(`/v2/team/session/${sessionId}/lead/message`, {
+        method: 'POST',
+        body: JSON.stringify({ message })
+      }),
+    sendMessageToWorker: (sessionId: string, instanceId: string, message: string) =>
+      fetchJson<void>(`/v2/team/session/${sessionId}/worker/${instanceId}/message`, {
+        method: 'POST',
+        body: JSON.stringify({ message })
+      }),
+    getTaskBoard: (sessionId: string) =>
+      fetchJson<TaskBoard>(`/v2/team/session/${sessionId}/taskboard`),
+    getWorkers: (sessionId: string) =>
+      fetchJson<WorkerInstance[]>(`/v2/team/session/${sessionId}/workers`),
+    stopTeamSession: (sessionId: string) =>
+      fetchJson<void>(`/v2/team/session/${sessionId}/stop`, {
+        method: 'POST'
+      }),
   }
  };

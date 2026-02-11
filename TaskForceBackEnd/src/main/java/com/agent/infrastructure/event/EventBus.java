@@ -38,4 +38,23 @@ public interface EventBus {
      * @return 是否有订阅者
      */
     boolean hasSubscribers(String sessionId);
+
+    /**
+     * 订阅指定 Worker 的事件流
+     * 前端可以订阅特定 Worker 的流
+     *
+     * @param sessionId  会话 ID
+     * @param instanceId Worker 实例 ID
+     * @return 事件流
+     */
+    Flux<OrchestrationEvent> subscribeWorker(String sessionId, String instanceId);
+
+    /**
+     * 发布事件到指定 Worker 的频道
+     *
+     * @param sessionId  会话 ID
+     * @param instanceId Worker 实例 ID
+     * @param event      事件
+     */
+    void publishToWorker(String sessionId, String instanceId, OrchestrationEvent event);
 }

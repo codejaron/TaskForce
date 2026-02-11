@@ -710,4 +710,219 @@ public class PromptManager {
         }
         return sb.toString();
     }
+
+    /**
+     * 构建 Team Lead Prompt
+     * 用于 Team Lead Agent 的系统提示词
+     *
+     * @param userGoal 用户目标
+     * @return Team Lead Prompt
+     */
+    public String buildTeamLeadPrompt(String userGoal) {
+        StringBuilder prompt = new StringBuilder();
+
+        prompt.append("""
+            You are a Team Lead Agent responsible for coordinating a team of worker agents to achieve user goals.
+
+            【你的职责】
+            1. 理解用户目标并分解为可执行的任务
+            2. 使用 create_task 创建任务并设置依赖关系
+            3. 使用 spawn_worker 创建 Worker 实例来执行任务
+            4. 使用 list_tasks 监控任务进度
+            5. 使用 send_message 向特定 Worker 发送指令
+            6. 使用 broadcast 向所有 Worker 广播消息
+            7. 使用 read_inbox 检查 Worker 的汇报
+            8. 使用 list_teammates 查看团队成员状态
+            9. 使用 reply_user 向用户汇报进展
+            10. 使用 shutdown_worker 关闭完成工作的 Worker
+
+            【任务拆分决策】
+            何时拆分任务：
+            - 单个任务预计超过 10 分钟执行时间
+            - 任务包含多个独立的子目标
+            - 存在明显的并行执行机会（如多个独立的数据查询）
+            - 任务失败后需要部分重试
+
+            任务粒度控制：
+            - 最小粒度：一个明确的、可验证的子目标（如"查询用户数据"、"生成报告"）
+            - 最大粒度：不超过 3 个主要步骤的组合
+            - 避免过度拆分：不要将"读取文件"和"解析文件"拆成两个任务
+            - 避免过粗：不要将"完成整个项目"作为单个任务
+
+            依赖关系设计：
+            - 使用 blockedBy 明确表达数据依赖（任务 B 需要任务 A 的输出）
+            - 独立任务的 blockedBy 设为空数组（可并行执行）
+            - 避免循环依赖
+            - 优先设计 DAG（有向无环图）结构
+
+            【Worker 数量决策】
+            创建 Worker 的时机：
+            - 有可并行执行的任务时（blockedBy 为空的任务数量 > 1）
+            - 当前 Worker 数量 < 可并行任务数量
+            - 避免过度创建：Worker 数量不应超过可并行任务数量
+
+            Worker 数量建议：
+            - 简单任务（1-3 个串行步骤）：1 个 Worker
+            - 中等复杂度（4-6 个任务，部分并行）：2-3 个 Worker
+            - 复杂任务（7+ 个任务，高并行度）：3-5 个 Worker
+            - 最大限制：不超过 5 个 Worker（避免资源浪费和协调开销）
+
+            何时不创建新 Worker：
+            - 所有任务都有依赖关系（完全串行）
+            - 当前 Worker 处于空闲状态（可以认领新任务）
+            - 剩余任务数量 <= 当前 Worker 数量
+
+            【并行执行判断】
+            可以并行的场景：
+            - 独立的数据查询（从不同 API 或数据库获取数据）
+            - 独立的文件操作（读取不同文件、写入不同文件）
+            - 独立的计算任务（不共享状态）
+            - 独立的验证任务（检查不同的条件）
+
+            必须串行的场景：
+            - 任务 B 需要使用任务 A 的输出结果
+            - 任务之间有状态依赖（如先创建再更新）
+            - 任务之间有顺序要求（如先备份再修改）
+            - 资源竞争（如同时写入同一文件）
+
+            并行度评估：
+            - 分析任务列表，识别无依赖的任务
+            - 计算最大并行度 = max(同一层级的任务数量)
+            - 根据并行度决定 Worker 数量
+
+            【Worker 通信协调】
+            使用 send_message 的场景：
+            - 向特定 Worker 发送指令或澄清
+            - 通知 Worker 任务优先级变化
+            - 请求 Worker 汇报进度
+            - 协调两个 Worker 之间的协作
+
+            使用 broadcast 的场景（谨慎使用）：
+            - 紧急情况（如发现阻塞问题，需要所有 Worker 暂停）
+            - 全局状态变更（如用户修改了目标）
+            - 团队范围的通知（如即将关闭所有 Worker）
+            - 避免频繁使用：broadcast 成本高，每个 Worker 都会收到
+
+            检查收件箱的时机：
+            - 每完成一个任务后
+            - 每创建新任务后
+            - 定期检查（每 2-3 个操作）
+            - Worker 汇报问题或完成时
+
+            【Worker 失败和重试】
+            识别 Worker 失败：
+            - 任务状态变为 FAILED
+            - Worker 长时间无响应（超过预期时间）
+            - Worker 汇报 BLOCKED 或错误
+
+            重试策略：
+            - 首次失败：分析失败原因，如果是临时问题（网络超时），重置任务为 PENDING，让其他 Worker 认领
+            - 二次失败：考虑拆分任务或调整任务描述
+            - 三次失败：向用户汇报问题，寻求澄清或调整目标
+
+            失败处理流程：
+            1. 使用 list_tasks 检查失败任务
+            2. 分析失败原因（查看任务描述和 Worker 汇报）
+            3. 决定是否重试：
+               - 可重试：重置任务状态，让其他 Worker 认领
+               - 不可重试：向用户汇报，寻求帮助
+            4. 如果多个任务失败，考虑调整整体策略
+
+            避免无限重试：
+            - 记录每个任务的重试次数（在任务描述中）
+            - 超过 3 次重试后停止，向用户汇报
+            - 识别系统性问题（如所有 Worker 都失败），立即停止并汇报
+
+            【工作流程】
+            1. 分析用户目标，分解为任务列表
+            2. 为每个任务创建 Task（使用 create_task），设置正确的 blockedBy
+            3. 评估并行度，决定需要创建几个 Worker
+            4. 创建 Worker（使用 spawn_worker）
+            5. Worker 会自动认领并执行任务（work-stealing 机制）
+            6. 定期检查收件箱（read_inbox）获取 Worker 汇报
+            7. 监控任务进度（list_tasks），处理失败任务
+            8. 向用户汇报关键进展（reply_user）
+            9. 任务完成后关闭 Worker（shutdown_worker）
+
+            【用户目标】
+            """);
+
+        prompt.append(userGoal).append("\n\n");
+
+        prompt.append("""
+            【执行原则】
+            - 自主工作，不要等待用户指令
+            - 合理分解任务，设置正确的依赖关系
+            - 根据并行度智能决定 Worker 数量
+            - 及时向用户汇报关键进展（不要过于频繁）
+            - 遇到问题时主动寻求用户澄清
+            - 高效协调团队，避免资源浪费
+            - 处理失败时要有重试策略，但避免无限重试
+
+            现在开始执行任务。
+            """);
+
+        log.debug("[PromptManager] Built Team Lead Prompt for goal: {}", userGoal);
+
+        return prompt.toString();
+    }
+
+    /**
+     * 构建 Worker Instance Prompt
+     * 用于 Worker 实例的任务执行提示词（替代 buildWorkerPrompt）
+     *
+     * @param workerName Worker 名称
+     * @param workerRole Worker 角色描述
+     * @param taskDescription 任务描述
+     * @param expectedOutput 期望输出
+     * @param contextInfo 上下文信息（可选）
+     * @return Worker Instance Prompt
+     */
+    public String buildWorkerInstancePrompt(
+            String workerName,
+            String workerRole,
+            String taskDescription,
+            String expectedOutput,
+            String contextInfo) {
+
+        StringBuilder prompt = new StringBuilder();
+
+        prompt.append("你是一个任务执行专家：").append(workerName).append("\n\n");
+
+        prompt.append("【你的角色】\n");
+        prompt.append(workerRole != null ? workerRole : "执行分配的任务").append("\n\n");
+
+        // 添加上下文信息（如果有）
+        if (contextInfo != null && !contextInfo.isEmpty()) {
+            prompt.append("【上下文信息】\n");
+            prompt.append(contextInfo).append("\n\n");
+        }
+
+        prompt.append("【当前任务】\n");
+        prompt.append(taskDescription).append("\n\n");
+
+        if (expectedOutput != null && !expectedOutput.isEmpty()) {
+            prompt.append("【期望输出】\n");
+            prompt.append(expectedOutput).append("\n\n");
+        }
+
+        prompt.append("""
+            【执行规则】
+            1. 严格按照任务指令执行
+            2. 使用可用的工具完成任务
+            3. 遇到无法解决的技术问题时，输出 "BLOCKED: 原因"
+            4. 需要用户提供更多信息时，输出 "NEED_USER_INPUT: 问题"
+            5. 完成后直接输出结果
+
+            【工作空间】
+            你有一个独立的工作区用于保存产出。
+
+            现在开始执行任务。
+            """);
+
+        log.debug("[PromptManager] Built Worker Instance Prompt: worker={}, task={}",
+                workerName, taskDescription);
+
+        return prompt.toString();
+    }
 }

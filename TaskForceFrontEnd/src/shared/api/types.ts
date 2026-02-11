@@ -233,3 +233,41 @@ export interface ToolCallDTO {
   stepId?: string;
   sequence: number;
 }
+
+// ============= Team API 相关类型 =============
+
+export interface TeamStartRequest {
+  sessionId: string;
+  userGoal: string;
+}
+
+export interface TeamMessage {
+  message: string;
+}
+
+export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+
+export interface Task {
+  id: string;
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  assignedTo?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface TaskBoard {
+  sessionId: string;
+  tasks: Task[];
+}
+
+export type WorkerStatus = 'IDLE' | 'BUSY' | 'ERROR' | 'STOPPED';
+
+export interface WorkerInstance {
+  instanceId: string;
+  agentName: string;
+  status: WorkerStatus;
+  currentTask?: string;
+  createdAt: string;
+}

@@ -1,5 +1,8 @@
 package com.agent.infrastructure.agent;
 
+import com.agent.domain.team.lead.TeamLeadToolProvider;
+import com.agent.domain.worker.execution.WorkerToolProvider;
+import com.agent.domain.worker.hook.InboxCheckHook;
 import com.agent.infrastructure.agent.hook.ModelCallLimitHook;
 import com.agent.infrastructure.agent.interceptor.EventPublishingToolInterceptor;
 import com.agent.infrastructure.event.EventBus;
@@ -8,6 +11,7 @@ import com.agent.infrastructure.mcp.RemoteMcpClient;
 import com.agent.infrastructure.memory.DbChatMemory;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.persistence.mapper.AgentMapper;
+import com.agent.infrastructure.persistence.redis.RedisInboxRepository;
 import com.agent.service.AgentToolService;
 import com.agent.service.SessionService;
 import com.agent.service.ToolCallService;
@@ -50,6 +54,9 @@ public class ReactAgentFactory {
     private final ToolCallService toolCallService;
     private final DbChatMemory dbChatMemory;
     private final SessionService sessionService;
+    private final RedisInboxRepository redisInboxRepository;
+    private final TeamLeadToolProvider teamLeadToolProvider;
+    private final WorkerToolProvider workerToolProvider;
 
     public ReactAgentFactory(
             AgentMapper agentMapper,
@@ -61,6 +68,9 @@ public class ReactAgentFactory {
             @Lazy ToolCallService toolCallService,
             DbChatMemory dbChatMemory,
             @Lazy SessionService sessionService,
+            RedisInboxRepository redisInboxRepository,
+            @Lazy TeamLeadToolProvider teamLeadToolProvider,
+            @Lazy WorkerToolProvider workerToolProvider,
             @org.springframework.beans.factory.annotation.Autowired(required = false)
             com.alibaba.cloud.ai.graph.agent.hook.skills.SkillsAgentHook skillsAgentHook) {
         this.agentMapper = agentMapper;
@@ -73,6 +83,9 @@ public class ReactAgentFactory {
         this.toolCallService = toolCallService;
         this.dbChatMemory = dbChatMemory;
         this.sessionService = sessionService;
+        this.redisInboxRepository = redisInboxRepository;
+        this.teamLeadToolProvider = teamLeadToolProvider;
+        this.workerToolProvider = workerToolProvider;
     }
 
     /**
@@ -84,10 +97,11 @@ public class ReactAgentFactory {
      * @param sessionId   会话 ID
      * @param stepId      步骤 ID
      * @param stepIndex   步骤索引
+     * @param instanceId  Worker 实例 ID（可选，用于 InboxCheckHook）
      * @return ReactAgent 实例
      */
     public ReactAgent buildWorkerReactAgent(Long agentId, String instruction, int maxModelCalls,
-                                           String sessionId, String stepId, Integer stepIndex) {
+                                           String sessionId, String stepId, Integer stepIndex, String instanceId) {
         // 1. 加载 Agent 配置
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
@@ -116,6 +130,13 @@ public class ReactAgentFactory {
         // 4. 加载工具（不再包装，由 interceptor 统一处理）
         List<ToolCallback> tools = loadTools(agentId, agent.getName());
 
+        // 4.1 添加 Worker 通信工具
+        if (instanceId != null) {
+            List<ToolCallback> workerTools = workerToolProvider.getWorkerTools();
+            tools.addAll(workerTools);
+            log.info("  Added {} Worker communication tools", workerTools.size());
+        }
+
         // 5. 创建 Hooks
         List<Hook> hooks = new ArrayList<>();
 
@@ -123,7 +144,14 @@ public class ReactAgentFactory {
         ModelCallLimitHook limitHook = new ModelCallLimitHook(maxModelCalls);
         hooks.add(limitHook);
 
-        // 5.2 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
+        // 5.2 添加 InboxCheckHook（检查 Worker 收件箱）
+        if (instanceId != null) {
+            InboxCheckHook inboxHook = new InboxCheckHook(redisInboxRepository, sessionId, instanceId);
+            hooks.add(inboxHook);
+            log.info("  Added InboxCheckHook for worker instance: {}", instanceId);
+        }
+
+        // 5.3 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
         if (skillsAgentHook != null) {
             hooks.add(skillsAgentHook);
             log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());
@@ -278,6 +306,80 @@ public class ReactAgentFactory {
         ReactAgent reactAgent = builder.build();
 
         log.info("[ReactAgentFactory] ChatReactAgent built successfully: {}", agent.getName());
+        return reactAgent;
+    }
+
+    /**
+     * 为 Team Lead 构建 ReactAgent
+     *
+     * @param agentId       Agent ID
+     * @param sessionId     会话 ID
+     * @param systemPrompt  系统提示词
+     * @param maxModelCalls 最大模型调用次数
+     * @return ReactAgent 实例
+     */
+    public ReactAgent buildTeamLeadAgent(Long agentId, String sessionId, String systemPrompt, int maxModelCalls) {
+        // 1. 加载 Agent 配置
+        Agent agent = agentMapper.selectById(agentId);
+        if (agent == null) {
+            throw new RuntimeException("Agent not found: " + agentId);
+        }
+
+        log.info("[ReactAgentFactory] Building ReactAgent for Team Lead: {} (id: {})", agent.getName(), agentId);
+
+        // 2. 创建 ChatModel
+        if (agent.getProviderId() == null) {
+            throw new IllegalArgumentException(
+                "Agent must have a provider configured. Please set providerId for agent: " + agent.getId()
+            );
+        }
+
+        String overrideModel = agent.getModel();
+        ChatModel chatModel = chatModelFactory.createChatModel(agent.getProviderId(), overrideModel);
+        log.info("  Using LLM Provider: {} with model: {}", agent.getProviderId(), overrideModel);
+
+        // 3. 配置模型参数
+        OpenAiChatOptions chatOptions = OpenAiChatOptions.builder()
+                .temperature(agent.getTemperature().doubleValue())
+                .maxTokens(agent.getMaxTokens())
+                .build();
+
+        // 4. 加载 Lead 内部工具（不是 MCP 工具）
+        List<ToolCallback> leadTools = teamLeadToolProvider.getLeadTools();
+        log.info("  Loaded {} Lead internal tools", leadTools.size());
+
+        // 5. 创建 Hooks
+        List<Hook> hooks = new ArrayList<>();
+
+        // 5.1 添加模型调用限制 Hook
+        ModelCallLimitHook limitHook = new ModelCallLimitHook(maxModelCalls);
+        hooks.add(limitHook);
+
+        // 5.2 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
+        if (skillsAgentHook != null) {
+            hooks.add(skillsAgentHook);
+            log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());
+        }
+
+        // 6. 创建 Interceptor（统一处理工具调用事件发布和持久化）
+        AtomicInteger sequenceCounter = new AtomicInteger(0);
+        EventPublishingToolInterceptor toolInterceptor = new EventPublishingToolInterceptor(
+                sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter
+        );
+
+        // 7. 构建 ReactAgent
+        ReactAgent reactAgent = ReactAgent.builder()
+                .name("TeamLead-" + agent.getName())
+                .model(chatModel)
+                .chatOptions(chatOptions)
+                .systemPrompt(systemPrompt)
+                .tools(leadTools)
+                .hooks(hooks)
+                .interceptors(toolInterceptor)
+                .saver(checkpointSaver)
+                .build();
+
+        log.info("[ReactAgentFactory] Team Lead ReactAgent built successfully: {}", agent.getName());
         return reactAgent;
     }
 }
