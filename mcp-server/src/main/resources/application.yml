@@ -6,7 +6,13 @@ spring:
     name: mcp-server
   profiles:
     active: local
-  
+
+  # ========== Spring AI MCP Client 配置 ==========
+  ai:
+    mcp:
+      client:
+        enabled: false  # 禁用声明式自动配置，使用数据库动态管理
+
   # ========== Nacos 服务发现 ==========
   cloud:
     nacos:

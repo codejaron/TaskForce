@@ -3,7 +3,7 @@ package com.agent.mcpserver.controller;
 import com.agent.mcpserver.dto.ApiResponse;
 import com.agent.mcpserver.dto.ToolCallRequest;
 import com.agent.mcpserver.dto.ToolCallResult;
-import com.agent.mcpserver.dto.ToolDefinition;
+import com.agent.mcpserver.dto.ToolVO;
 import com.agent.mcpserver.service.ToolRouter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,9 +30,9 @@ public class ToolController {
      * GET /tools
      */
     @GetMapping
-    public ApiResponse<List<ToolDefinition>> listTools() {
+    public ApiResponse<List<ToolVO>> listTools() {
         try {
-            List<ToolDefinition> tools = toolRouter.listAllTools();
+            List<ToolVO> tools = toolRouter.listAllTools();
             return ApiResponse.success(tools);
         } catch (Exception e) {
             log.error("[ToolController] List tools failed", e);
@@ -45,7 +45,7 @@ public class ToolController {
      * GET /tools/{name}
      */
     @GetMapping("/{name}")
-    public ApiResponse<ToolDefinition> getTool(@PathVariable String name) {
+    public ApiResponse<ToolVO> getTool(@PathVariable String name) {
         try {
             return toolRouter.getTool(name)
                     .map(ApiResponse::success)
@@ -106,7 +106,7 @@ public class ToolController {
     public ApiResponse<Map<String, Object>> getStats() {
         try {
             List<ToolRouter.ProviderInfo> providers = toolRouter.listProviders();
-            List<ToolDefinition> tools = toolRouter.listAllTools();
+            List<ToolVO> tools = toolRouter.listAllTools();
 
             Map<String, Object> stats = Map.of(
                     "providerCount", providers.size(),

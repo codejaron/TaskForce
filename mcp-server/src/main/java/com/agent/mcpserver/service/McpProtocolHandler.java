@@ -1,7 +1,7 @@
 package com.agent.mcpserver.service;
 
 import com.agent.mcpserver.dto.ToolCallResult;
-import com.agent.mcpserver.dto.ToolDefinition;
+import com.agent.mcpserver.dto.ToolVO;
 import com.agent.mcpserver.protocol.JsonRpcRequest;
 import com.agent.mcpserver.protocol.JsonRpcResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -99,11 +99,11 @@ public class McpProtocolHandler {
      * 处理 tools/list 请求
      */
     private Map<String, Object> handleToolsList(Map<String, Object> params) {
-        List<ToolDefinition> tools = toolRouter.listAllTools();
+        List<ToolVO> tools = toolRouter.listAllTools();
 
         // 转换为 MCP 协议格式
         List<Map<String, Object>> toolList = new ArrayList<>();
-        for (ToolDefinition tool : tools) {
+        for (ToolVO tool : tools) {
             Map<String, Object> toolMap = new LinkedHashMap<>();
             toolMap.put("name", tool.getName());
             toolMap.put("description", tool.getDescription() != null ? tool.getDescription() : "");
