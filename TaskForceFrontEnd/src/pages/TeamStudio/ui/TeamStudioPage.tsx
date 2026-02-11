@@ -46,15 +46,6 @@ export const TeamStudioPage: React.FC = () => {
     return roleType === 'WORKER';
   });
 
-  // Find the lead agent (will be automatically added to sessions)
-  const leadAgent = agents.find(agent => {
-    const roleType = typeof (agent as { roleType?: unknown }).roleType === 'string'
-      ? (agent as { roleType?: string }).roleType
-      : 'WORKER';
-    return roleType === 'LEAD';
-  });
-  const leadAgentId = leadAgent?.id;
-
   // Load sessions and agents on mount
   useEffect(() => {
     fetchSessions();
@@ -69,10 +60,8 @@ export const TeamStudioPage: React.FC = () => {
 
     setIsCreating(true);
     try {
-      // Automatically add lead agent to the beginning of agent list if it exists
-      const agentIdsToSend = leadAgentId
-        ? [parseInt(leadAgentId), ...selectedAgentIds.map(id => parseInt(id))]
-        : selectedAgentIds.map(id => parseInt(id));
+      // Lead agent is automatically added by backend (PLANNER role)
+      const agentIdsToSend = selectedAgentIds.map(id => parseInt(id));
 
       await createSession(newSessionName, agentIdsToSend);
       setShowCreateModal(false);
@@ -294,7 +283,7 @@ export const TeamStudioPage: React.FC = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Select Agents *
-                  <span className="text-xs text-gray-500 ml-2">(Built-in Lead Agent included • min 1)</span>
+                  <span className="text-xs text-gray-500 ml-2">(Lead Agent auto-added • min 1)</span>
                 </label>
                 <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto bg-gray-50 border border-gray-200 rounded-xl p-3">
                   {workerAgents.length === 0 ? (
