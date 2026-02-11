@@ -1,9 +1,8 @@
 package com.agent.domain.team.lead.tools;
 
 import com.agent.infrastructure.event.EventBus;
-import com.agent.infrastructure.event.OrchestrationEvent;
+import com.agent.infrastructure.event.events.LeadMessageEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
@@ -61,7 +60,7 @@ public class ReplyUserTool implements ToolCallback {
             String message = (String) args.get("message");
 
             // 创建用户回复事件
-            UserReplyEvent event = new UserReplyEvent(sessionId, message);
+            LeadMessageEvent event = new LeadMessageEvent(sessionId, message);
             eventBus.publish(sessionId, event);
 
             log.info("[ReplyUserTool] Sent reply to user: sessionId={}", sessionId);
@@ -82,23 +81,5 @@ public class ReplyUserTool implements ToolCallback {
             }
         }
         throw new IllegalArgumentException("sessionId not found in tool context");
-    }
-
-    /**
-     * 用户回复事件
-     */
-    @Getter
-    public static class UserReplyEvent extends OrchestrationEvent {
-        private final String message;
-
-        public UserReplyEvent(String sessionId, String message) {
-            super(sessionId);
-            this.message = message;
-        }
-
-        @Override
-        public String getEventType() {
-            return "USER_REPLY";
-        }
     }
 }

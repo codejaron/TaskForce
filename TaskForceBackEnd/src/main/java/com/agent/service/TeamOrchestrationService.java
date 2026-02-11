@@ -9,6 +9,9 @@ import com.agent.domain.worker.service.WorkerInstanceManager;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.OrchestrationEvent;
+import com.agent.infrastructure.event.events.ErrorEvent;
+import com.agent.infrastructure.event.events.TeamCreatedEvent;
+import com.agent.infrastructure.event.events.TeamStartedEvent;
 import com.agent.infrastructure.llm.ChatModelFactory;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.persistence.mapper.AgentMapper;
@@ -56,98 +59,70 @@ public class TeamOrchestrationService {
      *
      * @param sessionId 会话 ID
      * @param userGoal  用户目标
-     * @return SSE 事件流
      */
-    public Flux<ServerSentEvent<String>> startTeamSession(String sessionId, String userGoal) {
+    public void startTeamSession(String sessionId, String userGoal) {
         log.info("[TeamOrchestrationService] Starting team session: sessionId={}, goal={}",
                 sessionId, userGoal);
 
-        return Flux.defer(() -> {
-            try {
-                // 1. 获取 Lead Agent 配置
-                Agent leadAgent = getLeadAgent();
-                if (leadAgent == null) {
-                    return Flux.error(new IllegalArgumentException("Lead Agent not found with roleType=LEAD"));
-                }
-
-                // 2. 创建团队（如果不存在）
-                try {
-                    var existingTeam = teamService.getTeamBySessionId(sessionId);
-                    if (existingTeam == null) {
-                        String leadInstanceId = sessionId + "_lead";
-                        teamService.createTeam(sessionId, leadInstanceId);
-                        log.info("[TeamOrchestrationService] Team created: sessionId={}", sessionId);
-                    }
-                } catch (Exception e) {
-                    log.warn("[TeamOrchestrationService] Team creation skipped or failed: {}", e.getMessage());
-                }
-
-                // 3. 创建 ChatModel
-                ChatModel chatModel = chatModelFactory.createChatModel(
-                        leadAgent.getProviderId(),
-                        leadAgent.getModel()
-                );
-
-                // 4. 配置模型参数
-                OpenAiChatOptions chatOptions = OpenAiChatOptions.builder()
-                        .temperature(leadAgent.getTemperature().doubleValue())
-                        .maxTokens(leadAgent.getMaxTokens())
-                        .build();
-
-                // 5. 构建 Lead Prompt
-                String leadPrompt = promptManager.buildTeamLeadPrompt(userGoal);
-
-                // 6. 启动 Team Lead Agent
-                Disposable leadDisposable = teamLeadAgent.startLeadLoop(
-                        sessionId,
-                        leadAgent.getId(),
-                        leadPrompt,
-                        chatModel,
-                        chatOptions
-                );
-
-                log.info("[TeamOrchestrationService] Team Lead started: sessionId={}", sessionId);
-
-                // 7. 订阅 EventBus 获取所有编排事件
-                Flux<ServerSentEvent<String>> eventFlux = eventBus.subscribe(sessionId)
-                        .map(event -> {
-                            try {
-                                return ServerSentEvent.<String>builder()
-                                        .event(event.getEventType())
-                                        .data(serializeEvent(event))
-                                        .build();
-                            } catch (Exception e) {
-                                log.error("[TeamOrchestrationService] Failed to serialize event", e);
-                                return ServerSentEvent.<String>builder()
-                                        .event("error")
-                                        .data("{\"error\":\"Failed to serialize event\"}")
-                                        .build();
-                            }
-                        })
-                        .timeout(Duration.ofMinutes(30))
-                        .doOnCancel(() -> {
-                            log.info("[TeamOrchestrationService] Client disconnected: sessionId={}", sessionId);
-                            stopSession(sessionId);
-                        })
-                        .doOnError(e -> {
-                            log.error("[TeamOrchestrationService] Event stream error: sessionId={}", sessionId, e);
-                            stopSession(sessionId);
-                        });
-
-                // 8. 发送启动事件
-                return Flux.concat(
-                        Flux.just(ServerSentEvent.<String>builder()
-                                .event("team_started")
-                                .data("{\"sessionId\":\"" + sessionId + "\",\"status\":\"running\"}")
-                                .build()),
-                        eventFlux
-                );
-
-            } catch (Exception e) {
-                log.error("[TeamOrchestrationService] Failed to start team session: sessionId={}", sessionId, e);
-                return Flux.error(e);
+        try {
+            // 1. 获取 Lead Agent 配置
+            Agent leadAgent = getLeadAgent();
+            if (leadAgent == null) {
+                eventBus.publish(sessionId, new ErrorEvent(sessionId, "Lead Agent not found with roleType=LEAD"));
+                return;
             }
-        });
+
+            // 2. 创建团队（如果不存在）
+            String leadInstanceId = sessionId + "_lead";
+            String teamId = null;
+            try {
+                var existingTeam = teamService.getTeamBySessionId(sessionId);
+                if (existingTeam == null) {
+                    var team = teamService.createTeam(sessionId, leadInstanceId);
+                    teamId = team.getTeamId();
+                    // 发送 team_created 事件
+                    eventBus.publish(sessionId, new TeamCreatedEvent(sessionId, teamId, leadInstanceId));
+                    log.info("[TeamOrchestrationService] Team created: sessionId={}, teamId={}", sessionId, teamId);
+                } else {
+                    teamId = existingTeam.getTeamId();
+                }
+            } catch (Exception e) {
+                log.warn("[TeamOrchestrationService] Team creation skipped or failed: {}", e.getMessage());
+            }
+
+            // 3. 发送 team_started 事件
+            eventBus.publish(sessionId, new TeamStartedEvent(sessionId, teamId));
+
+            // 4. 创建 ChatModel
+            ChatModel chatModel = chatModelFactory.createChatModel(
+                    leadAgent.getProviderId(),
+                    leadAgent.getModel()
+            );
+
+            // 5. 配置模型参数
+            OpenAiChatOptions chatOptions = OpenAiChatOptions.builder()
+                    .temperature(leadAgent.getTemperature().doubleValue())
+                    .maxTokens(leadAgent.getMaxTokens())
+                    .build();
+
+            // 6. 构建 Lead Prompt
+            String leadPrompt = promptManager.buildTeamLeadPrompt(userGoal);
+
+            // 7. 启动 Team Lead Agent
+            Disposable leadDisposable = teamLeadAgent.startLeadLoop(
+                    sessionId,
+                    leadAgent.getId(),
+                    leadPrompt,
+                    chatModel,
+                    chatOptions
+            );
+
+            log.info("[TeamOrchestrationService] Team Lead started: sessionId={}", sessionId);
+
+        } catch (Exception e) {
+            log.error("[TeamOrchestrationService] Failed to start team session: sessionId={}", sessionId, e);
+            eventBus.publish(sessionId, new ErrorEvent(sessionId, e.getMessage()));
+        }
     }
 
     /**

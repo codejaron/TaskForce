@@ -95,9 +95,31 @@ public class TaskBoardService {
     }
 
     /**
-     * 认领任务（原子操作）
-     * 使用 Lua 脚本确保只有一个 Worker 能成功认领
+     * Leader 指派任务给 Worker（替代原来的 claimTask）
+     * 在 spawn Worker 时调用，不需要 Lua 脚本，因为不存在竞争
      */
+    public void assignTask(String sessionId, int taskId, String ownerId) {
+        Task task = taskBoardRepository.findById(sessionId, taskId)
+                .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
+
+        if (task.getStatus() != TaskStatus.PENDING) {
+            throw new IllegalStateException(
+                    "Task must be PENDING to assign, current status: " + task.getStatus());
+        }
+
+        task.assign(ownerId);
+        taskBoardRepository.save(task);
+
+        // 发布 TaskClaimedEvent（保持事件名称兼容性）
+        eventBus.publish(sessionId, new TaskClaimedEvent(sessionId, taskId, ownerId));
+        log.info("Task assigned: taskId={}, owner={}", taskId, ownerId);
+    }
+
+    /**
+     * 认领任务（原子操作）
+     * @deprecated 使用 assignTask() 替代。Leader 分配模式下不需要竞争认领。
+     */
+    @Deprecated
     public boolean claimTask(String sessionId, int taskId, String owner) {
         try {
             String key = KEY_PREFIX + sessionId;
@@ -113,7 +135,7 @@ public class TaskBoardService {
                 "if task.status ~= 'PENDING' then " +
                 "  return 'INVALID_STATUS' " +
                 "end " +
-                "if task.owner and task.owner ~= '' then " +
+                "if task.owner ~= cjson.null and task.owner ~= nil and task.owner ~= '' then " +
                 "  return 'ALREADY_CLAIMED' " +
                 "end " +
                 "task.status = 'CLAIMED' " +
@@ -152,8 +174,8 @@ public class TaskBoardService {
         Task task = taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
 
-        if (task.getStatus() != TaskStatus.CLAIMED) {
-            throw new IllegalStateException("Task must be claimed before starting: " + taskId);
+        if (task.getStatus() != TaskStatus.ASSIGNED) {
+            throw new IllegalStateException("Task must be ASSIGNED before starting: " + taskId);
         }
 
         task.start();

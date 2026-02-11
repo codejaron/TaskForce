@@ -20,23 +20,25 @@ import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.Disposable;
 
-import java.util.Comparator;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Worker 自主循环
- * 持续运行，检查 Inbox、认领任务、执行任务
- * 支持 Work-stealing：空闲时自动认领可用任务
+ * Worker 自主循环（模式一：Leader 指派）
+ *
+ * 流程：
+ * 1. 启动后检查 assignedTaskId
+ * 2. 如果任务被阻塞（blockedBy 非空），进入等待模式，轮询直到解锁
+ * 3. 任务可执行时，认领并执行
+ * 4. 执行完成后通知 Leader，进入 IDLE 等待新指令
+ * 5. 通过 Inbox 接收 Leader 的新任务指派、消息或 shutdown 指令
  */
 @Slf4j
 public class WorkerLoop implements Runnable {
 
-    private static final int POLL_INTERVAL_MS = 2000; // 2秒轮询间隔
+    private static final int POLL_INTERVAL_MS = 2000;
     private static final int MAX_REACT_ITERATIONS = 20;
-    private static final int MAX_CLAIM_ATTEMPTS = 5; // 最多尝试认领5个任务
-    private static final int STARTUP_JITTER_MS = 500; // 启动时随机延迟，避免惊群效应
+    private static final int BLOCKED_CHECK_INTERVAL_MS = 3000; // 等待阻塞解除的检查间隔
 
     private final WorkerInstance workerInstance;
     private final WorkerInstanceRepository workerRepository;
@@ -47,7 +49,6 @@ public class WorkerLoop implements Runnable {
     private final InboxService inboxService;
     private final ContextAssembler contextAssembler;
     private final String initialPrompt;
-    private final Random random = new Random();
 
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
     private volatile Thread loopThread;
@@ -76,29 +77,29 @@ public class WorkerLoop implements Runnable {
     @Override
     public void run() {
         loopThread = Thread.currentThread();
-        log.info("[WorkerLoop] Starting worker loop: instanceId={}, name={}",
-                workerInstance.getInstanceId(), workerInstance.getName());
+        log.info("[WorkerLoop] Starting worker loop: instanceId={}, name={}, assignedTaskId={}",
+                workerInstance.getInstanceId(), workerInstance.getName(),
+                workerInstance.getAssignedTaskId());
 
         try {
-            // 启动时添加随机延迟，避免多个 Worker 同时启动时的惊群效应
-            int jitter = random.nextInt(STARTUP_JITTER_MS);
-            Thread.sleep(jitter);
-            log.debug("[WorkerLoop] Applied startup jitter: {}ms", jitter);
+            // ===== 阶段一：执行初始指派任务 =====
+            int assignedTaskId = workerInstance.getAssignedTaskId();
+            if (assignedTaskId != 0) {
+                executeAssignedTask(assignedTaskId);
+            }
 
+            // ===== 阶段二：进入待命循环，等待 Leader 指令 =====
             while (!shutdown.get() && !Thread.currentThread().isInterrupted()) {
                 try {
-                    // 1. 检查 Inbox
+                    // 检查 Inbox，处理新指派、消息或 shutdown
                     checkInbox();
 
-                    // 2. 如果空闲，尝试认领任务（work-stealing）
-                    if (workerInstance.isIdle()) {
-                        Task task = claimNextTask();
-                        if (task != null) {
-                            executeTask(task);
-                        }
+                    // 如果 Leader 通过 inbox 指派了新任务，执行它
+                    int newTaskId = workerInstance.getAssignedTaskId();
+                    if (newTaskId != 0) {
+                        executeAssignedTask(newTaskId);
                     }
 
-                    // 3. 等待间隔
                     Thread.sleep(POLL_INTERVAL_MS);
 
                 } catch (InterruptedException e) {
@@ -108,17 +109,16 @@ public class WorkerLoop implements Runnable {
                 } catch (Exception e) {
                     log.error("[WorkerLoop] Error in worker loop: instanceId={}",
                             workerInstance.getInstanceId(), e);
-                    // 继续循环，不因单次错误而退出
                 }
             }
         } catch (InterruptedException e) {
-            log.info("[WorkerLoop] Worker loop interrupted during startup: instanceId={}",
+            log.info("[WorkerLoop] Worker interrupted: instanceId={}",
                     workerInstance.getInstanceId());
         } finally {
-            // 清理资源
             workerInstance.shutdown();
             workerRepository.save(workerInstance);
-            log.info("[WorkerLoop] Worker loop stopped: instanceId={}", workerInstance.getInstanceId());
+            log.info("[WorkerLoop] Worker loop stopped: instanceId={}",
+                    workerInstance.getInstanceId());
         }
     }
 
@@ -161,10 +161,21 @@ public class WorkerLoop implements Runnable {
                 requestShutdown();
                 break;
 
+            case "ASSIGN_TASK":
+                // Leader 通过 inbox 指派新任务
+                try {
+                    int newTaskId = Integer.parseInt(message.getText());
+                    log.info("[WorkerLoop] Received task assignment: taskId={}", newTaskId);
+                    workerInstance.assignTask(newTaskId);
+                    workerRepository.save(workerInstance);
+                } catch (NumberFormatException e) {
+                    log.error("[WorkerLoop] Invalid task ID in ASSIGN_TASK message: {}", message.getText());
+                }
+                break;
+
             case "USER_MESSAGE":
             case "INSTRUCTION":
                 log.info("[WorkerLoop] Received instruction: {}", message.getText());
-                // 指令消息会通过 InboxCheckHook 自动注入到 ReAct 循环中
                 break;
 
             default:
@@ -174,61 +185,76 @@ public class WorkerLoop implements Runnable {
     }
 
     /**
-     * 认领下一个可执行任务（work-stealing）
-     * 按 taskId 顺序尝试多个任务，直到成功认领一个
+     * 执行指派的任务
+     * 处理阻塞等待 → 验证 owner → 执行 → 完成的完整流程
      */
-    private Task claimNextTask() {
-        try {
-            // 1. 获取所有可用任务（PENDING 且无阻塞）
-            List<Task> availableTasks = taskBoardService.getAvailableTasks(workerInstance.getSessionId());
+    private void executeAssignedTask(int taskId) throws InterruptedException {
+        log.info("[WorkerLoop] Preparing to execute assigned task: taskId={}, instanceId={}",
+                taskId, workerInstance.getInstanceId());
 
-            if (availableTasks.isEmpty()) {
-                log.debug("[WorkerLoop] No available tasks to claim: instanceId={}",
-                        workerInstance.getInstanceId());
+        // 1. 等待任务解除阻塞
+        Task task = waitForTaskUnblocked(taskId);
+        if (task == null) {
+            // shutdown 或任务不存在
+            return;
+        }
+
+        // 2. 任务已经在 spawn 时被 assign 给了这个 Worker
+        //    不需要再认领，直接验证一下 owner 是自己
+        if (!workerInstance.getInstanceId().equals(task.getOwner())) {
+            log.error("[WorkerLoop] Task owner mismatch: taskId={}, expected={}, actual={}",
+                    taskId, workerInstance.getInstanceId(), task.getOwner());
+            workerInstance.clearAssignedTask();
+            workerRepository.save(workerInstance);
+            return;
+        }
+
+        log.info("[WorkerLoop] Starting assigned task: taskId={}, subject={}",
+                task.getTaskId(), task.getSubject());
+
+        // 3. 直接执行
+        executeTask(task);
+
+        // 4. 清除指派标记
+        workerInstance.clearAssignedTask();
+        workerRepository.save(workerInstance);
+    }
+
+    /**
+     * 等待任务的 blockedBy 全部完成
+     * 轮询检查 + 同时检查 Inbox（以便接收 shutdown 等指令）
+     */
+    private Task waitForTaskUnblocked(int taskId) throws InterruptedException {
+        while (!shutdown.get() && !Thread.currentThread().isInterrupted()) {
+            try {
+                Task task = taskBoardService.getTask(workerInstance.getSessionId(), taskId);
+
+                if (task.canStart()) {
+                    // 没有阻塞或阻塞已解除，可以开始
+                    log.info("[WorkerLoop] Task is ready (no blockers): taskId={}", taskId);
+                    return task;
+                }
+
+                // 任务仍被阻塞
+                if (workerInstance.getStatus() != WorkerStatus.WAITING) {
+                    workerInstance.startWaiting();
+                    workerRepository.save(workerInstance);
+                    log.info("[WorkerLoop] Task blocked, entering WAITING state: taskId={}, blockedBy={}",
+                            taskId, task.getBlockedBy());
+                }
+
+                // 等待期间也检查 Inbox（可能收到 shutdown）
+                checkInbox();
+
+                Thread.sleep(BLOCKED_CHECK_INTERVAL_MS);
+
+            } catch (IllegalArgumentException e) {
+                // 任务不存在
+                log.error("[WorkerLoop] Assigned task not found: taskId={}", taskId);
                 return null;
             }
-
-            // 2. 按 taskId 排序（低 ID 优先）
-            availableTasks.sort(Comparator.comparing(Task::getTaskId));
-
-            log.debug("[WorkerLoop] Found {} available tasks, attempting to claim: instanceId={}",
-                    availableTasks.size(), workerInstance.getInstanceId());
-
-            // 3. 尝试认领任务（work-stealing）
-            int attempts = Math.min(availableTasks.size(), MAX_CLAIM_ATTEMPTS);
-            for (int i = 0; i < attempts; i++) {
-                Task task = availableTasks.get(i);
-
-                // 使用 TaskBoardService 的原子 claimTask 方法
-                boolean claimed = taskBoardService.claimTask(
-                        workerInstance.getSessionId(),
-                        task.getTaskId(),
-                        workerInstance.getInstanceId()
-                );
-
-                if (claimed) {
-                    // 成功认领，重新加载任务获取最新状态
-                    Task claimedTask = taskBoardService.getTask(workerInstance.getSessionId(), task.getTaskId());
-                    log.info("[WorkerLoop] Successfully claimed task: taskId={}, subject={}, instanceId={}",
-                            claimedTask.getTaskId(), claimedTask.getSubject(), workerInstance.getInstanceId());
-                    return claimedTask;
-                } else {
-                    // 认领失败（被其他 Worker 抢占），尝试下一个
-                    log.debug("[WorkerLoop] Failed to claim task (already claimed): taskId={}, trying next task",
-                            task.getTaskId());
-                }
-            }
-
-            // 所有尝试都失败
-            log.debug("[WorkerLoop] Failed to claim any task after {} attempts: instanceId={}",
-                    attempts, workerInstance.getInstanceId());
-            return null;
-
-        } catch (Exception e) {
-            log.error("[WorkerLoop] Error during task claiming: instanceId={}",
-                    workerInstance.getInstanceId(), e);
-            return null;
         }
+        return null; // shutdown
     }
 
     /**

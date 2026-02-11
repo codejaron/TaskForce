@@ -32,7 +32,7 @@ public class SpawnWorkerTool implements ToolCallback {
               "properties": {
                 "name": {
                   "type": "string",
-                  "description": "Worker 名称"
+                  "description": "Worker 名称，描述其角色，如 'news-searcher'、'academic-searcher'"
                 },
                 "agentId": {
                   "type": "string",
@@ -40,16 +40,20 @@ public class SpawnWorkerTool implements ToolCallback {
                 },
                 "initialPrompt": {
                   "type": "string",
-                  "description": "初始提示词"
+                  "description": "Worker 的角色指令，描述它的职责和工作方式"
+                },
+                "assignedTaskId": {
+                  "type": "integer",
+                  "description": "指派给该 Worker 的任务 ID（来自 create_task 返回的 taskId）"
                 }
               },
-              "required": ["name", "agentId", "initialPrompt"]
+              "required": ["name", "agentId", "initialPrompt", "assignedTaskId"]
             }
             """;
 
         return ToolDefinition.builder()
                 .name("spawn_worker")
-                .description("创建并启动新的 Worker 实例")
+                .description("创建并启动新的 Worker 实例，指派一个任务给它执行")
                 .inputSchema(inputSchema)
                 .build();
     }
@@ -68,14 +72,15 @@ public class SpawnWorkerTool implements ToolCallback {
             String name = (String) args.get("name");
             String agentId = (String) args.get("agentId");
             String initialPrompt = (String) args.get("initialPrompt");
+            int assignedTaskId = ((Number) args.get("assignedTaskId")).intValue();
 
-            WorkerInstance worker = workerInstanceManager.spawn(sessionId, name, agentId, initialPrompt);
+            WorkerInstance worker = workerInstanceManager.spawn(sessionId, name, agentId, initialPrompt, assignedTaskId);
 
-            log.info("[SpawnWorkerTool] Spawned worker: instanceId={}, name={}",
-                    worker.getInstanceId(), name);
+            log.info("[SpawnWorkerTool] Spawned worker: instanceId={}, name={}, assignedTaskId={}",
+                    worker.getInstanceId(), name, assignedTaskId);
 
-            return String.format("Worker spawned successfully: instanceId=%s, name=%s, status=%s",
-                    worker.getInstanceId(), worker.getName(), worker.getStatus());
+            return String.format("Worker spawned successfully: instanceId=%s, name=%s, assignedTaskId=%d, status=%s",
+                    worker.getInstanceId(), worker.getName(), assignedTaskId, worker.getStatus());
 
         } catch (Exception e) {
             log.error("[SpawnWorkerTool] Failed to spawn worker", e);

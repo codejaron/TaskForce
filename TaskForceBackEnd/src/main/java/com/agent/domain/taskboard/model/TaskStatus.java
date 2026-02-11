@@ -5,14 +5,14 @@ package com.agent.domain.taskboard.model;
  */
 public enum TaskStatus {
     /**
-     * 待认领
+     * 待分配
      */
     PENDING,
 
     /**
-     * 已认领
+     * 已分配给 Worker（Leader 指派后）
      */
-    CLAIMED,
+    ASSIGNED,
 
     /**
      * 执行中
