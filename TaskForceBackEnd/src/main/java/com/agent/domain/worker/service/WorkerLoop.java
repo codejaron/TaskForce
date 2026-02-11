@@ -1,0 +1,400 @@
+package com.agent.domain.worker.service;
+
+import com.agent.domain.context.assembly.ContextAssembler;
+import com.agent.domain.taskboard.dto.TaskUpdateRequest;
+import com.agent.domain.taskboard.model.Task;
+import com.agent.domain.taskboard.model.TaskStatus;
+import com.agent.domain.taskboard.service.TaskBoardService;
+import com.agent.domain.team.model.TeamMessage;
+import com.agent.domain.team.service.InboxService;
+import com.agent.domain.worker.model.WorkerInstance;
+import com.agent.domain.worker.model.WorkerStatus;
+import com.agent.domain.worker.repository.WorkerInstanceRepository;
+import com.agent.infrastructure.agent.ReactAgentFactory;
+import com.agent.infrastructure.event.EventBus;
+import com.agent.infrastructure.event.events.WorkerOutputEvent;
+import com.agent.service.SessionExecutionTracker;
+import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.alibaba.cloud.ai.graph.agent.ReactAgent;
+import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
+import lombok.extern.slf4j.Slf4j;
+import reactor.core.Disposable;
+
+import java.util.Comparator;
+import java.util.List;
+import java.util.Random;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/**
+ * Worker 自主循环
+ * 持续运行，检查 Inbox、认领任务、执行任务
+ * 支持 Work-stealing：空闲时自动认领可用任务
+ */
+@Slf4j
+public class WorkerLoop implements Runnable {
+
+    private static final int POLL_INTERVAL_MS = 2000; // 2秒轮询间隔
+    private static final int MAX_REACT_ITERATIONS = 20;
+    private static final int MAX_CLAIM_ATTEMPTS = 5; // 最多尝试认领5个任务
+    private static final int STARTUP_JITTER_MS = 500; // 启动时随机延迟，避免惊群效应
+
+    private final WorkerInstance workerInstance;
+    private final WorkerInstanceRepository workerRepository;
+    private final TaskBoardService taskBoardService;
+    private final ReactAgentFactory reactAgentFactory;
+    private final EventBus eventBus;
+    private final SessionExecutionTracker executionTracker;
+    private final InboxService inboxService;
+    private final ContextAssembler contextAssembler;
+    private final String initialPrompt;
+    private final Random random = new Random();
+
+    private final AtomicBoolean shutdown = new AtomicBoolean(false);
+    private volatile Thread loopThread;
+
+    public WorkerLoop(
+            WorkerInstance workerInstance,
+            WorkerInstanceRepository workerRepository,
+            TaskBoardService taskBoardService,
+            ReactAgentFactory reactAgentFactory,
+            EventBus eventBus,
+            SessionExecutionTracker executionTracker,
+            InboxService inboxService,
+            ContextAssembler contextAssembler,
+            String initialPrompt) {
+        this.workerInstance = workerInstance;
+        this.workerRepository = workerRepository;
+        this.taskBoardService = taskBoardService;
+        this.reactAgentFactory = reactAgentFactory;
+        this.eventBus = eventBus;
+        this.executionTracker = executionTracker;
+        this.inboxService = inboxService;
+        this.contextAssembler = contextAssembler;
+        this.initialPrompt = initialPrompt;
+    }
+
+    @Override
+    public void run() {
+        loopThread = Thread.currentThread();
+        log.info("[WorkerLoop] Starting worker loop: instanceId={}, name={}",
+                workerInstance.getInstanceId(), workerInstance.getName());
+
+        try {
+            // 启动时添加随机延迟，避免多个 Worker 同时启动时的惊群效应
+            int jitter = random.nextInt(STARTUP_JITTER_MS);
+            Thread.sleep(jitter);
+            log.debug("[WorkerLoop] Applied startup jitter: {}ms", jitter);
+
+            while (!shutdown.get() && !Thread.currentThread().isInterrupted()) {
+                try {
+                    // 1. 检查 Inbox
+                    checkInbox();
+
+                    // 2. 如果空闲，尝试认领任务（work-stealing）
+                    if (workerInstance.isIdle()) {
+                        Task task = claimNextTask();
+                        if (task != null) {
+                            executeTask(task);
+                        }
+                    }
+
+                    // 3. 等待间隔
+                    Thread.sleep(POLL_INTERVAL_MS);
+
+                } catch (InterruptedException e) {
+                    log.info("[WorkerLoop] Worker loop interrupted: instanceId={}",
+                            workerInstance.getInstanceId());
+                    break;
+                } catch (Exception e) {
+                    log.error("[WorkerLoop] Error in worker loop: instanceId={}",
+                            workerInstance.getInstanceId(), e);
+                    // 继续循环，不因单次错误而退出
+                }
+            }
+        } catch (InterruptedException e) {
+            log.info("[WorkerLoop] Worker loop interrupted during startup: instanceId={}",
+                    workerInstance.getInstanceId());
+        } finally {
+            // 清理资源
+            workerInstance.shutdown();
+            workerRepository.save(workerInstance);
+            log.info("[WorkerLoop] Worker loop stopped: instanceId={}", workerInstance.getInstanceId());
+        }
+    }
+
+    /**
+     * 检查 Inbox 并处理消息
+     */
+    private void checkInbox() {
+        try {
+            // 读取收件箱消息
+            List<TeamMessage> messages = inboxService.readInbox(workerInstance.getInstanceId());
+
+            if (messages.isEmpty()) {
+                return;
+            }
+
+            log.info("[WorkerLoop] Received {} messages: instanceId={}",
+                    messages.size(), workerInstance.getInstanceId());
+
+            // 处理每条消息
+            for (TeamMessage message : messages) {
+                handleMessage(message);
+            }
+
+        } catch (Exception e) {
+            log.error("[WorkerLoop] Error checking inbox: instanceId={}",
+                    workerInstance.getInstanceId(), e);
+        }
+    }
+
+    /**
+     * 处理单条消息
+     */
+    private void handleMessage(TeamMessage message) {
+        log.info("[WorkerLoop] Handling message: type={}, from={}",
+                message.getType(), message.getFrom());
+
+        switch (message.getType()) {
+            case "SHUTDOWN_REQUEST":
+                log.info("[WorkerLoop] Received shutdown request from: {}", message.getFrom());
+                requestShutdown();
+                break;
+
+            case "USER_MESSAGE":
+            case "INSTRUCTION":
+                log.info("[WorkerLoop] Received instruction: {}", message.getText());
+                // 指令消息会通过 InboxCheckHook 自动注入到 ReAct 循环中
+                break;
+
+            default:
+                log.debug("[WorkerLoop] Unhandled message type: {}", message.getType());
+                break;
+        }
+    }
+
+    /**
+     * 认领下一个可执行任务（work-stealing）
+     * 按 taskId 顺序尝试多个任务，直到成功认领一个
+     */
+    private Task claimNextTask() {
+        try {
+            // 1. 获取所有可用任务（PENDING 且无阻塞）
+            List<Task> availableTasks = taskBoardService.getAvailableTasks(workerInstance.getSessionId());
+
+            if (availableTasks.isEmpty()) {
+                log.debug("[WorkerLoop] No available tasks to claim: instanceId={}",
+                        workerInstance.getInstanceId());
+                return null;
+            }
+
+            // 2. 按 taskId 排序（低 ID 优先）
+            availableTasks.sort(Comparator.comparing(Task::getTaskId));
+
+            log.debug("[WorkerLoop] Found {} available tasks, attempting to claim: instanceId={}",
+                    availableTasks.size(), workerInstance.getInstanceId());
+
+            // 3. 尝试认领任务（work-stealing）
+            int attempts = Math.min(availableTasks.size(), MAX_CLAIM_ATTEMPTS);
+            for (int i = 0; i < attempts; i++) {
+                Task task = availableTasks.get(i);
+
+                // 使用 TaskBoardService 的原子 claimTask 方法
+                boolean claimed = taskBoardService.claimTask(
+                        workerInstance.getSessionId(),
+                        task.getTaskId(),
+                        workerInstance.getInstanceId()
+                );
+
+                if (claimed) {
+                    // 成功认领，重新加载任务获取最新状态
+                    Task claimedTask = taskBoardService.getTask(task.getTaskId());
+                    log.info("[WorkerLoop] Successfully claimed task: taskId={}, subject={}, instanceId={}",
+                            claimedTask.getTaskId(), claimedTask.getSubject(), workerInstance.getInstanceId());
+                    return claimedTask;
+                } else {
+                    // 认领失败（被其他 Worker 抢占），尝试下一个
+                    log.debug("[WorkerLoop] Failed to claim task (already claimed): taskId={}, trying next task",
+                            task.getTaskId());
+                }
+            }
+
+            // 所有尝试都失败
+            log.debug("[WorkerLoop] Failed to claim any task after {} attempts: instanceId={}",
+                    attempts, workerInstance.getInstanceId());
+            return null;
+
+        } catch (Exception e) {
+            log.error("[WorkerLoop] Error during task claiming: instanceId={}",
+                    workerInstance.getInstanceId(), e);
+            return null;
+        }
+    }
+
+    /**
+     * 执行任务
+     */
+    private void executeTask(Task task) {
+        log.info("[WorkerLoop] Executing task: taskId={}, subject={}",
+                task.getTaskId(), task.getSubject());
+
+        try {
+            // 1. 更新 Worker 状态
+            workerInstance.startWorking(task.getTaskId());
+            workerRepository.save(workerInstance);
+
+            // 2. 更新任务状态为 IN_PROGRESS
+            taskBoardService.startTask(task.getTaskId());
+
+            // 3. 构建执行指令
+            String instruction = buildTaskInstruction(task);
+
+            // 4. 构建 ReactAgent
+            ReactAgent reactAgent = reactAgentFactory.buildWorkerReactAgent(
+                    Long.valueOf(workerInstance.getAgentId()),
+                    instruction,
+                    MAX_REACT_ITERATIONS,
+                    workerInstance.getSessionId(),
+                    task.getTaskId(),
+                    null, // stepIndex 在 Team 模式下不适用
+                    workerInstance.getInstanceId() // Worker 实例 ID，用于 InboxCheckHook
+            );
+
+            // 5. 配置 RunnableConfig（传递 sessionId 和 instanceId 到 metadata）
+            RunnableConfig config = RunnableConfig.builder()
+                    .threadId(workerInstance.getSessionId() + "_" + task.getTaskId())
+                    .addMetadata("sessionId", workerInstance.getSessionId())
+                    .addMetadata("instanceId", workerInstance.getInstanceId())
+                    .build();
+
+            // 6. 执行任务（流式）
+            StringBuilder response = new StringBuilder();
+
+            Disposable disposable = reactAgent.stream(instruction, config)
+                    .doOnNext(nodeOutput -> {
+                        if (nodeOutput instanceof StreamingOutput streamingOutput) {
+                            String chunk = streamingOutput.chunk();
+                            if (chunk != null && !chunk.isEmpty()) {
+                                response.append(chunk);
+
+                                // 发布实时事件给前端
+                                try {
+                                    WorkerOutputEvent event = new WorkerOutputEvent(
+                                            workerInstance.getSessionId(),
+                                            workerInstance.getInstanceId(),
+                                            task.getTaskId(),
+                                            chunk
+                                    );
+                                    eventBus.publishToWorker(
+                                            workerInstance.getSessionId(),
+                                            workerInstance.getInstanceId(),
+                                            event
+                                    );
+                                } catch (Exception e) {
+                                    log.warn("[WorkerLoop] Failed to publish output event", e);
+                                }
+                            }
+                        }
+                    })
+                    .doOnComplete(() -> {
+                        log.info("[WorkerLoop] Task execution completed: taskId={}", task.getTaskId());
+                    })
+                    .doOnError(e -> {
+                        log.error("[WorkerLoop] Task execution error: taskId={}", task.getTaskId(), e);
+                    })
+                    .subscribe();
+
+            // 注册 Disposable
+            executionTracker.registerDisposable(workerInstance.getSessionId(), disposable);
+
+            // 等待执行完成
+            while (!disposable.isDisposed() && !shutdown.get()) {
+                Thread.sleep(100);
+            }
+
+            // 7. 更新任务状态
+            if (shutdown.get()) {
+                log.info("[WorkerLoop] Task interrupted by shutdown: taskId={}", task.getTaskId());
+                // 重置任务为 PENDING，允许其他 Worker 认领
+                TaskUpdateRequest updateRequest = TaskUpdateRequest.builder()
+                        .status(TaskStatus.PENDING)
+                        .owner(null)
+                        .build();
+                taskBoardService.updateTask(task.getTaskId(), updateRequest);
+            } else {
+                // 任务完成
+                taskBoardService.completeTask(task.getTaskId());
+                log.info("[WorkerLoop] Task completed successfully: taskId={}", task.getTaskId());
+            }
+
+            // 8. 更新 Worker 状态
+            workerInstance.completeWork();
+            workerRepository.save(workerInstance);
+
+        } catch (Exception e) {
+            log.error("[WorkerLoop] Failed to execute task: taskId={}", task.getTaskId(), e);
+
+            // 标记任务失败
+            try {
+                taskBoardService.failTask(task.getTaskId());
+            } catch (Exception ex) {
+                log.error("[WorkerLoop] Failed to mark task as failed: taskId={}", task.getTaskId(), ex);
+            }
+
+            // 恢复 Worker 状态
+            workerInstance.completeWork();
+            workerRepository.save(workerInstance);
+        }
+    }
+
+    /**
+     * 构建任务执行指令
+     */
+    private String buildTaskInstruction(Task task) {
+        StringBuilder instruction = new StringBuilder();
+
+        // 添加初始 Prompt（如果有）
+        if (initialPrompt != null && !initialPrompt.isEmpty()) {
+            instruction.append(initialPrompt).append("\n\n");
+        }
+
+        // 使用 ContextAssembler 组装任务上下文
+        try {
+            String taskContext = contextAssembler.assembleForTask(
+                    workerInstance.getSessionId(),
+                    task.getTaskId()
+            );
+            instruction.append(taskContext);
+        } catch (Exception e) {
+            log.warn("[WorkerLoop] Failed to assemble context, using basic task info: {}", e.getMessage());
+
+            // Fallback: 使用基本任务信息
+            instruction.append("# Current Task\n\n");
+            instruction.append("**Task ID**: ").append(task.getTaskId()).append("\n");
+            instruction.append("**Subject**: ").append(task.getSubject()).append("\n");
+            instruction.append("**Description**:\n").append(task.getDescription()).append("\n\n");
+        }
+
+        return instruction.toString();
+    }
+
+    /**
+     * 请求关闭
+     */
+    public void requestShutdown() {
+        log.info("[WorkerLoop] Shutdown requested: instanceId={}", workerInstance.getInstanceId());
+        shutdown.set(true);
+
+        // 中断循环线程
+        if (loopThread != null) {
+            loopThread.interrupt();
+        }
+    }
+
+    /**
+     * 是否已关闭
+     */
+    public boolean isShutdown() {
+        return shutdown.get();
+    }
+}

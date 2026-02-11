@@ -91,7 +91,8 @@ public class WorkerReactNode implements NodeAction {
                     MAX_REACT_ITERATIONS,
                     sessionId,
                     step.getStepId(),
-                    step.getStepIndex()
+                    step.getStepIndex(),
+                    null // 旧编排模式不使用 Worker 实例
             );
 
             // 5. 创建流式消息记录

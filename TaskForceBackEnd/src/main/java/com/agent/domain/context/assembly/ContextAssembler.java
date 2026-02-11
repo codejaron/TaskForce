@@ -6,6 +6,12 @@ import com.agent.domain.context.storage.WorkspaceStorage;
 import com.agent.domain.orchestration.model.ExecutionPlan;
 import com.agent.domain.orchestration.model.PlanStep;
 import com.agent.domain.orchestration.model.StepStatus;
+import com.agent.domain.taskboard.model.Task;
+import com.agent.domain.taskboard.service.TaskBoardService;
+import com.agent.domain.team.model.Team;
+import com.agent.domain.team.model.TeamMessage;
+import com.agent.domain.team.service.InboxService;
+import com.agent.domain.team.service.TeamService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -21,9 +27,12 @@ import java.util.stream.Collectors;
 @Component
 @RequiredArgsConstructor
 public class ContextAssembler {
-    
+
     private final WorkspaceStorage storage;
     private final ContextConfig config;
+    private final TaskBoardService taskBoardService;
+    private final InboxService inboxService;
+    private final TeamService teamService;
     
     /**
      * 组装完整上下文（使用 ExecutionPlan 对象）
@@ -321,6 +330,266 @@ public class ContextAssembler {
         return sb.toString();
     }
 
+    /**
+     * 组装任务上下文（基于 Task Board 模型）
+     * @param sessionId 会话 ID
+     * @param taskId 任务 ID
+     * @return 组装后的上下文 Markdown
+     */
+    public String assembleForTask(String sessionId, String taskId) {
+        StringBuilder context = new StringBuilder();
+
+        // 1. 获取当前任务
+        Task currentTask = taskBoardService.getTask(taskId);
+
+        // 2. 渲染任务板概览
+        context.append(renderTaskBoard(sessionId, taskId));
+
+        // 3. 收集并渲染依赖链上的任务输出
+        List<Task> dependencyChain = collectTaskDependencyChain(sessionId, taskId);
+        if (!dependencyChain.isEmpty()) {
+            context.append("\n【依赖任务输出】\n\n");
+            for (Task depTask : dependencyChain) {
+                context.append(renderTaskOutput(sessionId, depTask));
+            }
+        }
+
+        // 4. 渲染收件箱消息（如果有）
+        try {
+            String inboxContent = renderInbox(sessionId, taskId);
+            if (inboxContent != null && !inboxContent.isEmpty()) {
+                context.append(inboxContent);
+            }
+        } catch (Exception e) {
+            log.debug("Inbox not available or empty: {}", e.getMessage());
+        }
+
+        // 5. 渲染团队成员信息
+        try {
+            String teammatesContent = renderTeammates(sessionId);
+            if (teammatesContent != null && !teammatesContent.isEmpty()) {
+                context.append(teammatesContent);
+            }
+        } catch (Exception e) {
+            log.debug("Team info not available: {}", e.getMessage());
+        }
+
+        // 6. 渲染当前任务
+        context.append(renderCurrentTask(currentTask));
+
+        return context.toString();
+    }
+
+    /**
+     * 渲染任务板概览
+     */
+    private String renderTaskBoard(String sessionId, String currentTaskId) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("【任务板】\n\n");
+
+        List<Task> allTasks = taskBoardService.listTasks(sessionId);
+        if (allTasks.isEmpty()) {
+            return "";
+        }
+
+        // 按 taskId 排序
+        allTasks.sort(Comparator.comparing(Task::getTaskId));
+
+        sb.append("**所有任务：**\n");
+        for (Task task : allTasks) {
+            sb.append("- ");
+
+            // 标记当前任务
+            if (task.getTaskId().equals(currentTaskId)) {
+                sb.append("**[当前]** ");
+            }
+
+            // 状态标记
+            switch (task.getStatus()) {
+                case COMPLETED:
+                    sb.append("✓ ");
+                    break;
+                case IN_PROGRESS:
+                    sb.append("⏳ ");
+                    break;
+                case CLAIMED:
+                    sb.append("🔒 ");
+                    break;
+                case FAILED:
+                    sb.append("❌ ");
+                    break;
+                case PENDING:
+                    sb.append("⏸ ");
+                    break;
+            }
+
+            sb.append(task.getSubject());
+
+            // 显示所有者
+            if (task.getOwner() != null) {
+                sb.append(" (").append(task.getOwner()).append(")");
+            }
+
+            // 显示阻塞信息
+            if (task.getBlockedBy() != null && !task.getBlockedBy().isEmpty()) {
+                sb.append(" [blocked by: ").append(String.join(", ", task.getBlockedBy())).append("]");
+            }
+
+            sb.append("\n");
+        }
+
+        sb.append("\n");
+        return sb.toString();
+    }
+
+    /**
+     * 收集任务依赖链（递归）
+     * 返回按依赖顺序排序的任务列表（被依赖的任务在前）
+     */
+    private List<Task> collectTaskDependencyChain(String sessionId, String taskId) {
+        Set<String> visited = new HashSet<>();
+        List<Task> dependencyChain = new ArrayList<>();
+
+        collectTaskDependenciesRecursive(taskId, visited, dependencyChain);
+
+        // 反转列表，使被依赖的任务在前
+        Collections.reverse(dependencyChain);
+
+        return dependencyChain;
+    }
+
+    /**
+     * 递归收集任务依赖
+     */
+    private void collectTaskDependenciesRecursive(String taskId, Set<String> visited, List<Task> result) {
+        if (visited.contains(taskId)) {
+            return;
+        }
+        visited.add(taskId);
+
+        try {
+            Task task = taskBoardService.getTask(taskId);
+
+            // 先递归处理依赖
+            if (task.getBlockedBy() != null && !task.getBlockedBy().isEmpty()) {
+                for (String depTaskId : task.getBlockedBy()) {
+                    collectTaskDependenciesRecursive(depTaskId, visited, result);
+                }
+            }
+
+            // 只添加已完成的任务
+            if (task.isCompleted()) {
+                result.add(task);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load task: {}", taskId, e);
+        }
+    }
+
+    /**
+     * 渲染任务输出
+     */
+    private String renderTaskOutput(String sessionId, Task task) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## Task: ").append(task.getSubject()).append("\n");
+        sb.append("**Owner:** ").append(task.getOwner() != null ? task.getOwner() : "N/A").append("\n");
+        sb.append("**Status:** ").append(task.getStatus()).append("\n\n");
+
+        // 尝试读取任务输出（假设存储在 task_{taskId}/output.md）
+        String outputPath = String.format("task_%s/output.md", task.getTaskId());
+        if (storage.exists(sessionId, outputPath)) {
+            String output = storage.readFile(sessionId, outputPath);
+            if (output != null && !output.isEmpty()) {
+                // 截断保护
+                if (output.length() > 2000) {
+                    sb.append(output, 0, 2000);
+                    sb.append("\n\n... [输出过长，已截断]");
+                } else {
+                    sb.append(output);
+                }
+            }
+        } else {
+            sb.append("_（无输出记录）_");
+        }
+
+        sb.append("\n\n---\n\n");
+        return sb.toString();
+    }
+
+    /**
+     * 渲染收件箱消息
+     */
+    private String renderInbox(String sessionId, String instanceId) {
+        try {
+            List<TeamMessage> messages = inboxService.readInbox(instanceId);
+            if (messages == null || messages.isEmpty()) {
+                return "";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("【收件箱】\n\n");
+            sb.append("你有 ").append(messages.size()).append(" 条新消息：\n\n");
+
+            for (TeamMessage msg : messages) {
+                sb.append("**From:** ").append(msg.getFrom()).append("\n");
+                sb.append("**Type:** ").append(msg.getType()).append("\n");
+                sb.append("**Content:**\n");
+                sb.append(msg.getText()).append("\n\n");
+                sb.append("---\n\n");
+            }
+
+            return sb.toString();
+        } catch (UnsupportedOperationException e) {
+            // InboxService 尚未实现
+            return "";
+        }
+    }
+
+    /**
+     * 渲染团队成员信息
+     */
+    private String renderTeammates(String sessionId) {
+        try {
+            Team team = teamService.getTeamBySessionId(sessionId);
+            if (team == null || team.getMembers() == null || team.getMembers().isEmpty()) {
+                return "";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("【团队成员】\n\n");
+
+            for (var member : team.getMembers()) {
+                sb.append("- ").append(member.getName());
+                sb.append(" (").append(member.getRole()).append(")");
+                sb.append(" - ").append(member.getStatus());
+                sb.append("\n");
+            }
+
+            sb.append("\n");
+            return sb.toString();
+        } catch (UnsupportedOperationException e) {
+            // TeamService 尚未实现
+            return "";
+        }
+    }
+
+    /**
+     * 渲染当前任务
+     */
+    private String renderCurrentTask(Task task) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("【当前任务】\n");
+        sb.append("## ").append(task.getSubject()).append("\n\n");
+        sb.append("**描述：**\n");
+        sb.append(task.getDescription()).append("\n\n");
+        sb.append("**状态：** ").append(task.getStatus()).append("\n");
+        if (task.getOwner() != null) {
+            sb.append("**所有者：** ").append(task.getOwner()).append("\n");
+        }
+        sb.append("\n");
+        sb.append("请执行当前任务，完成后更新任务状态。\n\n");
+        return sb.toString();
+    }
 
 
 }

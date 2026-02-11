@@ -90,6 +90,18 @@ public class RedisEventBus implements EventBus {
         return subscription != null && subscription.subscriberCount > 0;
     }
 
+    @Override
+    public Flux<OrchestrationEvent> subscribeWorker(String sessionId, String instanceId) {
+        String workerChannel = sessionId + ":worker:" + instanceId;
+        return subscribe(workerChannel);
+    }
+
+    @Override
+    public void publishToWorker(String sessionId, String instanceId, OrchestrationEvent event) {
+        String workerChannel = sessionId + ":worker:" + instanceId;
+        publish(workerChannel, event);
+    }
+
     private LocalSubscription createSubscription(String sessionId) {
         String channel = CHANNEL_PREFIX + sessionId;
         log.info("[RedisEventBus] Creating Redis subscription: sessionId={}, channel={}", sessionId, channel);

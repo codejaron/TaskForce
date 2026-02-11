@@ -88,6 +88,13 @@ public class SessionExecutionTracker {
     }
 
     /**
+     * 取消指定会话的执行（cancelAll 的别名）
+     */
+    public void cancelExecution(String sessionId) {
+        cancelAll(sessionId);
+    }
+
+    /**
      * 清理指定会话的已完成任务
      */
     public void cleanup(String sessionId) {
