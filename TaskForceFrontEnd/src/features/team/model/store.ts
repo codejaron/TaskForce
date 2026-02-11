@@ -13,6 +13,22 @@ export interface TeamMember {
   createdAt: string;
 }
 
+export interface TaskItem {
+  taskId: number;
+  subject: string;
+  description?: string;
+  status: 'PENDING' | 'ASSIGNED' | 'WORKING' | 'COMPLETED' | 'FAILED';
+  owner?: string;
+}
+
+export interface WorkerMessage {
+  id: string;
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'output' | 'system' | 'user' | 'error';
+  content: string;
+  timestamp: string;
+  toolName?: string;
+}
+
 export interface LeadMessage {
   id: string;
   type: 'system' | 'lead' | 'worker' | 'user';
@@ -40,6 +56,14 @@ interface TeamState {
   error: string | null;
   isTeamStarted: boolean;
 
+  // Task Board
+  tasks: TaskItem[];
+
+  // Worker 对话
+  workerMessages: Record<string, WorkerMessage[]>;
+  activeWorkerId: string | null;
+  workerConnections: Record<string, AbortController>;
+
   // Actions
   fetchSessions: () => Promise<void>;
   createSession: (name: string, agentIds: number[]) => Promise<void>;
@@ -48,6 +72,11 @@ interface TeamState {
   sendToLead: (message: string) => Promise<void>;
   stopTeam: () => Promise<void>;
   disconnectStream: () => void;
+  setActiveWorker: (instanceId: string | null) => void;
+  connectWorkerStream: (instanceId: string) => void;
+  disconnectWorkerStream: (instanceId: string) => void;
+  disconnectAllWorkerStreams: () => void;
+  sendToWorker: (instanceId: string, message: string) => Promise<void>;
 }
 
 // ========== SSE 连接管理 ==========
@@ -121,7 +150,7 @@ function handleSSEEvent(
     }
   }
 
-  const { messages, members } = get();
+  const { messages, members, tasks } = get();
 
   switch (eventType) {
     case 'team_started':
@@ -142,10 +171,75 @@ function handleSSEEvent(
       }
       break;
 
+    case 'task_created':
+      {
+        const taskId = typeof data.taskId === 'number' ? data.taskId : 0;
+        const subject = typeof data.subject === 'string' ? data.subject : '';
+        const description = typeof data.description === 'string' ? data.description : '';
+
+        const newTask: TaskItem = {
+          taskId,
+          subject,
+          description,
+          status: 'PENDING',
+        };
+
+        const newMessage: LeadMessage = {
+          id: `${Date.now()}_task_created`,
+          type: 'system',
+          content: `任务创建: #${taskId} ${subject}`,
+          timestamp: new Date().toISOString()
+        };
+
+        set({
+          tasks: [...tasks, newTask],
+          messages: [...messages, newMessage]
+        });
+      }
+      break;
+
+    case 'task_claimed':
+      {
+        const taskId = typeof data.taskId === 'number' ? data.taskId : 0;
+        const owner = typeof data.owner === 'string' ? data.owner : '';
+
+        set({
+          tasks: tasks.map(t =>
+            t.taskId === taskId ? { ...t, status: 'ASSIGNED' as const, owner } : t
+          )
+        });
+      }
+      break;
+
+    case 'task_completed':
+      {
+        const taskId = typeof data.taskId === 'number' ? data.taskId : 0;
+
+        set({
+          tasks: tasks.map(t =>
+            t.taskId === taskId ? { ...t, status: 'COMPLETED' as const } : t
+          )
+        });
+      }
+      break;
+
+    case 'task_unblocked':
+      {
+        const taskId = typeof data.taskId === 'number' ? data.taskId : 0;
+
+        set({
+          tasks: tasks.map(t =>
+            t.taskId === taskId ? { ...t, status: 'PENDING' as const } : t
+          )
+        });
+      }
+      break;
+
     case 'worker_spawned':
       {
         const instanceId = typeof data.instanceId === 'string' ? data.instanceId : '';
-        const agentName = typeof data.agentName === 'string' ? data.agentName : 'Unknown';
+        const agentName = typeof data.agentName === 'string' ? data.agentName
+                        : typeof data.name === 'string' ? data.name : 'Unknown';
 
         const newMember: TeamMember = {
           instanceId,
@@ -166,24 +260,9 @@ function handleSSEEvent(
           members: [...members, newMember],
           messages: [...messages, newMessage]
         });
-      }
-      break;
 
-    case 'task_created':
-      {
-        const taskTitle = typeof data.title === 'string' ? data.title : 'New Task';
-        const assignedTo = typeof data.assignedTo === 'string' ? data.assignedTo : undefined;
-
-        const newMessage: LeadMessage = {
-          id: `${Date.now()}_task_created`,
-          type: 'system',
-          content: `任务创建: ${taskTitle}${assignedTo ? ` (分配给: ${assignedTo})` : ''}`,
-          timestamp: new Date().toISOString()
-        };
-
-        set({
-          messages: [...messages, newMessage]
-        });
+        // 自动为新 Worker 建立独立 SSE 连接
+        setTimeout(() => get().connectWorkerStream(instanceId), 100);
       }
       break;
 
@@ -316,6 +395,14 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   isConnected: false,
   error: null,
   isTeamStarted: false,
+
+  // Task Board
+  tasks: [],
+
+  // Worker 对话
+  workerMessages: {},
+  activeWorkerId: null,
+  workerConnections: {},
 
   fetchSessions: async () => {
     try {
@@ -569,6 +656,205 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       }
     }
 
+    // 断开所有 Worker SSE 连接
+    get().disconnectAllWorkerStreams();
+
     set({ isConnected: false });
+  },
+
+  connectWorkerStream: (instanceId: string) => {
+    const { currentSession, workerConnections } = get();
+    if (!currentSession) return;
+
+    // 如果已连接，先断开
+    if (workerConnections[instanceId]) {
+      workerConnections[instanceId].abort();
+    }
+
+    const sessionId = currentSession.id;
+    const controller = new AbortController();
+
+    set(state => ({
+      workerConnections: { ...state.workerConnections, [instanceId]: controller },
+      workerMessages: { ...state.workerMessages, [instanceId]: state.workerMessages[instanceId] || [] }
+    }));
+
+    const url = `/api/v2/team/session/${sessionId}/worker/${instanceId}/events`;
+
+    fetchEventSource(url, {
+      signal: controller.signal,
+      async onopen(response) {
+        if (!response.ok) throw new Error(`Worker SSE failed: ${response.status}`);
+        console.log('[Team] Worker SSE connected:', instanceId);
+      },
+      onmessage(ev) {
+        const eventType = ev.event;
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(ev.data);
+        } catch { return; }
+
+        let msg: WorkerMessage | null = null;
+
+        switch (eventType) {
+          case 'step_start':
+            msg = {
+              id: `${Date.now()}_thinking`,
+              type: 'thinking',
+              content: typeof data.content === 'string' ? data.content : 'Worker 开始思考...',
+              timestamp: new Date().toISOString()
+            };
+            break;
+
+          case 'tool_call':
+            {
+              const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+              const input = typeof data.input === 'string' ? data.input : JSON.stringify(data.input || {});
+              msg = {
+                id: `${Date.now()}_tool_call`,
+                type: 'tool_call',
+                content: input,
+                timestamp: new Date().toISOString(),
+                toolName
+              };
+            }
+            break;
+
+          case 'tool_result':
+            {
+              const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+              const output = typeof data.output === 'string' ? data.output : JSON.stringify(data.output || {});
+              msg = {
+                id: `${Date.now()}_tool_result`,
+                type: 'tool_result',
+                content: output,
+                timestamp: new Date().toISOString(),
+                toolName
+              };
+            }
+            break;
+
+          case 'step_completed':
+            msg = {
+              id: `${Date.now()}_output`,
+              type: 'output',
+              content: typeof data.content === 'string' ? data.content : 'Worker 完成步骤',
+              timestamp: new Date().toISOString()
+            };
+            break;
+
+          case 'worker_report':
+            msg = {
+              id: `${Date.now()}_output`,
+              type: 'output',
+              content: typeof data.content === 'string' ? data.content : '',
+              timestamp: new Date().toISOString()
+            };
+            break;
+
+          case 'error':
+            msg = {
+              id: `${Date.now()}_error`,
+              type: 'error',
+              content: typeof data.error === 'string' ? data.error : JSON.stringify(data),
+              timestamp: new Date().toISOString()
+            };
+            break;
+
+          default:
+            msg = {
+              id: `${Date.now()}_system`,
+              type: 'system',
+              content: JSON.stringify(data),
+              timestamp: new Date().toISOString()
+            };
+        }
+
+        if (msg) {
+          set(state => ({
+            workerMessages: {
+              ...state.workerMessages,
+              [instanceId]: [...(state.workerMessages[instanceId] || []), msg!]
+            }
+          }));
+        }
+      },
+      onerror(err) {
+        if (err.name === 'AbortError') return;
+        console.error('[Team] Worker SSE error:', instanceId, err);
+      },
+      onclose() {
+        console.log('[Team] Worker SSE closed:', instanceId);
+      }
+    }).catch(() => {});
+  },
+
+  disconnectWorkerStream: (instanceId: string) => {
+    const controller = get().workerConnections[instanceId];
+    if (controller) {
+      controller.abort();
+      set(state => {
+        const { [instanceId]: _, ...rest } = state.workerConnections;
+        return { workerConnections: rest };
+      });
+    }
+  },
+
+  disconnectAllWorkerStreams: () => {
+    const { workerConnections } = get();
+    Object.keys(workerConnections).forEach(instanceId => {
+      get().disconnectWorkerStream(instanceId);
+    });
+  },
+
+  sendToWorker: async (instanceId: string, message: string) => {
+    const { currentSession } = get();
+    if (!currentSession) {
+      console.error('[Team] No active session');
+      return;
+    }
+
+    const sessionId = currentSession.id;
+
+    // 乐观更新：立即显示用户消息
+    const userMsg: WorkerMessage = {
+      id: `${Date.now()}_user`,
+      type: 'user',
+      content: message,
+      timestamp: new Date().toISOString()
+    };
+
+    set(state => ({
+      workerMessages: {
+        ...state.workerMessages,
+        [instanceId]: [...(state.workerMessages[instanceId] || []), userMsg]
+      }
+    }));
+
+    try {
+      await api.team.sendMessageToWorker(sessionId, instanceId, message);
+      console.log('[Team] Message sent to worker:', instanceId);
+    } catch (error: unknown) {
+      console.error('[Team] Failed to send message to worker:', error);
+
+      // 添加错误消息
+      const errorMsg: WorkerMessage = {
+        id: `${Date.now()}_error`,
+        type: 'error',
+        content: '发送消息失败',
+        timestamp: new Date().toISOString()
+      };
+
+      set(state => ({
+        workerMessages: {
+          ...state.workerMessages,
+          [instanceId]: [...(state.workerMessages[instanceId] || []), errorMsg]
+        }
+      }));
+    }
+  },
+
+  setActiveWorker: (instanceId: string | null) => {
+    set({ activeWorkerId: instanceId });
   }
 }));
