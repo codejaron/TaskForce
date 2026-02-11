@@ -27,7 +27,8 @@ public class WorkerToolProvider {
     private final SendMessageTool sendMessageTool;
     private final ReadInboxTool readInboxTool;
     private final ListTeammatesTool listTeammatesTool;
-    private final ClaimTaskTool claimTaskTool;
+    // ClaimTaskTool 已废弃：Leader 分配模式下任务在 spawn 时已分配，不需要 Worker 自主认领
+    // private final ClaimTaskTool claimTaskTool;
     private final CompleteTaskTool completeTaskTool;
     private final ReadStepOutputTool readStepOutputTool;
     private final WriteStepSummaryTool writeStepSummaryTool;
@@ -44,7 +45,7 @@ public class WorkerToolProvider {
         tools.add(listTeammatesTool);
 
         // 任务工具
-        tools.add(claimTaskTool);
+        // tools.add(claimTaskTool); // 已废弃：Leader 分配模式下不需要
         tools.add(completeTaskTool);
 
         // 上下文工具

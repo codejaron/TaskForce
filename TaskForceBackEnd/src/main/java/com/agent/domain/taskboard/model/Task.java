@@ -78,16 +78,16 @@ public class Task {
     // === 状态转换方法 ===
 
     /**
-     * 认领任务
+     * Leader 指派任务
      */
-    public void claim(String ownerId) {
-        this.status = TaskStatus.CLAIMED;
+    public void assign(String ownerId) {
+        this.status = TaskStatus.ASSIGNED;
         this.owner = ownerId;
         this.updatedAt = LocalDateTime.now();
     }
 
     /**
-     * 开始执行
+     * 开始执行（从 ASSIGNED → IN_PROGRESS）
      */
     public void start() {
         this.status = TaskStatus.IN_PROGRESS;

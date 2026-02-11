@@ -139,7 +139,7 @@ public class RedisTaskBoardRepository implements TaskBoardRepository {
     @Override
     public List<Task> findExecutableTasks(String sessionId) {
         return findBySessionId(sessionId).stream()
-                .filter(task -> (task.getStatus() == TaskStatus.PENDING || task.getStatus() == TaskStatus.CLAIMED)
+                .filter(task -> (task.getStatus() == TaskStatus.PENDING || task.getStatus() == TaskStatus.ASSIGNED)
                         && task.canStart())
                 .collect(Collectors.toList());
     }

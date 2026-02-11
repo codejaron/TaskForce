@@ -8,6 +8,7 @@ import com.agent.domain.worker.model.WorkerStatus;
 import com.agent.domain.worker.repository.WorkerInstanceRepository;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
+import com.agent.infrastructure.event.events.WorkerSpawnedEvent;
 import com.agent.service.SessionExecutionTracker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -68,21 +69,28 @@ public class WorkerInstanceManager {
     /**
      * 创建并启动 Worker 实例
      *
-     * @param sessionId     会话 ID
-     * @param name          Worker 名称
-     * @param agentId       Agent ID
-     * @param initialPrompt 初始 Prompt
+     * @param sessionId      会话 ID
+     * @param name           Worker 名称
+     * @param agentId        Agent ID
+     * @param initialPrompt  初始 Prompt
+     * @param assignedTaskId 指派的任务 ID
      * @return Worker 实例
      */
-    public WorkerInstance spawn(String sessionId, String name, String agentId, String initialPrompt) {
-        log.info("[WorkerInstanceManager] Spawning worker: sessionId={}, name={}, agentId={}",
-                sessionId, name, agentId);
+    public WorkerInstance spawn(String sessionId, String name, String agentId,
+                                String initialPrompt, int assignedTaskId) {
+        log.info("[WorkerInstanceManager] Spawning worker: sessionId={}, name={}, agentId={}, assignedTaskId={}",
+                sessionId, name, agentId, assignedTaskId);
 
-        // 1. 创建 Worker 实例
-        WorkerInstance instance = WorkerInstance.create(sessionId, name, agentId);
+        // 1. 创建 Worker 实例（带指派任务）
+        WorkerInstance instance = WorkerInstance.createWithTask(sessionId, name, agentId, assignedTaskId);
         workerRepository.save(instance);
 
-        // 2. 创建 WorkerLoop
+        // 2. 在 spawn 的时候就把任务分配给这个 Worker
+        if (assignedTaskId != 0) {
+            taskBoardService.assignTask(sessionId, assignedTaskId, instance.getInstanceId());
+        }
+
+        // 3. 创建 WorkerLoop
         WorkerLoop workerLoop = new WorkerLoop(
                 instance,
                 workerRepository,
@@ -95,12 +103,29 @@ public class WorkerInstanceManager {
                 initialPrompt
         );
 
-        // 3. 启动 WorkerLoop
+        // 4. 启动 WorkerLoop
         runningLoops.put(instance.getInstanceId(), workerLoop);
         workerExecutor.submit(workerLoop);
 
-        log.info("[WorkerInstanceManager] Worker spawned successfully: instanceId={}", instance.getInstanceId());
+        // 5. 发布 worker_spawned 事件
+        eventBus.publish(sessionId, new WorkerSpawnedEvent(sessionId, instance.getInstanceId(), name, agentId));
+
+        log.info("[WorkerInstanceManager] Worker spawned successfully: instanceId={}, assignedTaskId={}",
+                instance.getInstanceId(), assignedTaskId);
         return instance;
+    }
+
+    /**
+     * 创建并启动 Worker 实例（兼容旧版本，无指派任务）
+     *
+     * @param sessionId     会话 ID
+     * @param name          Worker 名称
+     * @param agentId       Agent ID
+     * @param initialPrompt 初始 Prompt
+     * @return Worker 实例
+     */
+    public WorkerInstance spawn(String sessionId, String name, String agentId, String initialPrompt) {
+        return spawn(sessionId, name, agentId, initialPrompt, 0);
     }
 
     /**

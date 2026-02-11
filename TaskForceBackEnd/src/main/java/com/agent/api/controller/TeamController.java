@@ -48,7 +48,7 @@ public class TeamController {
                 teamOrchestrationService.startTeamSession(
                         request.getSessionId(),
                         request.getUserGoal()
-                ).subscribe(); // 订阅 Flux 以触发执行
+                );
             }, "team-start-" + request.getSessionId()).start();
 
             return ApiResponse.success("团队会话启动中", null);

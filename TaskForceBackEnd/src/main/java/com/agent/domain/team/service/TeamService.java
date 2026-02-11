@@ -2,6 +2,7 @@ package com.agent.domain.team.service;
 
 import com.agent.domain.team.model.Team;
 import com.agent.domain.team.model.TeamMember;
+import com.agent.domain.team.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -15,6 +16,8 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TeamService {
 
+    private final TeamRepository teamRepository;
+
     /**
      * 创建团队
      * @param sessionId 会话 ID
@@ -22,7 +25,17 @@ public class TeamService {
      * @return 团队对象
      */
     public Team createTeam(String sessionId, String leadInstanceId) {
-        throw new UnsupportedOperationException("待 Redis 实现后完成");
+        // 检查会话是否已有团队
+        if (teamRepository.existsBySessionId(sessionId)) {
+            throw new IllegalStateException("Session already has a team: " + sessionId);
+        }
+
+        Team team = Team.create(sessionId, leadInstanceId);
+        teamRepository.save(team);
+
+        log.info("Created team: teamId={}, sessionId={}, leadInstanceId={}",
+                team.getTeamId(), sessionId, leadInstanceId);
+        return team;
     }
 
     /**
@@ -31,7 +44,14 @@ public class TeamService {
      * @param member 成员对象
      */
     public void addMember(String teamId, TeamMember member) {
-        throw new UnsupportedOperationException("待 Redis 实现后完成");
+        Team team = teamRepository.findById(teamId)
+                .orElseThrow(() -> new IllegalArgumentException("Team not found: " + teamId));
+
+        team.addMember(member);
+        teamRepository.save(team);
+
+        log.info("Added member to team: teamId={}, instanceId={}, name={}",
+                teamId, member.getInstanceId(), member.getName());
     }
 
     /**
@@ -40,7 +60,13 @@ public class TeamService {
      * @param instanceId 实例 ID
      */
     public void removeMember(String teamId, String instanceId) {
-        throw new UnsupportedOperationException("待 Redis 实现后完成");
+        Team team = teamRepository.findById(teamId)
+                .orElseThrow(() -> new IllegalArgumentException("Team not found: " + teamId));
+
+        team.removeMember(instanceId);
+        teamRepository.save(team);
+
+        log.info("Removed member from team: teamId={}, instanceId={}", teamId, instanceId);
     }
 
     /**
@@ -48,7 +74,13 @@ public class TeamService {
      * @param teamId 团队 ID
      */
     public void shutdown(String teamId) {
-        throw new UnsupportedOperationException("待 Redis 实现后完成");
+        Team team = teamRepository.findById(teamId)
+                .orElseThrow(() -> new IllegalArgumentException("Team not found: " + teamId));
+
+        team.markClosed();
+        teamRepository.save(team);
+
+        log.info("Shutdown team: teamId={}", teamId);
     }
 
     /**
@@ -57,7 +89,8 @@ public class TeamService {
      * @return 团队对象
      */
     public Team getTeam(String teamId) {
-        throw new UnsupportedOperationException("待 Redis 实现后完成");
+        return teamRepository.findById(teamId)
+                .orElseThrow(() -> new IllegalArgumentException("Team not found: " + teamId));
     }
 
     /**
@@ -66,6 +99,7 @@ public class TeamService {
      * @return 团队对象
      */
     public Team getTeamBySessionId(String sessionId) {
-        throw new UnsupportedOperationException("待 Redis 实现后完成");
+        return teamRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("Team not found for session: " + sessionId));
     }
 }

@@ -402,7 +402,7 @@ public class ContextAssembler {
                 case IN_PROGRESS:
                     sb.append("⏳ ");
                     break;
-                case CLAIMED:
+                case ASSIGNED:
                     sb.append("🔒 ");
                     break;
                 case FAILED:

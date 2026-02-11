@@ -42,7 +42,7 @@ public interface TaskBoardRepository {
     List<Task> findBySessionIdAndOwner(String sessionId, String owner);
 
     /**
-     * 查询会话中可执行的任务（PENDING 或 CLAIMED 且没有被阻塞）
+     * 查询会话中可执行的任务（PENDING 或 ASSIGNED 且没有被阻塞）
      */
     List<Task> findExecutableTasks(String sessionId);
 

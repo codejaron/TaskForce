@@ -51,6 +51,12 @@ public class WorkerInstance {
     private int currentTaskId;
 
     /**
+     * Leader 指派的任务 ID（0 表示无指派任务）
+     * Worker 启动后优先执行此任务
+     */
+    private int assignedTaskId;
+
+    /**
      * 启动时间
      */
     @Builder.Default
@@ -72,6 +78,22 @@ public class WorkerInstance {
                 .sessionId(sessionId)
                 .name(name)
                 .agentId(agentId)
+                .status(WorkerStatus.IDLE)
+                .currentTaskId(0)
+                .assignedTaskId(0)
+                .build();
+    }
+
+    /**
+     * 创建带指派任务的 Worker 实例
+     */
+    public static WorkerInstance createWithTask(String sessionId, String name,
+                                                 String agentId, int assignedTaskId) {
+        return WorkerInstance.builder()
+                .sessionId(sessionId)
+                .name(name)
+                .agentId(agentId)
+                .assignedTaskId(assignedTaskId)
                 .status(WorkerStatus.IDLE)
                 .currentTaskId(0)
                 .build();
@@ -167,6 +189,22 @@ public class WorkerInstance {
      */
     public void clearCurrentTask() {
         this.currentTaskId = 0;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 更新指派任务（Leader 追加新任务时使用）
+     */
+    public void assignTask(int taskId) {
+        this.assignedTaskId = taskId;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 清除指派任务
+     */
+    public void clearAssignedTask() {
+        this.assignedTaskId = 0;
         this.updatedAt = LocalDateTime.now();
     }
 }

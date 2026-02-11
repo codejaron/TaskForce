@@ -13,8 +13,10 @@ import java.util.Map;
 
 /**
  * 认领任务工具
- * Worker 使用此工具认领指定的任务
+ * @deprecated Leader 分配模式下不再需要 Worker 自主认领任务。
+ * 任务在 spawn Worker 时已通过 assignTask() 分配。
  */
+@Deprecated
 @Slf4j
 @Component
 @RequiredArgsConstructor
