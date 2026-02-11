@@ -83,26 +83,17 @@ public class RedisTaskBoardRepository implements TaskBoardRepository {
     }
 
     @Override
-    public Optional<Task> findById(String taskId) {
+    public Optional<Task> findById(String sessionId, int taskId) {
         try {
-            // 需要扫描所有 taskboard:* 键来查找
-            Set<String> keys = redisTemplate.keys(KEY_PREFIX + "*");
-            if (keys == null || keys.isEmpty()) {
-                return Optional.empty();
-            }
-
+            String key = buildKey(sessionId);
             String field = buildField(taskId);
-            for (String key : keys) {
-                String json = (String) redisTemplate.opsForHash().get(key, field);
-                if (json != null) {
-                    Task task = objectMapper.readValue(json, Task.class);
-                    return Optional.of(task);
-                }
+            String json = (String) redisTemplate.opsForHash().get(key, field);
+            if (json != null) {
+                return Optional.of(objectMapper.readValue(json, Task.class));
             }
-
             return Optional.empty();
         } catch (Exception e) {
-            log.error("Failed to find Task by id: {}", taskId, e);
+            log.error("Failed to find Task: sessionId={}, taskId={}", sessionId, taskId, e);
             return Optional.empty();
         }
     }
@@ -154,23 +145,16 @@ public class RedisTaskBoardRepository implements TaskBoardRepository {
     }
 
     @Override
-    public void delete(String taskId) {
+    public void delete(String sessionId, int taskId) {
         try {
-            Set<String> keys = redisTemplate.keys(KEY_PREFIX + "*");
-            if (keys == null || keys.isEmpty()) {
-                return;
-            }
-
+            String key = buildKey(sessionId);
             String field = buildField(taskId);
-            for (String key : keys) {
-                Long deleted = redisTemplate.opsForHash().delete(key, field);
-                if (deleted > 0) {
-                    log.debug("Deleted task: {}", taskId);
-                    return;
-                }
+            Long deleted = redisTemplate.opsForHash().delete(key, field);
+            if (deleted > 0) {
+                log.debug("Deleted task: sessionId={}, taskId={}", sessionId, taskId);
             }
         } catch (Exception e) {
-            log.error("Failed to delete Task: {}", taskId, e);
+            log.error("Failed to delete Task: sessionId={}, taskId={}", sessionId, taskId, e);
             throw new RuntimeException("Failed to delete Task", e);
         }
     }
@@ -188,23 +172,13 @@ public class RedisTaskBoardRepository implements TaskBoardRepository {
     }
 
     @Override
-    public boolean exists(String taskId) {
+    public boolean exists(String sessionId, int taskId) {
         try {
-            Set<String> keys = redisTemplate.keys(KEY_PREFIX + "*");
-            if (keys == null || keys.isEmpty()) {
-                return false;
-            }
-
+            String key = buildKey(sessionId);
             String field = buildField(taskId);
-            for (String key : keys) {
-                if (redisTemplate.opsForHash().hasKey(key, field)) {
-                    return true;
-                }
-            }
-
-            return false;
+            return Boolean.TRUE.equals(redisTemplate.opsForHash().hasKey(key, field));
         } catch (Exception e) {
-            log.error("Failed to check existence of Task: {}", taskId, e);
+            log.error("Failed to check existence of Task: sessionId={}, taskId={}", sessionId, taskId, e);
             return false;
         }
     }
@@ -219,7 +193,7 @@ public class RedisTaskBoardRepository implements TaskBoardRepository {
     /**
      * 构建 Hash field
      */
-    private String buildField(String taskId) {
+    private String buildField(int taskId) {
         return FIELD_PREFIX + taskId;
     }
 }

@@ -30,8 +30,8 @@ public class CompleteTaskTool implements ToolCallback {
               "type": "object",
               "properties": {
                 "taskId": {
-                  "type": "string",
-                  "description": "要完成的任务 ID"
+                  "type": "integer",
+                  "description": "要完成的任务序号，如 1"
                 },
                 "summary": {
                   "type": "string",
@@ -59,22 +59,33 @@ public class CompleteTaskTool implements ToolCallback {
         try {
             Map<String, Object> args = objectMapper.readValue(toolInput, Map.class);
 
-            String taskId = (String) args.get("taskId");
+            String sessionId = extractSessionId(toolContext);
+            int taskId = ((Number) args.get("taskId")).intValue();
             String summary = (String) args.get("summary");
 
-            taskBoardService.completeTask(taskId);
+            taskBoardService.completeTask(sessionId, taskId);
 
             log.info("[CompleteTaskTool] Task completed: taskId={}", taskId);
 
             if (summary != null && !summary.isEmpty()) {
-                return String.format("Task %s completed successfully. Summary: %s", taskId, summary);
+                return String.format("Task #%d completed successfully. Summary: %s", taskId, summary);
             } else {
-                return String.format("Task %s completed successfully", taskId);
+                return String.format("Task #%d completed successfully", taskId);
             }
 
         } catch (Exception e) {
             log.error("[CompleteTaskTool] Error completing task", e);
             return "Error completing task: " + e.getMessage();
         }
+    }
+
+    private String extractSessionId(ToolContext toolContext) {
+        if (toolContext != null && toolContext.getContext() != null) {
+            Object sessionId = toolContext.getContext().get("sessionId");
+            if (sessionId != null) {
+                return sessionId.toString();
+            }
+        }
+        throw new IllegalArgumentException("sessionId not found in tool context");
     }
 }

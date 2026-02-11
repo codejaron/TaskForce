@@ -30,8 +30,8 @@ public class ClaimTaskTool implements ToolCallback {
               "type": "object",
               "properties": {
                 "taskId": {
-                  "type": "string",
-                  "description": "要认领的任务 ID"
+                  "type": "integer",
+                  "description": "要认领的任务序号，如 1"
                 }
               },
               "required": ["taskId"]
@@ -57,16 +57,16 @@ public class ClaimTaskTool implements ToolCallback {
 
             String sessionId = extractSessionId(toolContext);
             String instanceId = extractInstanceId(toolContext);
-            String taskId = (String) args.get("taskId");
+            int taskId = ((Number) args.get("taskId")).intValue();
 
             boolean claimed = taskBoardService.claimTask(sessionId, taskId, instanceId);
 
             if (claimed) {
                 log.info("[ClaimTaskTool] Task claimed successfully: taskId={}, instanceId={}", taskId, instanceId);
-                return String.format("Task %s claimed successfully", taskId);
+                return String.format("Task #%d claimed successfully", taskId);
             } else {
                 log.warn("[ClaimTaskTool] Failed to claim task: taskId={}, instanceId={}", taskId, instanceId);
-                return String.format("Failed to claim task %s (already claimed or invalid status)", taskId);
+                return String.format("Failed to claim task #%d (already claimed or invalid status)", taskId);
             }
 
         } catch (Exception e) {

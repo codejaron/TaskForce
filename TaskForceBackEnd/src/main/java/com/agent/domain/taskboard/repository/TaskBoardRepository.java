@@ -24,7 +24,7 @@ public interface TaskBoardRepository {
     /**
      * 根据任务 ID 查询任务
      */
-    Optional<Task> findById(String taskId);
+    Optional<Task> findById(String sessionId, int taskId);
 
     /**
      * 根据会话 ID 查询所有任务
@@ -49,7 +49,7 @@ public interface TaskBoardRepository {
     /**
      * 删除任务
      */
-    void delete(String taskId);
+    void delete(String sessionId, int taskId);
 
     /**
      * 删除会话的所有任务
@@ -59,5 +59,5 @@ public interface TaskBoardRepository {
     /**
      * 检查任务是否存在
      */
-    boolean exists(String taskId);
+    boolean exists(String sessionId, int taskId);
 }

@@ -42,9 +42,9 @@ public class CreateTaskTool implements ToolCallback {
                 "blockedBy": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "integer"
                   },
-                  "description": "依赖的任务 ID 列表（可选）"
+                  "description": "依赖的任务序号列表，如 [1, 2]（可选）"
                 }
               },
               "required": ["subject", "description"]
@@ -71,13 +71,19 @@ public class CreateTaskTool implements ToolCallback {
             String sessionId = extractSessionId(toolContext);
             String subject = (String) args.get("subject");
             String description = (String) args.get("description");
-            List<String> blockedBy = (List<String>) args.getOrDefault("blockedBy", List.of());
+
+            @SuppressWarnings("unchecked")
+            List<Integer> blockedBy = args.containsKey("blockedBy")
+                ? ((List<?>) args.get("blockedBy")).stream()
+                    .map(v -> v instanceof Number ? ((Number) v).intValue() : Integer.parseInt(v.toString()))
+                    .collect(java.util.stream.Collectors.toList())
+                : List.of();
 
             Task task = taskBoardService.createTask(sessionId, subject, description, blockedBy);
 
             log.info("[CreateTaskTool] Created task: taskId={}, subject={}", task.getTaskId(), subject);
 
-            return String.format("Task created successfully: taskId=%s, subject=%s",
+            return String.format("Task #%d created: %s",
                     task.getTaskId(), task.getSubject());
 
         } catch (Exception e) {

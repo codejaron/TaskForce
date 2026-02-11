@@ -208,7 +208,7 @@ public class WorkerLoop implements Runnable {
 
                 if (claimed) {
                     // 成功认领，重新加载任务获取最新状态
-                    Task claimedTask = taskBoardService.getTask(task.getTaskId());
+                    Task claimedTask = taskBoardService.getTask(workerInstance.getSessionId(), task.getTaskId());
                     log.info("[WorkerLoop] Successfully claimed task: taskId={}, subject={}, instanceId={}",
                             claimedTask.getTaskId(), claimedTask.getSubject(), workerInstance.getInstanceId());
                     return claimedTask;
@@ -244,7 +244,7 @@ public class WorkerLoop implements Runnable {
             workerRepository.save(workerInstance);
 
             // 2. 更新任务状态为 IN_PROGRESS
-            taskBoardService.startTask(task.getTaskId());
+            taskBoardService.startTask(workerInstance.getSessionId(), task.getTaskId());
 
             // 3. 构建执行指令
             String instruction = buildTaskInstruction(task);
@@ -255,7 +255,7 @@ public class WorkerLoop implements Runnable {
                     instruction,
                     MAX_REACT_ITERATIONS,
                     workerInstance.getSessionId(),
-                    task.getTaskId(),
+                    String.valueOf(task.getTaskId()),
                     null, // stepIndex 在 Team 模式下不适用
                     workerInstance.getInstanceId() // Worker 实例 ID，用于 InboxCheckHook
             );
@@ -320,10 +320,10 @@ public class WorkerLoop implements Runnable {
                         .status(TaskStatus.PENDING)
                         .owner(null)
                         .build();
-                taskBoardService.updateTask(task.getTaskId(), updateRequest);
+                taskBoardService.updateTask(workerInstance.getSessionId(), task.getTaskId(), updateRequest);
             } else {
                 // 任务完成
-                taskBoardService.completeTask(task.getTaskId());
+                taskBoardService.completeTask(workerInstance.getSessionId(), task.getTaskId());
                 log.info("[WorkerLoop] Task completed successfully: taskId={}", task.getTaskId());
             }
 
@@ -336,7 +336,7 @@ public class WorkerLoop implements Runnable {
 
             // 标记任务失败
             try {
-                taskBoardService.failTask(task.getTaskId());
+                taskBoardService.failTask(workerInstance.getSessionId(), task.getTaskId());
             } catch (Exception ex) {
                 log.error("[WorkerLoop] Failed to mark task as failed: taskId={}", task.getTaskId(), ex);
             }
