@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { LeadChatPanel } from '../../../features/team-lead/ui';
+import { WorkerChatPanel } from '../../../features/team/ui/WorkerChatPanel';
 import { useTeamStore } from '../../../features/team/model/store';
 import { useAgentStore } from '../../../features/agents/model/store';
 
@@ -25,7 +26,11 @@ export const TeamStudioPage: React.FC = () => {
     fetchSessions,
     createSession,
     selectSession,
-    deleteSession
+    deleteSession,
+    tasks,
+    members,
+    activeWorkerId,
+    setActiveWorker
   } = useTeamStore();
 
   // Agent store
@@ -199,38 +204,96 @@ export const TeamStudioPage: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <Activity size={20} className="text-blue-600" />
                     <h2 className="font-semibold text-gray-900">Task Board</h2>
+                    <span className="text-xs text-gray-400 ml-auto">
+                      {tasks.filter(t => t.status === 'COMPLETED').length}/{tasks.length}
+                    </span>
                   </div>
                 </div>
 
                 {/* 看板内容区域 */}
-                <div className="flex-1 overflow-y-auto p-4">
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center text-gray-500">
-                      <Activity size={48} className="mx-auto mb-3 text-gray-300" />
-                      <p className="text-sm">暂无任务</p>
+                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                  {tasks.length === 0 ? (
+                    <div className="h-full flex items-center justify-center">
+                      <div className="text-center text-gray-500">
+                        <Activity size={48} className="mx-auto mb-3 text-gray-300" />
+                        <p className="text-sm">暂无任务</p>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    tasks.map(task => (
+                      <div key={task.taskId} className={clsx(
+                        "p-3 rounded-lg border transition-all",
+                        task.status === 'COMPLETED' ? "bg-green-50 border-green-200" :
+                        task.status === 'WORKING' || task.status === 'ASSIGNED' ? "bg-blue-50 border-blue-200" :
+                        task.status === 'FAILED' ? "bg-red-50 border-red-200" :
+                        "bg-white border-gray-200"
+                      )}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-gray-900">
+                            #{task.taskId} {task.subject}
+                          </span>
+                          <span className={clsx(
+                            "text-xs px-2 py-0.5 rounded-full font-medium",
+                            task.status === 'COMPLETED' ? "bg-green-100 text-green-700" :
+                            task.status === 'WORKING' ? "bg-blue-100 text-blue-700" :
+                            task.status === 'ASSIGNED' ? "bg-yellow-100 text-yellow-700" :
+                            task.status === 'FAILED' ? "bg-red-100 text-red-700" :
+                            "bg-gray-100 text-gray-600"
+                          )}>
+                            {task.status}
+                          </span>
+                        </div>
+                        {task.description && (
+                          <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>
+                        )}
+                        {task.owner && (
+                          <p className="text-xs text-gray-400 mt-1">Owner: {task.owner}</p>
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
-              {/* 右侧：Worker 监控区 (30%) */}
+              {/* 右侧：Worker 对话区 (30%) */}
               <div className="w-[30%] flex flex-col bg-gray-50">
-                {/* 区域标题 */}
-                <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 bg-white">
-                  <div className="flex items-center gap-2">
-                    <Users size={20} className="text-green-600" />
-                    <h2 className="font-semibold text-gray-900">Worker 监控</h2>
+                {/* Worker Tab 头 */}
+                <div className="flex-shrink-0 px-2 py-2 border-b border-gray-200 bg-white overflow-x-auto">
+                  <div className="flex items-center gap-1">
+                    <Users size={16} className="text-green-600 shrink-0 mr-1" />
+                    {members.length === 0 ? (
+                      <span className="text-xs text-gray-400">暂无 Worker</span>
+                    ) : (
+                      members.map(m => (
+                        <button
+                          key={m.instanceId}
+                          onClick={() => setActiveWorker(
+                            activeWorkerId === m.instanceId ? null : m.instanceId
+                          )}
+                          className={clsx(
+                            "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer",
+                            activeWorkerId === m.instanceId
+                              ? "bg-green-100 text-green-800 border border-green-300"
+                              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                          )}
+                        >
+                          <span className={clsx(
+                            "inline-block w-1.5 h-1.5 rounded-full mr-1.5",
+                            m.status === 'BUSY' ? "bg-blue-500" :
+                            m.status === 'ERROR' ? "bg-red-500" :
+                            m.status === 'STOPPED' ? "bg-gray-400" :
+                            "bg-green-500"
+                          )} />
+                          {m.agentName}
+                        </button>
+                      ))
+                    )}
                   </div>
                 </div>
 
-                {/* 监控内容区域 */}
-                <div className="flex-1 overflow-y-auto p-4">
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center text-gray-500">
-                      <Users size={48} className="mx-auto mb-3 text-gray-300" />
-                      <p className="text-sm">暂无 Worker</p>
-                    </div>
-                  </div>
+                {/* Worker 对话窗口 */}
+                <div className="flex-1 overflow-hidden">
+                  <WorkerChatPanel />
                 </div>
               </div>
             </div>
