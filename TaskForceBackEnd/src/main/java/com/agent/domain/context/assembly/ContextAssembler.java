@@ -336,11 +336,11 @@ public class ContextAssembler {
      * @param taskId 任务 ID
      * @return 组装后的上下文 Markdown
      */
-    public String assembleForTask(String sessionId, String taskId) {
+    public String assembleForTask(String sessionId, int taskId) {
         StringBuilder context = new StringBuilder();
 
         // 1. 获取当前任务
-        Task currentTask = taskBoardService.getTask(taskId);
+        Task currentTask = taskBoardService.getTask(sessionId, taskId);
 
         // 2. 渲染任务板概览
         context.append(renderTaskBoard(sessionId, taskId));
@@ -354,17 +354,7 @@ public class ContextAssembler {
             }
         }
 
-        // 4. 渲染收件箱消息（如果有）
-        try {
-            String inboxContent = renderInbox(sessionId, taskId);
-            if (inboxContent != null && !inboxContent.isEmpty()) {
-                context.append(inboxContent);
-            }
-        } catch (Exception e) {
-            log.debug("Inbox not available or empty: {}", e.getMessage());
-        }
-
-        // 5. 渲染团队成员信息
+        // 4. 渲染团队成员信息
         try {
             String teammatesContent = renderTeammates(sessionId);
             if (teammatesContent != null && !teammatesContent.isEmpty()) {
@@ -383,7 +373,7 @@ public class ContextAssembler {
     /**
      * 渲染任务板概览
      */
-    private String renderTaskBoard(String sessionId, String currentTaskId) {
+    private String renderTaskBoard(String sessionId, int currentTaskId) {
         StringBuilder sb = new StringBuilder();
         sb.append("【任务板】\n\n");
 
@@ -400,7 +390,7 @@ public class ContextAssembler {
             sb.append("- ");
 
             // 标记当前任务
-            if (task.getTaskId().equals(currentTaskId)) {
+            if (task.getTaskId() == currentTaskId) {
                 sb.append("**[当前]** ");
             }
 
@@ -432,7 +422,10 @@ public class ContextAssembler {
 
             // 显示阻塞信息
             if (task.getBlockedBy() != null && !task.getBlockedBy().isEmpty()) {
-                sb.append(" [blocked by: ").append(String.join(", ", task.getBlockedBy())).append("]");
+                String blockedByStr = task.getBlockedBy().stream()
+                        .map(String::valueOf)
+                        .collect(java.util.stream.Collectors.joining(", "));
+                sb.append(" [blocked by: ").append(blockedByStr).append("]");
             }
 
             sb.append("\n");
@@ -446,11 +439,11 @@ public class ContextAssembler {
      * 收集任务依赖链（递归）
      * 返回按依赖顺序排序的任务列表（被依赖的任务在前）
      */
-    private List<Task> collectTaskDependencyChain(String sessionId, String taskId) {
-        Set<String> visited = new HashSet<>();
+    private List<Task> collectTaskDependencyChain(String sessionId, int taskId) {
+        Set<Integer> visited = new HashSet<>();
         List<Task> dependencyChain = new ArrayList<>();
 
-        collectTaskDependenciesRecursive(taskId, visited, dependencyChain);
+        collectTaskDependenciesRecursive(sessionId, taskId, visited, dependencyChain);
 
         // 反转列表，使被依赖的任务在前
         Collections.reverse(dependencyChain);
@@ -461,19 +454,19 @@ public class ContextAssembler {
     /**
      * 递归收集任务依赖
      */
-    private void collectTaskDependenciesRecursive(String taskId, Set<String> visited, List<Task> result) {
+    private void collectTaskDependenciesRecursive(String sessionId, int taskId, Set<Integer> visited, List<Task> result) {
         if (visited.contains(taskId)) {
             return;
         }
         visited.add(taskId);
 
         try {
-            Task task = taskBoardService.getTask(taskId);
+            Task task = taskBoardService.getTask(sessionId, taskId);
 
             // 先递归处理依赖
             if (task.getBlockedBy() != null && !task.getBlockedBy().isEmpty()) {
-                for (String depTaskId : task.getBlockedBy()) {
-                    collectTaskDependenciesRecursive(depTaskId, visited, result);
+                for (int depTaskId : task.getBlockedBy()) {
+                    collectTaskDependenciesRecursive(sessionId, depTaskId, visited, result);
                 }
             }
 
@@ -496,7 +489,7 @@ public class ContextAssembler {
         sb.append("**Status:** ").append(task.getStatus()).append("\n\n");
 
         // 尝试读取任务输出（假设存储在 task_{taskId}/output.md）
-        String outputPath = String.format("task_%s/output.md", task.getTaskId());
+        String outputPath = String.format("task_%d/output.md", task.getTaskId());
         if (storage.exists(sessionId, outputPath)) {
             String output = storage.readFile(sessionId, outputPath);
             if (output != null && !output.isEmpty()) {

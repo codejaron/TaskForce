@@ -11,7 +11,7 @@ import lombok.Getter;
 public class WorkerOutputEvent extends OrchestrationEvent {
 
     private String instanceId;
-    private String taskId;
+    private int taskId;
     private String output;
 
     // 无参构造函数（Jackson 反序列化需要）
@@ -19,7 +19,7 @@ public class WorkerOutputEvent extends OrchestrationEvent {
         super();
     }
 
-    public WorkerOutputEvent(String sessionId, String instanceId, String taskId, String output) {
+    public WorkerOutputEvent(String sessionId, String instanceId, int taskId, String output) {
         super(sessionId);
         this.instanceId = instanceId;
         this.taskId = taskId;

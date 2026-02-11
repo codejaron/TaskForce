@@ -9,7 +9,7 @@ import lombok.Getter;
 @Getter
 public class TaskCreatedEvent extends OrchestrationEvent {
 
-    private String taskId;
+    private int taskId;
     private String subject;
     private String description;
 
@@ -17,7 +17,7 @@ public class TaskCreatedEvent extends OrchestrationEvent {
         super();
     }
 
-    public TaskCreatedEvent(String sessionId, String taskId, String subject, String description) {
+    public TaskCreatedEvent(String sessionId, int taskId, String subject, String description) {
         super(sessionId);
         this.taskId = taskId;
         this.subject = subject;

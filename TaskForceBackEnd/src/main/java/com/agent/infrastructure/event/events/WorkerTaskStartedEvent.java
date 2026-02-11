@@ -10,14 +10,14 @@ import lombok.Getter;
 public class WorkerTaskStartedEvent extends OrchestrationEvent {
 
     private String instanceId;
-    private String taskId;
+    private int taskId;
     private String taskSubject;
 
     public WorkerTaskStartedEvent() {
         super();
     }
 
-    public WorkerTaskStartedEvent(String sessionId, String instanceId, String taskId, String taskSubject) {
+    public WorkerTaskStartedEvent(String sessionId, String instanceId, int taskId, String taskSubject) {
         super(sessionId);
         this.instanceId = instanceId;
         this.taskId = taskId;

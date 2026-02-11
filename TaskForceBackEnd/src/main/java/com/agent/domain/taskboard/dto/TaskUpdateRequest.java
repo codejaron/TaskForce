@@ -40,10 +40,10 @@ public class TaskUpdateRequest {
     /**
      * 被阻塞的任务列表
      */
-    private List<String> blockedBy;
+    private List<Integer> blockedBy;
 
     /**
      * 阻塞的任务列表
      */
-    private List<String> blocks;
+    private List<Integer> blocks;
 }

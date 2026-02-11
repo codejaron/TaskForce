@@ -46,9 +46,9 @@ public class WorkerInstance {
     private WorkerStatus status = WorkerStatus.IDLE;
 
     /**
-     * 当前任务 ID
+     * 当前任务 ID（0 表示无任务）
      */
-    private String currentTaskId;
+    private int currentTaskId;
 
     /**
      * 启动时间
@@ -73,6 +73,7 @@ public class WorkerInstance {
                 .name(name)
                 .agentId(agentId)
                 .status(WorkerStatus.IDLE)
+                .currentTaskId(0)
                 .build();
     }
 
@@ -109,7 +110,7 @@ public class WorkerInstance {
     /**
      * 开始工作
      */
-    public void startWorking(String taskId) {
+    public void startWorking(int taskId) {
         this.status = WorkerStatus.WORKING;
         this.currentTaskId = taskId;
         this.updatedAt = LocalDateTime.now();
@@ -120,7 +121,7 @@ public class WorkerInstance {
      */
     public void completeWork() {
         this.status = WorkerStatus.IDLE;
-        this.currentTaskId = null;
+        this.currentTaskId = 0;
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -136,7 +137,7 @@ public class WorkerInstance {
      * 从等待状态恢复
      */
     public void resumeFromWaiting() {
-        if (currentTaskId != null) {
+        if (currentTaskId != 0) {
             this.status = WorkerStatus.WORKING;
         } else {
             this.status = WorkerStatus.IDLE;
@@ -149,14 +150,14 @@ public class WorkerInstance {
      */
     public void shutdown() {
         this.status = WorkerStatus.SHUTDOWN;
-        this.currentTaskId = null;
+        this.currentTaskId = 0;
         this.updatedAt = LocalDateTime.now();
     }
 
     /**
      * 更新当前任务
      */
-    public void updateCurrentTask(String taskId) {
+    public void updateCurrentTask(int taskId) {
         this.currentTaskId = taskId;
         this.updatedAt = LocalDateTime.now();
     }
@@ -165,7 +166,7 @@ public class WorkerInstance {
      * 清除当前任务
      */
     public void clearCurrentTask() {
-        this.currentTaskId = null;
+        this.currentTaskId = 0;
         this.updatedAt = LocalDateTime.now();
     }
 }

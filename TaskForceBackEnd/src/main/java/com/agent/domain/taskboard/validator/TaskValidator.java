@@ -53,7 +53,7 @@ public class TaskValidator {
         }
 
         // 1. 构建任务映射
-        Map<String, Task> taskMap = new HashMap<>();
+        Map<Integer, Task> taskMap = new HashMap<>();
         for (Task task : tasks) {
             taskMap.put(task.getTaskId(), task);
         }
@@ -61,10 +61,10 @@ public class TaskValidator {
         // 2. 检查依赖的任务是否存在
         for (Task task : tasks) {
             if (task.getBlockedBy() != null) {
-                for (String blockedByTaskId : task.getBlockedBy()) {
+                for (int blockedByTaskId : task.getBlockedBy()) {
                     if (!taskMap.containsKey(blockedByTaskId)) {
                         return ValidationResult.failure(
-                                String.format("任务 '%s' 依赖的任务 ID '%s' 不存在",
+                                String.format("任务 #%d 依赖的任务 #%d 不存在",
                                         task.getTaskId(), blockedByTaskId)
                         );
                     }
@@ -85,9 +85,9 @@ public class TaskValidator {
     /**
      * 检测是否存在环（使用 DFS）
      */
-    private static boolean hasCycle(List<Task> tasks, Map<String, Task> taskMap) {
-        Set<String> visited = new HashSet<>();
-        Set<String> recursionStack = new HashSet<>();
+    private static boolean hasCycle(List<Task> tasks, Map<Integer, Task> taskMap) {
+        Set<Integer> visited = new HashSet<>();
+        Set<Integer> recursionStack = new HashSet<>();
 
         for (Task task : tasks) {
             if (hasCycleDFS(task.getTaskId(), taskMap, visited, recursionStack)) {
@@ -98,8 +98,8 @@ public class TaskValidator {
         return false;
     }
 
-    private static boolean hasCycleDFS(String taskId, Map<String, Task> taskMap,
-                                       Set<String> visited, Set<String> recursionStack) {
+    private static boolean hasCycleDFS(int taskId, Map<Integer, Task> taskMap,
+                                       Set<Integer> visited, Set<Integer> recursionStack) {
         if (recursionStack.contains(taskId)) {
             return true; // 发现环
         }
@@ -113,7 +113,7 @@ public class TaskValidator {
 
         Task task = taskMap.get(taskId);
         if (task.getBlockedBy() != null) {
-            for (String blockedByTaskId : task.getBlockedBy()) {
+            for (int blockedByTaskId : task.getBlockedBy()) {
                 if (hasCycleDFS(blockedByTaskId, taskMap, visited, recursionStack)) {
                     return true;
                 }
@@ -136,17 +136,17 @@ public class TaskValidator {
             return ValidationResult.failure("任务为空");
         }
 
-        Map<String, Task> taskMap = new HashMap<>();
+        Map<Integer, Task> taskMap = new HashMap<>();
         for (Task t : allTasks) {
             taskMap.put(t.getTaskId(), t);
         }
 
         // 检查依赖的任务是否存在
         if (task.getBlockedBy() != null) {
-            for (String blockedByTaskId : task.getBlockedBy()) {
+            for (int blockedByTaskId : task.getBlockedBy()) {
                 if (!taskMap.containsKey(blockedByTaskId)) {
                     return ValidationResult.failure(
-                            String.format("依赖的任务 ID '%s' 不存在", blockedByTaskId)
+                            String.format("依赖的任务 #%d 不存在", blockedByTaskId)
                     );
                 }
             }

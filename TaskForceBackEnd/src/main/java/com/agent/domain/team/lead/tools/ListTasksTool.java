@@ -61,17 +61,22 @@ public class ListTasksTool implements ToolCallback {
             result.append(String.format("Found %d tasks:\n\n", tasks.size()));
 
             for (Task task : tasks) {
-                result.append(String.format("Task ID: %s\n", task.getTaskId()));
-                result.append(String.format("  Subject: %s\n", task.getSubject()));
+                result.append(String.format("Task #%d: %s\n", task.getTaskId(), task.getSubject()));
                 result.append(String.format("  Status: %s\n", task.getStatus()));
                 result.append(String.format("  Owner: %s\n", task.getOwner() != null ? task.getOwner() : "None"));
 
                 if (task.getBlockedBy() != null && !task.getBlockedBy().isEmpty()) {
-                    result.append(String.format("  Blocked By: %s\n", String.join(", ", task.getBlockedBy())));
+                    String deps = task.getBlockedBy().stream()
+                            .map(id -> "#" + id)
+                            .collect(java.util.stream.Collectors.joining(", "));
+                    result.append(String.format("  Blocked By: %s\n", deps));
                 }
 
                 if (task.getBlocks() != null && !task.getBlocks().isEmpty()) {
-                    result.append(String.format("  Blocks: %s\n", String.join(", ", task.getBlocks())));
+                    String blocks = task.getBlocks().stream()
+                            .map(id -> "#" + id)
+                            .collect(java.util.stream.Collectors.joining(", "));
+                    result.append(String.format("  Blocks: %s\n", blocks));
                 }
 
                 result.append("\n");

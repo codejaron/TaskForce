@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -43,8 +44,16 @@ public class TaskBoardService {
     /**
      * 创建任务
      */
-    public Task createTask(String sessionId, String subject, String description, List<String> blockedBy) {
+    public Task createTask(String sessionId, String subject, String description, List<Integer> blockedBy) {
+        // 分配递增序号：当前 session 最大 taskId + 1
+        List<Task> existingTasks = taskBoardRepository.findBySessionId(sessionId);
+        int nextId = existingTasks.stream()
+                .mapToInt(Task::getTaskId)
+                .max()
+                .orElse(0) + 1;
+
         Task task = Task.builder()
+                .taskId(nextId)
                 .sessionId(sessionId)
                 .subject(subject)
                 .description(description)
@@ -62,8 +71,8 @@ public class TaskBoardService {
 
         // 维护双向依赖关系（更新 blocks）
         if (blockedBy != null && !blockedBy.isEmpty()) {
-            for (String blockedByTaskId : blockedBy) {
-                Task blockedByTask = taskBoardRepository.findById(blockedByTaskId)
+            for (int blockedByTaskId : blockedBy) {
+                Task blockedByTask = taskBoardRepository.findById(sessionId, blockedByTaskId)
                         .orElseThrow(() -> new IllegalArgumentException("Blocked by task not found: " + blockedByTaskId));
 
                 if (blockedByTask.getBlocks() == null) {
@@ -89,7 +98,7 @@ public class TaskBoardService {
      * 认领任务（原子操作）
      * 使用 Lua 脚本确保只有一个 Worker 能成功认领
      */
-    public boolean claimTask(String sessionId, String taskId, String owner) {
+    public boolean claimTask(String sessionId, int taskId, String owner) {
         try {
             String key = KEY_PREFIX + sessionId;
             String field = FIELD_PREFIX + taskId;
@@ -139,8 +148,8 @@ public class TaskBoardService {
     /**
      * 开始执行任务
      */
-    public void startTask(String taskId) {
-        Task task = taskBoardRepository.findById(taskId)
+    public void startTask(String sessionId, int taskId) {
+        Task task = taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
 
         if (task.getStatus() != TaskStatus.CLAIMED) {
@@ -156,11 +165,10 @@ public class TaskBoardService {
      * 完成任务（自动解锁下游任务）
      * 使用 Lua 脚本实现原子性操作
      */
-    public void completeTask(String taskId) {
-        Task task = taskBoardRepository.findById(taskId)
+    public void completeTask(String sessionId, int taskId) {
+        Task task = taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
 
-        String sessionId = task.getSessionId();
         String key = KEY_PREFIX + sessionId;
         String field = FIELD_PREFIX + taskId;
 
@@ -221,7 +229,10 @@ public class TaskBoardService {
                         List<String> unblockedTaskIds = (List<String>) resultMap.get("unblocked");
 
                         if (unblockedTaskIds != null) {
-                            for (String unblockedTaskId : unblockedTaskIds) {
+                            for (Object unblockedTaskIdObj : unblockedTaskIds) {
+                                int unblockedTaskId = unblockedTaskIdObj instanceof Number
+                                    ? ((Number) unblockedTaskIdObj).intValue()
+                                    : Integer.parseInt(unblockedTaskIdObj.toString());
                                 eventBus.publish(sessionId, new TaskUnblockedEvent(sessionId, unblockedTaskId, taskId));
                                 log.info("Unblocked task: taskId={}, unblocked by={}", unblockedTaskId, taskId);
                             }
@@ -244,20 +255,20 @@ public class TaskBoardService {
     /**
      * 标记任务失败
      */
-    public void failTask(String taskId) {
-        Task task = taskBoardRepository.findById(taskId)
+    public void failTask(String sessionId, int taskId) {
+        Task task = taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
 
         task.fail();
         taskBoardRepository.save(task);
-        log.info("Task failed: taskId={}", taskId);
+        log.info("Task failed: sessionId={}, taskId={}", sessionId, taskId);
     }
 
     /**
      * 更新任务
      */
-    public Task updateTask(String taskId, TaskUpdateRequest updates) {
-        Task task = taskBoardRepository.findById(taskId)
+    public Task updateTask(String sessionId, int taskId, TaskUpdateRequest updates) {
+        Task task = taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
 
         // 更新允许修改的字段
@@ -276,15 +287,15 @@ public class TaskBoardService {
 
         task.setUpdatedAt(LocalDateTime.now());
         taskBoardRepository.save(task);
-        log.info("Task updated: taskId={}", taskId);
+        log.info("Task updated: sessionId={}, taskId={}", sessionId, taskId);
         return task;
     }
 
     /**
      * 获取任务
      */
-    public Task getTask(String taskId) {
-        return taskBoardRepository.findById(taskId)
+    public Task getTask(String sessionId, int taskId) {
+        return taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
     }
 
@@ -302,17 +313,17 @@ public class TaskBoardService {
     public List<Task> getAvailableTasks(String sessionId) {
         return taskBoardRepository.findExecutableTasks(sessionId).stream()
                 .filter(task -> task.getStatus() == TaskStatus.PENDING)
-                .sorted((t1, t2) -> t1.getTaskId().compareTo(t2.getTaskId()))
+                .sorted(Comparator.comparingInt(Task::getTaskId))
                 .collect(Collectors.toList());
     }
 
     /**
      * 添加依赖关系
      */
-    public void addDependency(String taskId, String blockedByTaskId) {
-        Task task = taskBoardRepository.findById(taskId)
+    public void addDependency(String sessionId, int taskId, int blockedByTaskId) {
+        Task task = taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
-        Task blockedByTask = taskBoardRepository.findById(blockedByTaskId)
+        Task blockedByTask = taskBoardRepository.findById(sessionId, blockedByTaskId)
                 .orElseThrow(() -> new IllegalArgumentException("Blocked by task not found: " + blockedByTaskId));
 
         // 添加到 blockedBy
@@ -346,17 +357,17 @@ public class TaskBoardService {
     /**
      * 移除依赖关系
      */
-    public void removeDependency(String taskId, String blockedByTaskId) {
-        Task task = taskBoardRepository.findById(taskId).orElse(null);
-        Task blockedByTask = taskBoardRepository.findById(blockedByTaskId).orElse(null);
+    public void removeDependency(String sessionId, int taskId, int blockedByTaskId) {
+        Task task = taskBoardRepository.findById(sessionId, taskId).orElse(null);
+        Task blockedByTask = taskBoardRepository.findById(sessionId, blockedByTaskId).orElse(null);
 
         if (task != null && task.getBlockedBy() != null) {
-            task.getBlockedBy().remove(blockedByTaskId);
+            task.getBlockedBy().remove(Integer.valueOf(blockedByTaskId));
             taskBoardRepository.save(task);
         }
 
         if (blockedByTask != null && blockedByTask.getBlocks() != null) {
-            blockedByTask.getBlocks().remove(taskId);
+            blockedByTask.getBlocks().remove(Integer.valueOf(taskId));
             taskBoardRepository.save(blockedByTask);
         }
 
@@ -374,28 +385,28 @@ public class TaskBoardService {
     /**
      * 删除任务
      */
-    public void deleteTask(String taskId) {
-        Task task = taskBoardRepository.findById(taskId)
+    public void deleteTask(String sessionId, int taskId) {
+        Task task = taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
 
         // 清理依赖关系
         if (task.getBlocks() != null) {
-            for (String blockedTaskId : task.getBlocks()) {
-                removeDependency(blockedTaskId, taskId);
+            for (int blockedTaskId : task.getBlocks()) {
+                removeDependency(sessionId, blockedTaskId, taskId);
             }
         }
         if (task.getBlockedBy() != null) {
-            for (String blockedByTaskId : task.getBlockedBy()) {
-                Task blockedByTask = taskBoardRepository.findById(blockedByTaskId).orElse(null);
+            for (int blockedByTaskId : task.getBlockedBy()) {
+                Task blockedByTask = taskBoardRepository.findById(sessionId, blockedByTaskId).orElse(null);
                 if (blockedByTask != null && blockedByTask.getBlocks() != null) {
-                    blockedByTask.getBlocks().remove(taskId);
+                    blockedByTask.getBlocks().remove(Integer.valueOf(taskId));
                     taskBoardRepository.save(blockedByTask);
                 }
             }
         }
 
-        taskBoardRepository.delete(taskId);
-        log.info("Deleted task: taskId={}", taskId);
+        taskBoardRepository.delete(sessionId, taskId);
+        log.info("Deleted task: sessionId={}, taskId={}", sessionId, taskId);
     }
 
     /**

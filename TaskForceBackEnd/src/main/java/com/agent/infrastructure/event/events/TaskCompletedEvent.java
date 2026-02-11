@@ -9,14 +9,14 @@ import lombok.Getter;
 @Getter
 public class TaskCompletedEvent extends OrchestrationEvent {
 
-    private String taskId;
+    private int taskId;
     private String owner;
 
     public TaskCompletedEvent() {
         super();
     }
 
-    public TaskCompletedEvent(String sessionId, String taskId, String owner) {
+    public TaskCompletedEvent(String sessionId, int taskId, String owner) {
         super(sessionId);
         this.taskId = taskId;
         this.owner = owner;

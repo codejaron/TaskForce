@@ -7,7 +7,6 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * 任务聚合根
@@ -19,10 +18,9 @@ import java.util.UUID;
 public class Task {
 
     /**
-     * 任务 ID
+     * 任务 ID（session 内递增序号）
      */
-    @Builder.Default
-    private String taskId = UUID.randomUUID().toString();
+    private int taskId;
 
     /**
      * 会话 ID
@@ -53,12 +51,12 @@ public class Task {
     /**
      * 被阻塞的任务列表（依赖的任务 ID）
      */
-    private List<String> blockedBy;
+    private List<Integer> blockedBy;
 
     /**
      * 阻塞的任务列表（被依赖的任务 ID）
      */
-    private List<String> blocks;
+    private List<Integer> blocks;
 
     /**
      * 创建时间
