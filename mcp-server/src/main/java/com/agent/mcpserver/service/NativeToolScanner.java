@@ -1,7 +1,7 @@
 package com.agent.mcpserver.service;
 
 import com.agent.mcpserver.dto.ToolCallResult;
-import com.agent.mcpserver.dto.ToolDefinition;
+import com.agent.mcpserver.dto.ToolVO;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -11,7 +11,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
 
-import jakarta.annotation.PostConstruct;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.*;
@@ -37,7 +36,7 @@ public class NativeToolScanner {
      * 工具方法缓存：globalToolId -> ToolMeta
      */
     private final Map<String, ToolMeta> toolCache = new ConcurrentHashMap<>();
-    
+
     /**
      * 是否已扫描
      */
@@ -124,18 +123,18 @@ public class NativeToolScanner {
     /**
      * 列出所有 Native 工具
      */
-    public List<ToolDefinition> listTools() {
-        ensureScanned();  // 延迟扫描
+    public List<ToolVO> listTools() {
+        ensureScanned();
         return toolCache.entrySet().stream()
                 .map(entry -> {
                     String globalId = entry.getKey();
                     ToolMeta meta = entry.getValue();
 
-                    return ToolDefinition.builder()
+                    return ToolVO.builder()
                             .name(globalId)
                             .description(meta.description())
                             .inputSchema(buildInputSchema(meta.method()))
-                            .sourceType(ToolDefinition.ToolSourceType.NATIVE)
+                            .sourceType("NATIVE")
                             .providerId(NATIVE_PREFIX)
                             .build();
                 })
@@ -146,7 +145,7 @@ public class NativeToolScanner {
      * 检查工具是否存在
      */
     public boolean hasTool(String toolId) {
-        ensureScanned();  // 延迟扫描
+        ensureScanned();
         return toolCache.containsKey(toolId);
     }
 
@@ -154,7 +153,7 @@ public class NativeToolScanner {
      * 调用 Native 工具
      */
     public ToolCallResult callTool(String toolId, Map<String, Object> args) {
-        ensureScanned();  // 延迟扫描
+        ensureScanned();
         ToolMeta meta = toolCache.get(toolId);
         if (meta == null) {
             return ToolCallResult.error("Tool not found: " + toolId);

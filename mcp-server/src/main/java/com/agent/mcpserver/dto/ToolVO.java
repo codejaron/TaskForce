@@ -7,15 +7,16 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * MCP 工具定义 DTO
- * 符合 MCP 协议规范
+ * 工具定义 VO（View Object）
+ * 用于 Controller 层返回，保持与前端和 Host 端的 API 兼容性
+ * 内部使用 Spring AI 的 McpSchema.Tool，但对外暴露此 VO
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class ToolDefinition {
+public class ToolVO {
 
     /**
      * 工具名称（唯一标识）
@@ -35,35 +36,10 @@ public class ToolDefinition {
     /**
      * 工具来源类型
      */
-    private ToolSourceType sourceType;
+    private String sourceType;
 
     /**
      * 所属 Provider ID
      */
     private String providerId;
-
-    /**
-     * 工具来源类型枚举
-     */
-    public enum ToolSourceType {
-        /**
-         * STDIO 模式（npx 等子进程）
-         */
-        STDIO,
-        
-        /**
-         * 原生 Java 工具
-         */
-        NATIVE,
-        
-        /**
-         * 远程 SSE 服务
-         */
-        REMOTE_SSE,
-
-        /**
-         * Streamable HTTP 服务（JSON-RPC over HTTP）
-         */
-        STREAMABLE_HTTP
-    }
 }

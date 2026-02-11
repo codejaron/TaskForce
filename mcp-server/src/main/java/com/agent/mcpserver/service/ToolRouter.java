@@ -1,47 +1,65 @@
 package com.agent.mcpserver.service;
 
 import com.agent.mcpserver.dto.ToolCallResult;
-import com.agent.mcpserver.dto.ToolDefinition;
+import com.agent.mcpserver.dto.ToolVO;
 import com.agent.mcpserver.entity.ToolProviderConfig;
-import com.agent.mcpserver.service.provider.*;
+import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
+import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
+import io.modelcontextprotocol.client.transport.ServerParameters;
+import io.modelcontextprotocol.client.transport.StdioClientTransport;
+import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.json.jackson.JacksonMcpJsonMapper;
+import io.modelcontextprotocol.spec.McpSchema;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 工具路由器
- * 根据 tool_name 路由到对应的 Provider
+ * 根据 tool_name 路由到对应的 MCP Client
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ToolRouter {
 
-
     private final ToolProviderConfigService configService;
+
     @Lazy
     private final NativeToolScanner nativeToolScanner;
 
     /**
-     * Provider 缓存：providerId -> ToolProvider
+     * MCP Client 缓存：providerId -> McpSyncClient
      */
-    private final Map<String, ToolProvider> providerCache = new ConcurrentHashMap<>();
+    private final Map<String, McpSyncClient> clientCache = new ConcurrentHashMap<>();
 
     /**
-     * 工具路由表：toolName -> providerId
+     * Provider 名称映射：providerId -> providerName
+     */
+    private final Map<String, String> clientNameMap = new ConcurrentHashMap<>();
+
+    /**
+     * 工具缓存：providerId -> List<McpSchema.Tool>
+     * 缓存每个 provider 的工具列表，避免并发调用 client.listTools() 导致的消息队列冲突
+     */
+    private final Map<String, List<McpSchema.Tool>> toolsCache = new ConcurrentHashMap<>();
+
+    /**
+     * 工具路由表：globalToolId -> providerId
      */
     private final Map<String, String> toolRouteTable = new ConcurrentHashMap<>();
 
-    // 修改点：使用 @EventListener(ApplicationReadyEvent.class) 替代 @PostConstruct
-    // 这会将扫描推迟到所有 Bean（包括 McpProtocolHandler）都完全初始化之后。
     @EventListener(ApplicationReadyEvent.class)
     public void init() {
         log.info("[ToolRouter] Initializing tool router...");
@@ -51,8 +69,15 @@ public class ToolRouter {
     @PreDestroy
     public void cleanup() {
         log.info("[ToolRouter] Cleaning up providers...");
-        providerCache.values().forEach(ToolProvider::shutdown);
-        providerCache.clear();
+        clientCache.values().forEach(client -> {
+            try {
+                client.closeGracefully();
+            } catch (Exception e) {
+                log.warn("[ToolRouter] Error closing client", e);
+            }
+        });
+        clientCache.clear();
+        clientNameMap.clear();
         toolRouteTable.clear();
     }
 
@@ -62,9 +87,17 @@ public class ToolRouter {
     public synchronized void reloadProviders() {
         log.info("[ToolRouter] Reloading all providers...");
 
-        // 关闭现有 Provider
-        providerCache.values().forEach(ToolProvider::shutdown);
-        providerCache.clear();
+        // 关闭现有 Client
+        clientCache.values().forEach(client -> {
+            try {
+                client.closeGracefully();
+            } catch (Exception e) {
+                log.warn("[ToolRouter] Error closing client during reload", e);
+            }
+        });
+        clientCache.clear();
+        clientNameMap.clear();
+        toolsCache.clear();
         toolRouteTable.clear();
 
         // 加载配置中的 Provider
@@ -78,41 +111,48 @@ public class ToolRouter {
         }
 
         log.info("[ToolRouter] Loaded {} providers with {} tools (+ {} native tools)",
-                providerCache.size(), toolRouteTable.size(), nativeToolScanner.listTools().size());
+                clientCache.size(), toolRouteTable.size(), nativeToolScanner.listTools().size());
     }
 
     /**
      * 注册单个 Provider
      * 工具 ID 格式：{providerName}::{toolName}
-     * 同名 Provider 会被覆盖
      */
     public void registerProvider(ToolProviderConfig config) throws Exception {
         String providerId = config.getId();
-        String providerName = config.getName(); // 使用 name 作为前缀
+        String providerName = config.getName();
 
-        // 如果已存在同名 Provider，先关闭（覆盖逻辑）
-        ToolProvider existing = providerCache.remove(providerId);
+        // 如果已存在，先关闭
+        McpSyncClient existing = clientCache.remove(providerId);
         if (existing != null) {
             log.info("[ToolRouter] Overwriting existing provider: {}", providerName);
-            existing.shutdown();
-            // 移除旧的路由（按 providerId）
+            existing.closeGracefully();
+            clientNameMap.remove(providerId);
+            toolsCache.remove(providerId);
             toolRouteTable.entrySet().removeIf(entry -> entry.getValue().equals(providerId));
         }
 
-        // 创建新的 Provider
-        ToolProvider provider = createProvider(config);
-        provider.initialize(config);
+        // 创建 Transport
+        McpSyncClient client = createClient(config);
+
+        // 初始化连接
+        client.initialize();
 
         // 注册到缓存
-        providerCache.put(providerId, provider);
+        clientCache.put(providerId, client);
+        clientNameMap.put(providerId, providerName);
 
-        // 更新路由表（工具 ID 加前缀：providerName::toolName）
-        for (ToolDefinition tool : provider.listTools()) {
-            String originalToolName = tool.getName();
+        // 获取工具列表并缓存
+        McpSchema.ListToolsResult toolsResult = client.listTools();
+        List<McpSchema.Tool> tools = toolsResult.tools();
+
+        // 缓存工具列表（避免并发调用 client.listTools()）
+        toolsCache.put(providerId, tools);
+
+        // 更新路由表
+        for (McpSchema.Tool tool : tools) {
+            String originalToolName = tool.name();
             String globalToolId = providerName + "::" + originalToolName;
-
-            // 更新工具定义的名称为全局 ID
-            tool.setName(globalToolId);
 
             // 注册路由
             if (toolRouteTable.containsKey(globalToolId)) {
@@ -122,51 +162,124 @@ public class ToolRouter {
         }
 
         // 更新配置状态
-        configService.updateConnectionStatus(providerId, true, provider.listTools().size(), null);
+        configService.updateConnectionStatus(providerId, true, tools.size(), null);
 
         log.info("[ToolRouter] Registered provider: {} ({}) with {} tools (prefix: {}::)",
-                config.getName(), providerId, provider.listTools().size(), providerName);
+                config.getName(), providerId, tools.size(), providerName);
+    }
+
+    /**
+     * 创建 MCP Client（支持 STDIO、REMOTE_SSE、STREAMABLE_HTTP）
+     */
+    private McpSyncClient createClient(ToolProviderConfig config) throws Exception {
+        com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        McpJsonMapper jsonMapper = new JacksonMcpJsonMapper(objectMapper);
+
+        return switch (config.getType()) {
+            case STDIO -> {
+                String command = config.getCommand();
+                List<String> args = parseArgs(config.getArgs());
+                Map<String, String> env = parseEnv(config.getEnv());
+
+                ServerParameters.Builder builder = ServerParameters.builder(command);
+                if (!args.isEmpty()) {
+                    builder.args(args);
+                }
+                if (!env.isEmpty()) {
+                    builder.env(env);
+                }
+                ServerParameters serverParams = builder.build();
+
+                StdioClientTransport transport = new StdioClientTransport(serverParams, jsonMapper);
+
+                yield McpClient.sync(transport)
+                        .requestTimeout(Duration.ofSeconds(config.getTimeout() != null ? config.getTimeout() : 30))
+                        .build();
+            }
+            case REMOTE_SSE -> {
+                String url = config.getSseUrl();
+
+                HttpClientSseClientTransport transport = HttpClientSseClientTransport.builder(url)
+                        .build();
+
+                yield McpClient.sync(transport)
+                        .requestTimeout(Duration.ofSeconds(config.getTimeout() != null ? config.getTimeout() : 30))
+                        .build();
+            }
+            case STREAMABLE_HTTP -> {
+                String url = config.getHttpUrl();
+
+                HttpClientStreamableHttpTransport transport = HttpClientStreamableHttpTransport.builder(url)
+                        .build();
+
+                yield McpClient.sync(transport)
+                        .requestTimeout(Duration.ofSeconds(config.getTimeout() != null ? config.getTimeout() : 30))
+                        .build();
+            }
+        };
+    }
+
+    /**
+     * 解析 JSON 数组字符串为 List
+     */
+    private List<String> parseArgs(String argsJson) {
+        if (argsJson == null || argsJson.isBlank()) {
+            return List.of();
+        }
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            return mapper.readValue(argsJson, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            log.warn("[ToolRouter] Failed to parse args: {}", argsJson, e);
+            return List.of();
+        }
+    }
+
+    /**
+     * 解析 JSON 对象字符串为 Map
+     */
+    private Map<String, String> parseEnv(String envJson) {
+        if (envJson == null || envJson.isBlank()) {
+            return Map.of();
+        }
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            return mapper.readValue(envJson, new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {});
+        } catch (Exception e) {
+            log.warn("[ToolRouter] Failed to parse env: {}", envJson, e);
+            return Map.of();
+        }
     }
 
     /**
      * 注销 Provider
      */
     public void unregisterProvider(String providerId) {
-        ToolProvider provider = providerCache.remove(providerId);
-        if (provider != null) {
-            provider.shutdown();
-            // 移除路由
+        McpSyncClient client = clientCache.remove(providerId);
+        if (client != null) {
+            try {
+                client.closeGracefully();
+            } catch (Exception e) {
+                log.warn("[ToolRouter] Error closing client", e);
+            }
+            clientNameMap.remove(providerId);
+            toolsCache.remove(providerId);
             toolRouteTable.entrySet().removeIf(entry -> entry.getValue().equals(providerId));
             log.info("[ToolRouter] Unregistered provider: {}", providerId);
         }
     }
 
     /**
-     * 创建 Provider 实例（支持 STDIO、REMOTE_SSE、STREAMABLE_HTTP）
-     */
-    private ToolProvider createProvider(ToolProviderConfig config) {
-        return switch (config.getType()) {
-            case STDIO -> new StdioToolProvider();
-            case REMOTE_SSE -> new RemoteSseToolProvider();
-            case STREAMABLE_HTTP -> new StreamableHttpToolProvider();
-        };
-    }
-
-    /**
      * 调用工具
-     * 工具名称格式：{providerName}::{toolName}
-     * 需要提取原始工具名称传递给 Provider
      */
     public ToolCallResult callTool(String globalToolId, Map<String, Object> arguments, String sessionId) {
         // 1. 先检查 Native 工具
         if (nativeToolScanner.hasTool(globalToolId)) {
             log.info("[ToolRouter] Routing to native tool: {}", globalToolId);
-            // 设置 SessionContext，供 native 工具使用
             try {
                 if (sessionId != null) {
                     com.agent.mcpserver.context.SessionContext.setSessionId(sessionId);
                 }
-                // 从 arguments 中提取 stepIndex（如果有的话）
                 Object stepIndexObj = arguments.get("stepIndex");
                 if (stepIndexObj instanceof Integer) {
                     com.agent.mcpserver.context.SessionContext.setStepIndex((Integer) stepIndexObj);
@@ -177,15 +290,15 @@ public class ToolRouter {
             }
         }
 
-        // 2. 再查 Provider
+        // 2. 查找 Provider
         String providerId = toolRouteTable.get(globalToolId);
         if (providerId == null) {
             log.warn("[ToolRouter] Tool not found: {}", globalToolId);
             return ToolCallResult.error("Tool not found: " + globalToolId);
         }
 
-        ToolProvider provider = providerCache.get(providerId);
-        if (provider == null || !provider.isConnected()) {
+        McpSyncClient client = clientCache.get(providerId);
+        if (client == null) {
             log.warn("[ToolRouter] Provider not available: {}", providerId);
             return ToolCallResult.error("Provider not available: " + providerId);
         }
@@ -198,41 +311,136 @@ public class ToolRouter {
 
         log.info("[ToolRouter] Routing tool call: {} -> {} (original: {})",
                 globalToolId, providerId, originalToolName);
-        return provider.callTool(originalToolName, arguments, sessionId);
+
+        try {
+            // 调用 MCP Client
+            McpSchema.CallToolRequest request = new McpSchema.CallToolRequest(originalToolName, arguments);
+            McpSchema.CallToolResult result = client.callTool(request);
+
+            // 转换为 ToolCallResult
+            return convertToToolCallResult(result);
+        } catch (Exception e) {
+            log.error("[ToolRouter] Tool call failed: {}", globalToolId, e);
+            return ToolCallResult.error("Tool call failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 转换 McpSchema.CallToolResult 为 ToolCallResult
+     */
+    private ToolCallResult convertToToolCallResult(McpSchema.CallToolResult mcpResult) {
+        List<ToolCallResult.Content> contents = new ArrayList<>();
+
+        for (Object contentObj : mcpResult.content()) {
+            if (contentObj instanceof McpSchema.TextContent textContent) {
+                contents.add(ToolCallResult.Content.builder()
+                        .type("text")
+                        .text(textContent.text())
+                        .build());
+            } else if (contentObj instanceof McpSchema.ImageContent imageContent) {
+                contents.add(ToolCallResult.Content.builder()
+                        .type("image")
+                        .data(imageContent.data())
+                        .mimeType(imageContent.mimeType())
+                        .build());
+            } else if (contentObj instanceof McpSchema.EmbeddedResource resource) {
+                // 处理 EmbeddedResource
+                if (resource.resource() instanceof McpSchema.TextResourceContents textResource) {
+                    contents.add(ToolCallResult.Content.builder()
+                            .type("text")
+                            .text(textResource.text())
+                            .build());
+                } else if (resource.resource() instanceof McpSchema.BlobResourceContents blobResource) {
+                    contents.add(ToolCallResult.Content.builder()
+                            .type("image")
+                            .data(blobResource.blob())
+                            .mimeType(blobResource.mimeType())
+                            .build());
+                }
+            }
+        }
+
+        return ToolCallResult.builder()
+                .content(contents)
+                .isError(mcpResult.isError() != null && mcpResult.isError())
+                .build();
     }
 
     /**
      * 列出所有可用工具（包括 Native 工具）
      */
-    public List<ToolDefinition> listAllTools() {
-        List<ToolDefinition> all = new ArrayList<>();
+    public List<ToolVO> listAllTools() {
+        List<ToolVO> all = new ArrayList<>();
 
-        // 1. Native 工具（自动扫描）
+        // 1. Native 工具
         all.addAll(nativeToolScanner.listTools());
 
-        // 2. STDIO / REMOTE_SSE 工具（数据库配置）
-        providerCache.values().stream()
-                .filter(ToolProvider::isConnected)
-                .flatMap(p -> p.listTools().stream())
-                .forEach(all::add);
+        // 2. MCP Provider 工具（使用缓存，避免并发调用 client.listTools()）
+        for (Map.Entry<String, List<McpSchema.Tool>> entry : toolsCache.entrySet()) {
+            String providerId = entry.getKey();
+            List<McpSchema.Tool> cachedTools = entry.getValue();
+            String providerName = clientNameMap.get(providerId);
+
+            try {
+                ToolProviderConfig config = configService.getById(providerId);
+                String sourceType = config != null ? config.getType().name() : "UNKNOWN";
+
+                for (McpSchema.Tool tool : cachedTools) {
+                    String globalToolId = providerName + "::" + tool.name();
+
+                    all.add(ToolVO.builder()
+                            .name(globalToolId)
+                            .description(tool.description())
+                            .inputSchema(tool.inputSchema())
+                            .sourceType(sourceType)
+                            .providerId(providerId)
+                            .build());
+                }
+            } catch (Exception e) {
+                log.error("[ToolRouter] Failed to list tools for provider: {}", providerId, e);
+            }
+        }
 
         return all;
     }
 
     /**
-     * 列出指定 Provider 的工具
+     * 列出指定 Provider 的工具（使用缓存）
      */
-    public List<ToolDefinition> listToolsByProvider(String providerId) {
+    public List<ToolVO> listToolsByProvider(String providerId) {
         // 检查是否是 Native
         if ("native".equals(providerId)) {
             return nativeToolScanner.listTools();
         }
 
-        ToolProvider provider = providerCache.get(providerId);
-        if (provider == null) {
+        List<McpSchema.Tool> cachedTools = toolsCache.get(providerId);
+        if (cachedTools == null) {
             return List.of();
         }
-        return provider.listTools();
+
+        String providerName = clientNameMap.get(providerId);
+        List<ToolVO> tools = new ArrayList<>();
+
+        try {
+            ToolProviderConfig config = configService.getById(providerId);
+            String sourceType = config != null ? config.getType().name() : "UNKNOWN";
+
+            for (McpSchema.Tool tool : cachedTools) {
+                String globalToolId = providerName + "::" + tool.name();
+
+                tools.add(ToolVO.builder()
+                        .name(globalToolId)
+                        .description(tool.description())
+                        .inputSchema(tool.inputSchema())
+                        .sourceType(sourceType)
+                        .providerId(providerId)
+                        .build());
+            }
+        } catch (Exception e) {
+            log.error("[ToolRouter] Failed to list tools for provider: {}", providerId, e);
+        }
+
+        return tools;
     }
 
     /**
@@ -247,22 +455,32 @@ public class ToolRouter {
             providers.add(new ProviderInfo(
                     "native",
                     "native",
-                    null, // Native 没有 ProviderType
+                    null,
                     true,
                     nativeToolCount
             ));
         }
 
-        // 2. 其他 Providers
-        providerCache.values().stream()
-                .map(p -> new ProviderInfo(
-                        p.getId(),
-                        p.getName(),
-                        p.getType(),
-                        p.isConnected(),
-                        p.listTools().size()
-                ))
-                .forEach(providers::add);
+        // 2. 其他 Providers（使用缓存）
+        for (Map.Entry<String, List<McpSchema.Tool>> entry : toolsCache.entrySet()) {
+            String providerId = entry.getKey();
+            String providerName = clientNameMap.get(providerId);
+            List<McpSchema.Tool> cachedTools = entry.getValue();
+
+            try {
+                ToolProviderConfig config = configService.getById(providerId);
+
+                providers.add(new ProviderInfo(
+                        providerId,
+                        providerName,
+                        config != null ? config.getType() : null,
+                        true,
+                        cachedTools.size()
+                ));
+            } catch (Exception e) {
+                log.error("[ToolRouter] Failed to get provider info: {}", providerId, e);
+            }
+        }
 
         return providers;
     }
@@ -277,7 +495,7 @@ public class ToolRouter {
     /**
      * 获取工具定义
      */
-    public Optional<ToolDefinition> getTool(String toolName) {
+    public Optional<ToolVO> getTool(String toolName) {
         // 1. 检查 Native
         if (nativeToolScanner.hasTool(toolName)) {
             return nativeToolScanner.listTools().stream()
@@ -291,12 +509,7 @@ public class ToolRouter {
             return Optional.empty();
         }
 
-        ToolProvider provider = providerCache.get(providerId);
-        if (provider == null) {
-            return Optional.empty();
-        }
-
-        return provider.listTools().stream()
+        return listToolsByProvider(providerId).stream()
                 .filter(t -> t.getName().equals(toolName))
                 .findFirst();
     }

@@ -2,7 +2,7 @@ package com.agent.mcpserver.controller;
 
 import com.agent.mcpserver.dto.ApiResponse;
 import com.agent.mcpserver.dto.ProviderConfigRequest;
-import com.agent.mcpserver.dto.ToolDefinition;
+import com.agent.mcpserver.dto.ToolVO;
 import com.agent.mcpserver.entity.ToolProviderConfig;
 import com.agent.mcpserver.service.ToolProviderConfigService;
 import com.agent.mcpserver.service.ToolRouter;
@@ -48,9 +48,9 @@ public class ProviderController {
      * 获取提供者的工具列表
      */
     @GetMapping("/{providerId}/tools")
-    public ApiResponse<List<ToolDefinition>> listToolsByProvider(@PathVariable String providerId) {
+    public ApiResponse<List<ToolVO>> listToolsByProvider(@PathVariable String providerId) {
         try {
-            List<ToolDefinition> tools = toolRouter.listToolsByProvider(providerId);
+            List<ToolVO> tools = toolRouter.listToolsByProvider(providerId);
             return ApiResponse.success(tools);
         } catch (Exception e) {
             log.error("[ProviderController] List tools by provider failed: {}", providerId, e);
