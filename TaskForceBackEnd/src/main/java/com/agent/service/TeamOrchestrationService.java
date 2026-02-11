@@ -3,6 +3,7 @@ package com.agent.service;
 import com.agent.domain.taskboard.service.TaskBoardService;
 import com.agent.domain.team.lead.TeamLeadAgent;
 import com.agent.domain.team.model.TeamMessage;
+import com.agent.domain.team.repository.TeamRepository;
 import com.agent.domain.team.service.InboxService;
 import com.agent.domain.team.service.TeamService;
 import com.agent.domain.worker.service.WorkerInstanceManager;
@@ -42,6 +43,7 @@ public class TeamOrchestrationService {
     private final WorkerInstanceManager workerInstanceManager;
     private final TaskBoardService taskBoardService;
     private final TeamService teamService;
+    private final TeamRepository teamRepository;
     private final InboxService inboxService;
     private final ReactAgentFactory reactAgentFactory;
     private final ChatModelFactory chatModelFactory;
@@ -76,18 +78,19 @@ public class TeamOrchestrationService {
             String leadInstanceId = sessionId + "_lead";
             String teamId = null;
             try {
-                var existingTeam = teamService.getTeamBySessionId(sessionId);
-                if (existingTeam == null) {
+                if (!teamRepository.existsBySessionId(sessionId)) {
                     var team = teamService.createTeam(sessionId, leadInstanceId);
                     teamId = team.getTeamId();
                     // 发送 team_created 事件
                     eventBus.publish(sessionId, new TeamCreatedEvent(sessionId, teamId, leadInstanceId));
                     log.info("[TeamOrchestrationService] Team created: sessionId={}, teamId={}", sessionId, teamId);
                 } else {
-                    teamId = existingTeam.getTeamId();
+                    teamId = teamService.getTeamBySessionId(sessionId).getTeamId();
                 }
             } catch (Exception e) {
-                log.warn("[TeamOrchestrationService] Team creation skipped or failed: {}", e.getMessage());
+                log.error("[TeamOrchestrationService] Team creation failed", e);
+                eventBus.publish(sessionId, new ErrorEvent(sessionId, "Team creation failed: " + e.getMessage()));
+                return;
             }
 
             // 3. 发送 team_started 事件

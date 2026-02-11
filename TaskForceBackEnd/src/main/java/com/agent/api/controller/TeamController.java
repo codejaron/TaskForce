@@ -6,11 +6,14 @@ import com.agent.domain.taskboard.service.TaskBoardService;
 import com.agent.domain.worker.model.WorkerInstance;
 import com.agent.domain.worker.service.WorkerInstanceManager;
 import com.agent.infrastructure.event.EventBus;
+import com.agent.infrastructure.event.OrchestrationEvent;
+import com.agent.infrastructure.event.RedisStreamEventBus;
 import com.agent.service.TeamOrchestrationService;
 import jakarta.validation.Valid;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -136,66 +139,72 @@ public class TeamController {
     }
 
     /**
-     * 订阅团队事件流（SSE）
+     * 订阅团队事件流（SSE）- 支持断点续传
      * GET /api/v2/team/session/{sessionId}/events
      */
-    @GetMapping("/session/{sessionId}/events")
-    public Flux<ServerSentEvent<String>> subscribeTeamEvents(@PathVariable String sessionId) {
-        log.info("[TeamController] Subscribing to team events: sessionId={}", sessionId);
+    @GetMapping(value = "/session/{sessionId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> subscribeTeamEvents(
+            @PathVariable String sessionId,
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
 
-        try {
-            // 订阅 session 级别的事件通道
-            return eventBus.subscribe(sessionId)
-                    .map(event -> ServerSentEvent.<String>builder()
-                            .event(event.getEventType())
-                            .data(event.toString())
-                            .build())
-                    .doOnCancel(() -> {
-                        log.info("[TeamController] Team event subscription cancelled: {}", sessionId);
-                        eventBus.unsubscribe(sessionId);
-                    })
-                    .doOnError(e -> {
-                        log.error("[TeamController] Team event stream error: {}", sessionId, e);
-                        eventBus.unsubscribe(sessionId);
-                    });
-        } catch (Exception e) {
-            log.error("[TeamController] Failed to subscribe to team events", e);
-            return Flux.error(e);
+        log.info("[TeamController] SSE subscribe: sessionId={}, lastEventId={}", sessionId, lastEventId);
+
+        Flux<OrchestrationEvent> eventFlux;
+        if (eventBus instanceof RedisStreamEventBus streamEventBus) {
+            eventFlux = streamEventBus.subscribe(sessionId, lastEventId);
+        } else {
+            eventFlux = eventBus.subscribe(sessionId);
         }
+
+        return eventFlux
+                .map(event -> ServerSentEvent.<String>builder()
+                        .id(event.getStreamRecordId())
+                        .event(event.getEventType())
+                        .data(event.toJson())
+                        .build())
+                .doOnSubscribe(s -> log.info("[TeamController] SSE connected: sessionId={}", sessionId))
+                .doOnCancel(() -> log.info("[TeamController] SSE disconnected: sessionId={}", sessionId))
+                .onErrorResume(e -> {
+                    log.debug("[TeamController] SSE error handled: sessionId={}", sessionId);
+                    return Flux.empty();
+                });
     }
 
     /**
-     * 订阅 Worker 事件流（SSE）
+     * 订阅 Worker 事件流（SSE）- 支持断点续传
      * GET /api/v2/team/session/{sessionId}/worker/{instanceId}/events
      */
-    @GetMapping("/session/{sessionId}/worker/{instanceId}/events")
+    @GetMapping(value = "/session/{sessionId}/worker/{instanceId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> subscribeWorkerEvents(
             @PathVariable String sessionId,
-            @PathVariable String instanceId) {
+            @PathVariable String instanceId,
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
 
-        log.info("[TeamController] Subscribing to Worker events: sessionId={}, instanceId={}",
-                 sessionId, instanceId);
+        log.info("[TeamController] SSE subscribe worker: sessionId={}, instanceId={}, lastEventId={}",
+                sessionId, instanceId, lastEventId);
 
-        try {
-            // 订阅 Worker 专属事件通道
-            String workerChannel = sessionId + ":" + instanceId;
-            return eventBus.subscribe(workerChannel)
-                    .map(event -> ServerSentEvent.<String>builder()
-                            .event(event.getEventType())
-                            .data(event.toString())
-                            .build())
-                    .doOnCancel(() -> {
-                        log.info("[TeamController] Worker event subscription cancelled: {}", instanceId);
-                        eventBus.unsubscribe(workerChannel);
-                    })
-                    .doOnError(e -> {
-                        log.error("[TeamController] Worker event stream error: {}", instanceId, e);
-                        eventBus.unsubscribe(workerChannel);
-                    });
-        } catch (Exception e) {
-            log.error("[TeamController] Failed to subscribe to Worker events", e);
-            return Flux.error(e);
+        Flux<OrchestrationEvent> eventFlux;
+        if (eventBus instanceof RedisStreamEventBus streamEventBus) {
+            eventFlux = streamEventBus.subscribeWorker(sessionId, instanceId, lastEventId);
+        } else {
+            eventFlux = eventBus.subscribeWorker(sessionId, instanceId);
         }
+
+        return eventFlux
+                .map(event -> ServerSentEvent.<String>builder()
+                        .id(event.getStreamRecordId())
+                        .event(event.getEventType())
+                        .data(event.toJson())
+                        .build())
+                .doOnSubscribe(s -> log.info("[TeamController] Worker SSE connected: sessionId={}, instanceId={}",
+                        sessionId, instanceId))
+                .doOnCancel(() -> log.info("[TeamController] Worker SSE disconnected: sessionId={}, instanceId={}",
+                        sessionId, instanceId))
+                .onErrorResume(e -> {
+                    log.debug("[TeamController] Worker SSE error handled: sessionId={}, instanceId={}",
+                            sessionId, instanceId);
+                    return Flux.empty();
+                });
     }
 
     /**

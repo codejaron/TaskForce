@@ -213,7 +213,7 @@ public class TaskBoardService {
             "      if blockedTask.blockedBy then " +
             "        local newBlockedBy = {} " +
             "        for j, depId in ipairs(blockedTask.blockedBy) do " +
-            "          if depId ~= ARGV[2] then " +
+            "          if depId ~= tonumber(ARGV[2]) then " +
             "            table.insert(newBlockedBy, depId) " +
             "          end " +
             "        end " +
@@ -235,7 +235,7 @@ public class TaskBoardService {
                 script,
                 Arrays.asList(key, field),
                 LocalDateTime.now().toString(),
-                taskId
+                String.valueOf(taskId)
             );
 
             // 解析结果并发布事件
