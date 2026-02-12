@@ -66,11 +66,12 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
             ToolCallStartEvent startEvent = new ToolCallStartEvent(
                     sessionId, stepId, stepIndex, toolCallId, toolName, serverName, toolInput, sequence
             );
-            eventBus.publish(sessionId, startEvent);
-
-            // 同时发到 Worker 专属通道
             if (instanceId != null) {
+                // Worker 工具调用只发 Worker 通道
                 eventBus.publishToWorker(sessionId, instanceId, startEvent);
+            } else {
+                // Lead 或非 Worker 的工具调用发主通道
+                eventBus.publish(sessionId, startEvent);
             }
         }
 

@@ -99,8 +99,7 @@ public class WorkerInstanceManager {
                 eventBus,
                 executionTracker,
                 inboxService,
-                contextAssembler,
-                initialPrompt
+                contextAssembler
         );
 
         // 4. 启动 WorkerLoop

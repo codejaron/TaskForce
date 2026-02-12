@@ -70,7 +70,7 @@ public class TeamOrchestrationService {
             // 1. 获取 Lead Agent 配置
             Agent leadAgent = getLeadAgent();
             if (leadAgent == null) {
-                eventBus.publish(sessionId, new ErrorEvent(sessionId, "Lead Agent not found with roleType=LEAD"));
+                eventBus.publish(sessionId, new ErrorEvent(sessionId, "Lead Agent not found with roleType=PLANNER"));
                 return;
             }
 
