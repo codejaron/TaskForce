@@ -38,6 +38,15 @@ spring:
       test-on-borrow: false
       test-on-return: false
 
+  # ========== Redis 配置（Provider 同步广播） ==========
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:}
+      database: ${SPRING_REDIS_DATABASE:0}
+      timeout: ${SPRING_REDIS_TIMEOUT:5s}
+
   # ========== SQL 初始化 ==========
   sql:
     init:
@@ -62,19 +71,27 @@ mcp:
   # Native 工具扫描包路径
   native:
     scan-packages: ${MCP_NATIVE_SCAN_PACKAGES:com.agent.mcpserver.tool}
-
-# ========== RocketMQ 配置 ==========
-rocketmq:
-  name-server: ${ROCKETMQ_NAMESRV:localhost:9876}
-  producer:
-    group: mcp-server-producer
+  # MCP Client 池配置（可按类型调整默认并发）
+  client-pool:
+    stdio-default-size: ${MCP_CLIENT_POOL_STDIO_SIZE:3}
+    remote-sse-default-size: ${MCP_CLIENT_POOL_REMOTE_SSE_SIZE:4}
+    streamable-http-default-size: ${MCP_CLIENT_POOL_STREAMABLE_HTTP_SIZE:8}
+    acquire-timeout-seconds: ${MCP_CLIENT_POOL_ACQUIRE_TIMEOUT_SECONDS:8}
+    max-pool-size: ${MCP_CLIENT_POOL_MAX_SIZE:20}
+  provider-sync:
+    channel: ${MCP_PROVIDER_SYNC_CHANNEL:mcp-provider-sync}
+    instance-id: ${MCP_PROVIDER_SYNC_INSTANCE_ID:${spring.application.name}-${random.uuid}}
 
 # ========== 日志配置 ==========
 logging:
   level:
     root: INFO
-    com.agent.mcpserver: DEBUG
-    io.modelcontextprotocol: DEBUG
+    com.agent.mcpserver: ${LOG_LEVEL_MCP_SERVER:INFO}
+    com.agent.mcpserver.controller.McpStreamableHttpController: ${LOG_LEVEL_MCP_HTTP:WARN}
+    com.agent.mcpserver.service.McpProtocolHandler: ${LOG_LEVEL_MCP_PROTOCOL_HANDLER:WARN}
+    io.modelcontextprotocol: ${LOG_LEVEL_MCP_PROTOCOL:WARN}
+    org.apache.ibatis: ${LOG_LEVEL_MYBATIS:WARN}
+    com.baomidou.mybatisplus: ${LOG_LEVEL_MYBATIS_PLUS:WARN}
 
 # ========== Actuator 健康检查 ==========
 management:

@@ -83,11 +83,14 @@ export const useMcpStore = create<McpState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       await api.mcp.deleteServer(id);
-      set(state => ({
-        servers: state.servers.filter(s => s.id !== id),
-        tools: state.tools.filter(t => t.serverId !== id),
-        isLoading: false
-      }));
+      set((state) => {
+        const removedServer = state.servers.find((s) => s.id === id);
+        return {
+          servers: state.servers.filter((s) => s.id !== id),
+          tools: state.tools.filter((t) => t.serverId !== id && t.serverName !== removedServer?.name),
+          isLoading: false
+        };
+      });
     } catch (error: any) {
       set({ error: error.message, isLoading: false });
     }

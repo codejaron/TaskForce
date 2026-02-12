@@ -171,6 +171,8 @@ export default {
     toolsCount: '工具',
     noToolsMatch: '没有匹配的工具',
     noToolsAvailable: '暂无可用工具。请先连接 MCP 服务器。',
+    confirmDeleteServer: '确定删除服务器「{{name}}」吗？这会同时移除它的工具。',
+    deleteServerFailed: '删除服务器失败，请稍后重试。',
   },
   a2a: {
     title: 'A2A 工作室',
@@ -287,6 +289,5 @@ export default {
     pleaseSelectFolder: '请选择一个文件夹',
   },
 };
-
 
 

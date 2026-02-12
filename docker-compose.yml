@@ -1,66 +1,4 @@
 services:
-  # ========== RocketMQ ==========
-  namesrv:
-    image: apache/rocketmq:5.1.0
-    platform: linux/amd64
-    container_name: taskforce-namesrv
-    restart: always
-    ports:
-      - "${ROCKETMQ_NAMESRV_PORT:-9876}:9876"
-    environment:
-      JAVA_OPT_EXT: "-Xms256m -Xmx256m"
-    command: sh mqnamesrv
-    networks:
-      - taskforce-network
-    healthcheck:
-      test: ["CMD", "sh", "-c", "nc -z localhost 9876 || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-
-  broker:
-    image: apache/rocketmq:5.1.0
-    platform: linux/amd64
-    container_name: taskforce-broker
-    user: "0:0"
-    restart: always
-    ports:
-      - "${ROCKETMQ_BROKER_PORT:-10911}:10911"
-    environment:
-      NAMESRV_ADDR: namesrv:9876
-      JAVA_OPT_EXT: "-Xms512m -Xmx512m"
-      ROCKETMQ_HOME: /home/rocketmq/rocketmq-5.1.0
-      HOME: /home/rocketmq
-    command: >
-      sh -c "
-        mkdir -p /home/rocketmq/store/config /home/rocketmq/store/commitlog /home/rocketmq/logs &&
-        sh mqbroker -c /home/rocketmq/rocketmq-5.1.0/conf/broker.conf
-      "
-    depends_on:
-      namesrv:
-        condition: service_healthy
-    networks:
-      - taskforce-network
-    volumes:
-      - broker-data:/home/rocketmq/store
-      - broker-logs:/home/rocketmq/logs
-      - ./broker.conf:/home/rocketmq/rocketmq-5.1.0/conf/broker.conf:ro
-
-  rocketmq-dashboard:
-    image: apacherocketmq/rocketmq-dashboard:latest
-    container_name: taskforce-rocketmq-dashboard
-    restart: always
-    ports:
-      - "${ROCKETMQ_DASHBOARD_PORT:-18080}:8080"
-    environment:
-      JAVA_OPTS: "-Drocketmq.namesrv.addr=namesrv:9876"
-    depends_on:
-      - namesrv
-      - broker
-    networks:
-      - taskforce-network
-
   # ========== Redis ==========
   redis:
     # 使用阿里云镜像（如果 Docker Hub 访问有问题）
@@ -116,8 +54,6 @@ services:
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
       SPRING_PROFILES_ACTIVE: docker
       JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx1024m}
-      # RocketMQ
-      ROCKETMQ_NAMESRV: namesrv:9876
       # Redis
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -132,10 +68,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      namesrv:
-        condition: service_healthy
-      broker:
-        condition: service_started
       mcp-server:
         condition: service_healthy
     networks:
@@ -156,14 +88,15 @@ services:
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
       SPRING_PROFILES_ACTIVE: docker
       JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx512m}
-      ROCKETMQ_NAMESRV: namesrv:9876  # 新增
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
     ports:
       - "${MCP_SERVER_PORT:-8082}:8082"
     depends_on:
       mysql:
         condition: service_healthy
-      namesrv:
-        condition: service_healthy  # 新增依赖
+      redis:
+        condition: service_healthy
     networks:
       - taskforce-network
     healthcheck:
@@ -191,10 +124,7 @@ services:
 volumes:
   mysql-data:
   redis-data:
-  broker-data:
-  broker-logs:
 
 networks:
   taskforce-network:
     driver: bridge
-

@@ -172,6 +172,8 @@ export default {
     toolsCount: 'tools',
     noToolsMatch: 'No tools match your search',
     noToolsAvailable: 'No tools available. Connect MCP servers first.',
+    confirmDeleteServer: 'Delete server "{{name}}"? Its tools will be removed as well.',
+    deleteServerFailed: 'Failed to delete server. Please try again.',
   },
   a2a: {
     title: 'A2A Studio',
@@ -288,4 +290,3 @@ export default {
     pleaseSelectFolder: 'Please select a folder',
   },
 };
-

@@ -1,48 +1,52 @@
 package com.agent.mcpserver.listener;
 
+import com.agent.mcpserver.config.ProviderSyncProperties;
+import com.agent.mcpserver.dto.ProviderSyncEvent;
 import com.agent.mcpserver.entity.ToolProviderConfig;
 import com.agent.mcpserver.service.ToolProviderConfigService;
 import com.agent.mcpserver.service.ToolRouter;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
-import org.apache.rocketmq.spring.core.RocketMQListener;
+import org.springframework.data.redis.connection.Message;
+import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.stereotype.Component;
+
+import java.nio.charset.StandardCharsets;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@RocketMQMessageListener(
-        topic = "mcp-provider-sync",
-        consumerGroup = "mcp-server-${random.value}"
-)
-public class ProviderSyncListener implements RocketMQListener<String> {
+public class ProviderSyncListener implements MessageListener {
 
     private final ToolRouter toolRouter;
     private final ToolProviderConfigService configService;
+    private final ProviderSyncProperties syncProperties;
+    private final ObjectMapper objectMapper;
 
     @Override
-    public void onMessage(String message) {
-        log.info("[ProviderSync] Received: {}", message);
+    public void onMessage(Message message, byte[] pattern) {
+        String payload = new String(message.getBody(), StandardCharsets.UTF_8);
+        log.debug("[ProviderSync] Received: {}", payload);
 
         try {
-            // 消息格式: "add:providerId" 或 "delete:providerId"
-            String[] parts = message.split(":", 2);
-            if (parts.length != 2) {
-                log.warn("[ProviderSync] Invalid message format: {}", message);
+            ProviderSyncEvent event = objectMapper.readValue(payload, ProviderSyncEvent.class);
+            if (event.getProviderId() == null || event.getProviderId().isBlank()) {
+                log.warn("[ProviderSync] Invalid event payload: {}", payload);
                 return;
             }
 
-            String action = parts[0];
-            String providerId = parts[1];
+            if (syncProperties.getInstanceId().equals(event.getSourceInstanceId())) {
+                return;
+            }
 
-            switch (action) {
-                case "add" -> handleAdd(providerId);
-                case "delete" -> handleDelete(providerId);
-                default -> log.warn("[ProviderSync] Unknown action: {}", action);
+            switch (event.getAction()) {
+                case "add" -> handleAdd(event.getProviderId());
+                case "delete" -> handleDelete(event.getProviderId());
+                default -> log.warn("[ProviderSync] Unknown action: {}", event.getAction());
             }
         } catch (Exception e) {
-            log.error("[ProviderSync] Failed to process message: {}", message, e);
+            log.error("[ProviderSync] Failed to process message: {}", payload, e);
         }
     }
 
