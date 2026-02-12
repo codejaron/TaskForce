@@ -1,11 +1,13 @@
 package com.agent.domain.taskboard.model;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -51,12 +53,16 @@ public class Task {
     /**
      * 被阻塞的任务列表（依赖的任务 ID）
      */
-    private List<Integer> blockedBy;
+    @JsonDeserialize(using = IntegerListDeserializer.class)
+    @Builder.Default
+    private List<Integer> blockedBy = new ArrayList<>();
 
     /**
      * 阻塞的任务列表（被依赖的任务 ID）
      */
-    private List<Integer> blocks;
+    @JsonDeserialize(using = IntegerListDeserializer.class)
+    @Builder.Default
+    private List<Integer> blocks = new ArrayList<>();
 
     /**
      * 创建时间

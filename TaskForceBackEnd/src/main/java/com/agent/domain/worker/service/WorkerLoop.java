@@ -296,7 +296,7 @@ public class WorkerLoop implements Runnable {
             // 6. 执行任务（流式）
             StringBuilder response = new StringBuilder();
 
-            Disposable disposable = reactAgent.stream(instruction, config)
+            Disposable disposable = reactAgent.stream("", config)
                     .doOnNext(nodeOutput -> {
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
@@ -379,30 +379,27 @@ public class WorkerLoop implements Runnable {
     private String buildTaskInstruction(Task task) {
         StringBuilder instruction = new StringBuilder();
 
-        // 添加初始 Prompt（如果有）
-        if (initialPrompt != null && !initialPrompt.isEmpty()) {
-            instruction.append(initialPrompt).append("\n\n");
-        }
+        // 只保留当前任务信息，去掉 initialPrompt 和完整任务板
+        instruction.append("## 当前任务\n\n");
+        instruction.append("**").append(task.getSubject()).append("**\n\n");
+        instruction.append(task.getDescription()).append("\n\n");
+        instruction.append("完成后请调用 complete_task 标记完成。\n");
 
-        // 使用 ContextAssembler 组装任务上下文
+        // 如果有依赖任务的输出，只附加相关上下文
         try {
             String taskContext = contextAssembler.assembleForTask(
                     workerInstance.getSessionId(),
                     task.getTaskId()
             );
-            instruction.append(taskContext);
+            // 只取依赖输出部分，不要整个任务板
+            instruction.append("\n").append(taskContext);
         } catch (Exception e) {
-            log.warn("[WorkerLoop] Failed to assemble context, using basic task info: {}", e.getMessage());
-
-            // Fallback: 使用基本任务信息
-            instruction.append("# Current Task\n\n");
-            instruction.append("**Task ID**: ").append(task.getTaskId()).append("\n");
-            instruction.append("**Subject**: ").append(task.getSubject()).append("\n");
-            instruction.append("**Description**:\n").append(task.getDescription()).append("\n\n");
+            log.warn("[WorkerLoop] Context assembly failed, using basic info");
         }
 
         return instruction.toString();
     }
+
 
     /**
      * 请求关闭

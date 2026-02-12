@@ -2,6 +2,7 @@ package com.agent.domain.team.lead.tools;
 
 import com.agent.domain.worker.model.WorkerInstance;
 import com.agent.domain.worker.service.WorkerInstanceManager;
+import com.agent.service.SessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +23,7 @@ import java.util.Map;
 public class SpawnWorkerTool implements ToolCallback {
 
     private final WorkerInstanceManager workerInstanceManager;
+    private final SessionService sessionService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -38,16 +40,12 @@ public class SpawnWorkerTool implements ToolCallback {
                   "type": "string",
                   "description": "Agent ID"
                 },
-                "initialPrompt": {
-                  "type": "string",
-                  "description": "Worker 的角色指令，描述它的职责和工作方式"
-                },
                 "assignedTaskId": {
                   "type": "integer",
                   "description": "指派给该 Worker 的任务 ID（来自 create_task 返回的 taskId）"
                 }
               },
-              "required": ["name", "agentId", "initialPrompt", "assignedTaskId"]
+              "required": ["name", "agentId", "assignedTaskId"]
             }
             """;
 
@@ -71,10 +69,13 @@ public class SpawnWorkerTool implements ToolCallback {
             String sessionId = extractSessionId(toolContext);
             String name = (String) args.get("name");
             String agentId = (String) args.get("agentId");
-            String initialPrompt = (String) args.get("initialPrompt");
             int assignedTaskId = ((Number) args.get("assignedTaskId")).intValue();
 
-            WorkerInstance worker = workerInstanceManager.spawn(sessionId, name, agentId, initialPrompt, assignedTaskId);
+            if (!isAgentAvailableInSession(sessionId, agentId)) {
+                return String.format("Error spawning worker: agentId=%s is not available in session %s", agentId, sessionId);
+            }
+
+            WorkerInstance worker = workerInstanceManager.spawn(sessionId, name, agentId, "", assignedTaskId);
 
             log.info("[SpawnWorkerTool] Spawned worker: instanceId={}, name={}, assignedTaskId={}",
                     worker.getInstanceId(), name, assignedTaskId);
@@ -96,5 +97,21 @@ public class SpawnWorkerTool implements ToolCallback {
             }
         }
         throw new IllegalArgumentException("sessionId not found in tool context");
+    }
+
+    private boolean isAgentAvailableInSession(String sessionId, String agentId) {
+        if (agentId == null || agentId.isBlank()) {
+            return false;
+        }
+
+        final long parsedAgentId;
+        try {
+            parsedAgentId = Long.parseLong(agentId);
+        } catch (NumberFormatException e) {
+            return false;
+        }
+
+        return sessionService.getSessionAgents(sessionId).stream()
+                .anyMatch(sa -> sa.getAgentId() != null && sa.getAgentId().longValue() == parsedAgentId);
     }
 }

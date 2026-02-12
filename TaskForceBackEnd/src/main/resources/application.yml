@@ -17,12 +17,17 @@ spring:
   ai:
     chat:
       observations:
-        log-prompt: true
-        log-completion: true
+        log-prompt: true         # ChatModel 层：记录发给 LLM 的完整 prompt
+        log-completion: true     # ChatModel 层：记录 LLM 返回的完整 completion
+        include-error-logging: true
       client:
         observations:
-          log-prompt: true
+          log-prompt: true       # ChatClient 层：记录 ChatClient 的 prompt（单聊用到）
           log-completion: true
+    tools:
+      observations:
+        include-content: true    # Tool 调用参数和结果
+
   
   # ========== Nacos 服务发现 ==========
   cloud:
@@ -97,7 +102,7 @@ mybatis-plus:
 logging:
   level:
     com.agent: DEBUG  # 改为 DEBUG 级别，可查看 Planner/Worker/Replanner 的完整 Prompt
-    org.springframework.ai: INFO
+    org.springframework.ai: DEBUG  # Spring AI 相关日志
 
 # ========== Actuator 健康检查配置 ==========
 management:
