@@ -6,7 +6,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 /**
  * Worker 实例聚合根
@@ -19,10 +18,15 @@ import java.util.UUID;
 public class WorkerInstance {
 
     /**
-     * Worker 实例 ID
+     * Worker 实例 ID（内部路由 ID）
      */
-    @Builder.Default
-    private String instanceId = UUID.randomUUID().toString();
+    private String instanceId;
+
+    /**
+     * Worker 序号（会话内稳定 ID，供 LLM 与工具使用）
+     * 仅在当前 session 内唯一，使用简单数字：1,2,3...
+     */
+    private int workerId;
 
     /**
      * 会话 ID
@@ -73,8 +77,10 @@ public class WorkerInstance {
     /**
      * 创建一个新的 Worker 实例
      */
-    public static WorkerInstance create(String sessionId, String name, String agentId) {
+    public static WorkerInstance create(String sessionId, String name, String agentId, int workerId, String instanceId) {
         return WorkerInstance.builder()
+                .instanceId(instanceId)
+                .workerId(workerId)
                 .sessionId(sessionId)
                 .name(name)
                 .agentId(agentId)
@@ -87,9 +93,16 @@ public class WorkerInstance {
     /**
      * 创建带指派任务的 Worker 实例
      */
-    public static WorkerInstance createWithTask(String sessionId, String name,
-                                                 String agentId, int assignedTaskId) {
+    public static WorkerInstance createWithTask(
+            String sessionId,
+            String name,
+            String agentId,
+            int workerId,
+            String instanceId,
+            int assignedTaskId) {
         return WorkerInstance.builder()
+                .instanceId(instanceId)
+                .workerId(workerId)
                 .sessionId(sessionId)
                 .name(name)
                 .agentId(agentId)

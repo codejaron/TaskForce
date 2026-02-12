@@ -4,7 +4,6 @@ import com.agent.domain.context.assembly.ContextAssembler;
 import com.agent.domain.taskboard.service.TaskBoardService;
 import com.agent.domain.team.service.InboxService;
 import com.agent.domain.worker.model.WorkerInstance;
-import com.agent.domain.worker.model.WorkerStatus;
 import com.agent.domain.worker.repository.WorkerInstanceRepository;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
@@ -14,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -81,8 +81,19 @@ public class WorkerInstanceManager {
         log.info("[WorkerInstanceManager] Spawning worker: sessionId={}, name={}, agentId={}, assignedTaskId={}",
                 sessionId, name, agentId, assignedTaskId);
 
+        int workerId = nextWorkerId(sessionId);
+
+        String instanceId = buildInstanceId(sessionId, workerId);
+
         // 1. 创建 Worker 实例（带指派任务）
-        WorkerInstance instance = WorkerInstance.createWithTask(sessionId, name, agentId, assignedTaskId);
+        WorkerInstance instance = WorkerInstance.createWithTask(
+                sessionId,
+                name,
+                agentId,
+                workerId,
+                instanceId,
+                assignedTaskId
+        );
         workerRepository.save(instance);
 
         // 2. 在 spawn 的时候就把任务分配给这个 Worker
@@ -109,8 +120,8 @@ public class WorkerInstanceManager {
         // 5. 发布 worker_spawned 事件
         eventBus.publish(sessionId, new WorkerSpawnedEvent(sessionId, instance.getInstanceId(), name, agentId));
 
-        log.info("[WorkerInstanceManager] Worker spawned successfully: instanceId={}, assignedTaskId={}",
-                instance.getInstanceId(), assignedTaskId);
+        log.info("[WorkerInstanceManager] Worker spawned successfully: workerId={}, instanceId={}, assignedTaskId={}",
+                instance.getWorkerId(), instance.getInstanceId(), assignedTaskId);
         return instance;
     }
 
@@ -189,7 +200,43 @@ public class WorkerInstanceManager {
         // 过滤出运行中的 Worker（非 SHUTDOWN 状态）
         return allWorkers.stream()
                 .filter(worker -> !worker.isShutdown())
+                .sorted(Comparator.comparingInt(WorkerInstance::getWorkerId))
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * 查询会话内所有 Worker（含已关闭）
+     */
+    public List<WorkerInstance> getAllWorkers(String sessionId) {
+        return workerRepository.findBySessionId(sessionId).stream()
+                .sorted(Comparator.comparingInt(WorkerInstance::getWorkerId))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 根据会话 + workerId 查找 Worker
+     */
+    public Optional<WorkerInstance> findBySessionAndWorkerId(String sessionId, int workerId) {
+        if (workerId <= 0) {
+            return Optional.empty();
+        }
+
+        return workerRepository.findBySessionId(sessionId).stream()
+                .filter(worker -> resolveWorkerId(worker) == workerId)
+                .findFirst();
+    }
+
+    /**
+     * 根据会话 + instanceId 查找 Worker
+     */
+    public Optional<WorkerInstance> findBySessionAndInstanceId(String sessionId, String instanceId) {
+        if (instanceId == null || instanceId.isBlank()) {
+            return Optional.empty();
+        }
+
+        return workerRepository.findBySessionId(sessionId).stream()
+                .filter(worker -> instanceId.equals(worker.getInstanceId()))
+                .findFirst();
     }
 
     /**
@@ -237,5 +284,26 @@ public class WorkerInstanceManager {
                         worker.getInstanceId());
             }
         }
+    }
+
+    private int nextWorkerId(String sessionId) {
+        return workerRepository.findBySessionId(sessionId).stream()
+                .mapToInt(this::resolveWorkerId)
+                .max()
+                .orElse(0) + 1;
+    }
+
+    private String buildInstanceId(String sessionId, int workerId) {
+        return sessionId + "_w" + workerId;
+    }
+
+    private int resolveWorkerId(WorkerInstance worker) {
+        if (worker.getWorkerId() > 0) {
+            return worker.getWorkerId();
+        }
+        if (worker.getAssignedTaskId() > 0) {
+            return worker.getAssignedTaskId();
+        }
+        return worker.getCurrentTaskId();
     }
 }

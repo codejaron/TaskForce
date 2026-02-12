@@ -1,9 +1,7 @@
 package com.agent.domain.team.lead.tools;
 
-import com.agent.domain.team.model.Team;
-import com.agent.domain.team.model.TeamMember;
-import com.agent.domain.team.service.TeamService;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.agent.domain.worker.model.WorkerInstance;
+import com.agent.domain.worker.service.WorkerInstanceManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
@@ -22,8 +20,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ListTeammatesTool implements ToolCallback {
 
-    private final TeamService teamService;
-    private final ObjectMapper objectMapper;
+    private final WorkerInstanceManager workerInstanceManager;
 
     @Override
     public ToolDefinition getToolDefinition() {
@@ -50,30 +47,23 @@ public class ListTeammatesTool implements ToolCallback {
     public String call(String toolInput, ToolContext toolContext) {
         try {
             String sessionId = extractSessionId(toolContext);
-            Team team = teamService.getTeamBySessionId(sessionId);
-
-            if (team == null) {
-                return "No team found for this session";
-            }
-
-            List<TeamMember> members = team.getMembers();
-            log.info("[ListTeammatesTool] Listed {} teammates for session: {}", members.size(), sessionId);
-
-            if (members.isEmpty()) {
-                return "No team members found";
-            }
+            List<WorkerInstance> workers = workerInstanceManager.getRunningWorkers(sessionId);
+            log.info("[ListTeammatesTool] Listed {} workers for session: {}", workers.size(), sessionId);
 
             StringBuilder result = new StringBuilder();
-            result.append(String.format("Team: %s\n", team.getTeamId()));
-            result.append(String.format("Lead: %s\n", team.getLeadInstanceId()));
-            result.append(String.format("Status: %s\n", team.getStatus()));
-            result.append(String.format("Found %d members:\n\n", members.size()));
+            result.append(String.format("Session: %s\n", sessionId));
+            result.append("Lead: team-lead\n");
+            result.append(String.format("Found %d running workers:\n\n", workers.size()));
 
-            for (TeamMember member : members) {
-                result.append(String.format("Instance ID: %s\n", member.getInstanceId()));
-                result.append(String.format("  Name: %s\n", member.getName()));
-                result.append(String.format("  Role: %s\n", member.getRole()));
-                result.append(String.format("  Status: %s\n", member.getStatus()));
+            for (WorkerInstance worker : workers) {
+                result.append(String.format("Worker #%d\n", worker.getWorkerId()));
+                result.append(String.format("  Name: %s\n", worker.getName()));
+                result.append(String.format("  Agent ID: %s\n", worker.getAgentId()));
+                result.append(String.format("  Status: %s\n", worker.getStatus()));
+                result.append(String.format("  Assigned Task: %s\n",
+                        worker.getAssignedTaskId() == 0 ? "None" : "#" + worker.getAssignedTaskId()));
+                result.append(String.format("  Current Task: %s\n",
+                        worker.getCurrentTaskId() == 0 ? "None" : "#" + worker.getCurrentTaskId()));
                 result.append("\n");
             }
 

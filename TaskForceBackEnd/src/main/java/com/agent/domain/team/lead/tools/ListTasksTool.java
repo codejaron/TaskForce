@@ -2,7 +2,8 @@ package com.agent.domain.team.lead.tools;
 
 import com.agent.domain.taskboard.model.Task;
 import com.agent.domain.taskboard.service.TaskBoardService;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.agent.domain.worker.model.WorkerInstance;
+import com.agent.domain.worker.service.WorkerInstanceManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
@@ -22,7 +23,7 @@ import java.util.List;
 public class ListTasksTool implements ToolCallback {
 
     private final TaskBoardService taskBoardService;
-    private final ObjectMapper objectMapper;
+    private final WorkerInstanceManager workerInstanceManager;
 
     @Override
     public ToolDefinition getToolDefinition() {
@@ -63,7 +64,7 @@ public class ListTasksTool implements ToolCallback {
             for (Task task : tasks) {
                 result.append(String.format("Task #%d: %s\n", task.getTaskId(), task.getSubject()));
                 result.append(String.format("  Status: %s\n", task.getStatus()));
-                result.append(String.format("  Owner: %s\n", task.getOwner() != null ? task.getOwner() : "None"));
+                result.append(String.format("  Owner: %s\n", formatOwner(sessionId, task.getOwner())));
 
                 if (task.getBlockedBy() != null && !task.getBlockedBy().isEmpty()) {
                     String deps = task.getBlockedBy().stream()
@@ -88,6 +89,17 @@ public class ListTasksTool implements ToolCallback {
             log.error("[ListTasksTool] Failed to list tasks", e);
             return "Error listing tasks: " + e.getMessage();
         }
+    }
+
+    private String formatOwner(String sessionId, String ownerInstanceId) {
+        if (ownerInstanceId == null || ownerInstanceId.isBlank()) {
+            return "None";
+        }
+        WorkerInstance worker = workerInstanceManager.findBySessionAndInstanceId(sessionId, ownerInstanceId).orElse(null);
+        if (worker != null && worker.getWorkerId() > 0) {
+            return "Worker #" + worker.getWorkerId();
+        }
+        return "Unknown worker";
     }
 
     private String extractSessionId(ToolContext toolContext) {
