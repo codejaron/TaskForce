@@ -343,7 +343,7 @@ public class ContextAssembler {
         Task currentTask = taskBoardService.getTask(sessionId, taskId);
 
         // 2. 渲染任务板概览
-        context.append(renderTaskBoard(sessionId, taskId));
+        //context.append(renderTaskBoard(sessionId, taskId));
 
         // 3. 收集并渲染依赖链上的任务输出
         List<Task> dependencyChain = collectTaskDependencyChain(sessionId, taskId);

@@ -4,11 +4,13 @@ import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.agent.interceptor.ContextEnrichingToolInterceptor;
+import com.agent.infrastructure.agent.interceptor.EventPublishingToolInterceptor;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.service.AgentService;
 import com.agent.service.SessionExecutionTracker;
 import com.agent.service.SessionService;
+import com.agent.service.ToolCallService;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
@@ -22,6 +24,7 @@ import reactor.core.Disposable;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Team Lead Agent
@@ -36,34 +39,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class TeamLeadAgent {
 
-    private final ReactAgentFactory reactAgentFactory;
     private final TeamLeadToolProvider toolProvider;
     private final EventBus eventBus;
     private final SessionExecutionTracker executionTracker;
     private final InboxService inboxService;
     private final SessionService sessionService;
     private final AgentService agentService;
+    private final ToolCallService toolCallService;
 
     private static final int MAX_REACT_ITERATIONS = 50; // Lead 需要更多迭代次数
-    private static final String LEAD_SYSTEM_PROMPT_TEMPLATE = """
-        You are a Team Lead Agent responsible for coordinating a team of worker agents.
 
-        Your responsibilities:
-        1. Break down user requests into tasks using create_task
-        2. Spawn workers using spawn_worker when needed
-        3. Monitor task progress using list_tasks
-        4. Communicate with workers using send_message or broadcast
-        5. Check your inbox regularly using read_inbox
-        6. Reply to users using reply_user
-        7. Manage team members using list_teammates and shutdown_worker
-
-        Available agents in this session:
-        %s
-
-        IMPORTANT: When using spawn_worker, you MUST use one of the agent IDs listed above.
-
-        Work autonomously to achieve the user's goals by coordinating your team effectively.
-        """;
 
     /**
      * 启动 Lead 的持久 ReAct 循环
@@ -93,7 +78,7 @@ public class TeamLeadAgent {
                 );
             }
             String agentRoster = formatAgentRoster(availableAgents);
-            String systemPrompt = String.format(LEAD_SYSTEM_PROMPT_TEMPLATE, agentRoster);
+            String systemPrompt = String.format(userMessage, agentRoster);
 
             // 2. 获取 Lead 工具
             List<ToolCallback> leadTools = toolProvider.getLeadTools();
@@ -101,15 +86,17 @@ public class TeamLeadAgent {
 
             // 3. 构建 ReactAgent（添加 interceptor 传递 sessionId）
             ContextEnrichingToolInterceptor contextInterceptor = new ContextEnrichingToolInterceptor(sessionId, null);
-
+            AtomicInteger sequenceCounter = new AtomicInteger(0);
+            EventPublishingToolInterceptor eventInterceptor = new EventPublishingToolInterceptor(
+                    sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter, null
+            );
             ReactAgent reactAgent = ReactAgent.builder()
                     .name("TeamLead")
                     .model(chatModel)
                     .chatOptions(chatOptions)
                     .systemPrompt(systemPrompt)
-                    .instruction(userMessage)
                     .tools(leadTools)
-                    .interceptors(contextInterceptor)
+                    .interceptors(contextInterceptor,eventInterceptor)
                     .build();
 
             // 3. 配置 RunnableConfig（传递 sessionId 到 metadata）

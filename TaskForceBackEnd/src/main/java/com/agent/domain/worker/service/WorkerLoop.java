@@ -48,7 +48,6 @@ public class WorkerLoop implements Runnable {
     private final SessionExecutionTracker executionTracker;
     private final InboxService inboxService;
     private final ContextAssembler contextAssembler;
-    private final String initialPrompt;
 
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
     private volatile Thread loopThread;
@@ -61,8 +60,7 @@ public class WorkerLoop implements Runnable {
             EventBus eventBus,
             SessionExecutionTracker executionTracker,
             InboxService inboxService,
-            ContextAssembler contextAssembler,
-            String initialPrompt) {
+            ContextAssembler contextAssembler){
         this.workerInstance = workerInstance;
         this.workerRepository = workerRepository;
         this.taskBoardService = taskBoardService;
@@ -71,7 +69,6 @@ public class WorkerLoop implements Runnable {
         this.executionTracker = executionTracker;
         this.inboxService = inboxService;
         this.contextAssembler = contextAssembler;
-        this.initialPrompt = initialPrompt;
     }
 
     @Override
@@ -341,16 +338,25 @@ public class WorkerLoop implements Runnable {
             // 7. 更新任务状态
             if (shutdown.get()) {
                 log.info("[WorkerLoop] Task interrupted by shutdown: taskId={}", task.getTaskId());
-                // 重置任务为 PENDING，允许其他 Worker 认领
                 TaskUpdateRequest updateRequest = TaskUpdateRequest.builder()
                         .status(TaskStatus.PENDING)
                         .owner(null)
                         .build();
                 taskBoardService.updateTask(workerInstance.getSessionId(), task.getTaskId(), updateRequest);
             } else {
-                // 任务完成
-                taskBoardService.completeTask(workerInstance.getSessionId(), task.getTaskId());
-                log.info("[WorkerLoop] Task completed successfully: taskId={}", task.getTaskId());
+                // Worker 应该在 ReAct 循环中主动调用 complete_task 标记完成
+                // 如果流结束后任务仍未完成，说明 Worker 未能完成（可能达到迭代上限）
+                Task updatedTask = taskBoardService.getTask(workerInstance.getSessionId(), task.getTaskId());
+                if (updatedTask.isCompleted()) {
+                    log.info("[WorkerLoop] Task completed by worker: taskId={}", task.getTaskId());
+                } else if (updatedTask.isFailed()) {
+                    log.info("[WorkerLoop] Task already marked as failed: taskId={}", task.getTaskId());
+                } else {
+                    // 未完成 = Worker 没调 complete_task，标记为失败
+                    log.warn("[WorkerLoop] Task not completed after execution ended (likely hit iteration limit): taskId={}",
+                            task.getTaskId());
+                    taskBoardService.failTask(workerInstance.getSessionId(), task.getTaskId());
+                }
             }
 
             // 8. 更新 Worker 状态
