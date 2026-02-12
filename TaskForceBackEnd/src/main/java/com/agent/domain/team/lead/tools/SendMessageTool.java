@@ -2,6 +2,8 @@ package com.agent.domain.team.lead.tools;
 
 import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
+import com.agent.domain.worker.model.WorkerInstance;
+import com.agent.domain.worker.service.WorkerInstanceManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +24,7 @@ import java.util.Map;
 public class SendMessageTool implements ToolCallback {
 
     private final InboxService inboxService;
+    private final WorkerInstanceManager workerInstanceManager;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -30,9 +33,9 @@ public class SendMessageTool implements ToolCallback {
             {
               "type": "object",
               "properties": {
-                "recipient": {
-                  "type": "string",
-                  "description": "接收者实例 ID"
+                "workerId": {
+                  "type": "integer",
+                  "description": "接收消息的 Worker ID（会话内数字编号，例如 1/2/3）"
                 },
                 "content": {
                   "type": "string",
@@ -43,7 +46,7 @@ public class SendMessageTool implements ToolCallback {
                   "description": "消息类型（可选，默认为 INSTRUCTION）"
                 }
               },
-              "required": ["recipient", "content"]
+              "required": ["workerId", "content"]
             }
             """;
 
@@ -64,26 +67,44 @@ public class SendMessageTool implements ToolCallback {
         try {
             Map<String, Object> args = objectMapper.readValue(toolInput, Map.class);
 
-            String recipient = (String) args.get("recipient");
+            String sessionId = extractSessionId(toolContext);
+            int workerId = ((Number) args.get("workerId")).intValue();
             String content = (String) args.get("content");
             String messageType = (String) args.getOrDefault("messageType", "INSTRUCTION");
 
+            WorkerInstance worker = workerInstanceManager.findBySessionAndWorkerId(sessionId, workerId)
+                    .orElse(null);
+            if (worker == null || worker.isShutdown()) {
+                return String.format("Worker #%d not found in current session", workerId);
+            }
+
             TeamMessage message = TeamMessage.builder()
                     .from("team-lead")
-                    .to(recipient)
+                    .to(worker.getInstanceId())
                     .text(content)
                     .type(messageType)
                     .build();
 
             inboxService.send(message);
 
-            log.info("[SendMessageTool] Sent message to: recipient={}", recipient);
+            log.info("[SendMessageTool] Sent message: sessionId={}, workerId={}, instanceId={}",
+                    sessionId, workerId, worker.getInstanceId());
 
-            return String.format("Message sent successfully to: %s", recipient);
+            return String.format("Message sent successfully to worker #%d", workerId);
 
         } catch (Exception e) {
             log.error("[SendMessageTool] Failed to send message", e);
             return "Error sending message: " + e.getMessage();
         }
+    }
+
+    private String extractSessionId(ToolContext toolContext) {
+        if (toolContext != null && toolContext.getContext() != null) {
+            Object sessionId = toolContext.getContext().get("sessionId");
+            if (sessionId != null) {
+                return sessionId.toString();
+            }
+        }
+        throw new IllegalArgumentException("sessionId not found in tool context");
     }
 }

@@ -29,12 +29,12 @@ public class ShutdownWorkerTool implements ToolCallback {
             {
               "type": "object",
               "properties": {
-                "instanceId": {
-                  "type": "string",
-                  "description": "Worker 实例 ID"
+                "workerId": {
+                  "type": "integer",
+                  "description": "要关闭的 Worker ID（会话内数字编号）"
                 }
               },
-              "required": ["instanceId"]
+              "required": ["workerId"]
             }
             """;
 
@@ -54,22 +54,39 @@ public class ShutdownWorkerTool implements ToolCallback {
     public String call(String toolInput, ToolContext toolContext) {
         try {
             Map<String, Object> args = objectMapper.readValue(toolInput, Map.class);
-            String instanceId = (String) args.get("instanceId");
+            String sessionId = extractSessionId(toolContext);
+            int workerId = ((Number) args.get("workerId")).intValue();
 
-            boolean success = workerInstanceManager.shutdown(instanceId);
+            var worker = workerInstanceManager.findBySessionAndWorkerId(sessionId, workerId).orElse(null);
+            if (worker == null || worker.isShutdown()) {
+                return String.format("Failed to shutdown worker #%d (not found or already shutdown)", workerId);
+            }
+
+            boolean success = workerInstanceManager.shutdown(worker.getInstanceId());
 
             if (success) {
-                log.info("[ShutdownWorkerTool] Shutdown worker: instanceId={}", instanceId);
-                return String.format("Worker shutdown successfully: instanceId=%s", instanceId);
+                log.info("[ShutdownWorkerTool] Shutdown worker: sessionId={}, workerId={}, instanceId={}",
+                        sessionId, workerId, worker.getInstanceId());
+                return String.format("Worker #%d shutdown successfully", workerId);
             } else {
-                log.warn("[ShutdownWorkerTool] Failed to shutdown worker: instanceId={}", instanceId);
-                return String.format("Failed to shutdown worker: instanceId=%s (not found or already shutdown)",
-                        instanceId);
+                log.warn("[ShutdownWorkerTool] Failed to shutdown worker: sessionId={}, workerId={}, instanceId={}",
+                        sessionId, workerId, worker.getInstanceId());
+                return String.format("Failed to shutdown worker #%d (loop not found)", workerId);
             }
 
         } catch (Exception e) {
             log.error("[ShutdownWorkerTool] Error shutting down worker", e);
             return "Error shutting down worker: " + e.getMessage();
         }
+    }
+
+    private String extractSessionId(ToolContext toolContext) {
+        if (toolContext != null && toolContext.getContext() != null) {
+            Object sessionId = toolContext.getContext().get("sessionId");
+            if (sessionId != null) {
+                return sessionId.toString();
+            }
+        }
+        throw new IllegalArgumentException("sessionId not found in tool context");
     }
 }

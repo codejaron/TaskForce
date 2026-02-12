@@ -2,6 +2,8 @@ package com.agent.domain.worker.execution.tools;
 
 import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
+import com.agent.domain.worker.model.WorkerInstance;
+import com.agent.domain.worker.service.WorkerInstanceManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +24,7 @@ import java.util.Map;
 public class SendMessageTool implements ToolCallback {
 
     private final InboxService inboxService;
+    private final WorkerInstanceManager workerInstanceManager;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -30,9 +33,9 @@ public class SendMessageTool implements ToolCallback {
             {
               "type": "object",
               "properties": {
-                "target": {
-                  "type": "string",
-                  "description": "目标接收者的实例 ID 或名称"
+                "workerId": {
+                  "type": "integer",
+                  "description": "目标 Worker ID（1/2/3...），发送给 Lead 时填 0"
                 },
                 "text": {
                   "type": "string",
@@ -43,7 +46,7 @@ public class SendMessageTool implements ToolCallback {
                   "description": "消息类型（可选，默认为 MESSAGE）"
                 }
               },
-              "required": ["target", "text"]
+              "required": ["workerId", "text"]
             }
             """;
 
@@ -64,28 +67,58 @@ public class SendMessageTool implements ToolCallback {
         try {
             Map<String, Object> args = objectMapper.readValue(toolInput, Map.class);
 
+            String sessionId = extractSessionId(toolContext);
             String instanceId = extractInstanceId(toolContext);
-            String target = (String) args.get("target");
+            int workerId = ((Number) args.get("workerId")).intValue();
             String text = (String) args.get("text");
             String messageType = (String) args.getOrDefault("messageType", "MESSAGE");
 
+            WorkerInstance senderWorker = workerInstanceManager.findBySessionAndInstanceId(sessionId, instanceId).orElse(null);
+            String sender = senderWorker != null && senderWorker.getWorkerId() > 0
+                    ? "worker-" + senderWorker.getWorkerId()
+                    : "worker";
+
+            String targetInstanceId;
+            String targetLabel;
+            if (workerId == 0) {
+                targetInstanceId = sessionId + "_lead";
+                targetLabel = "lead";
+            } else {
+                WorkerInstance targetWorker = workerInstanceManager.findBySessionAndWorkerId(sessionId, workerId).orElse(null);
+                if (targetWorker == null || targetWorker.isShutdown()) {
+                    return String.format("Worker #%d not found in current session", workerId);
+                }
+                targetInstanceId = targetWorker.getInstanceId();
+                targetLabel = "worker-" + workerId;
+            }
+
             TeamMessage message = TeamMessage.builder()
-                    .from(instanceId)
-                    .to(target)
+                    .from(sender)
+                    .to(targetInstanceId)
                     .text(text)
                     .type(messageType)
                     .build();
 
             inboxService.send(message);
 
-            log.info("[SendMessageTool] Sent message from {} to {}", instanceId, target);
+            log.info("[SendMessageTool] Sent message from {} to {}", sender, targetLabel);
 
-            return String.format("Message sent successfully to %s", target);
+            return String.format("Message sent successfully to %s", targetLabel);
 
         } catch (Exception e) {
             log.error("[SendMessageTool] Failed to send message", e);
             return "Error sending message: " + e.getMessage();
         }
+    }
+
+    private String extractSessionId(ToolContext toolContext) {
+        if (toolContext != null && toolContext.getContext() != null) {
+            Object sessionId = toolContext.getContext().get("sessionId");
+            if (sessionId != null) {
+                return sessionId.toString();
+            }
+        }
+        throw new IllegalArgumentException("sessionId not found in tool context");
     }
 
     private String extractInstanceId(ToolContext toolContext) {

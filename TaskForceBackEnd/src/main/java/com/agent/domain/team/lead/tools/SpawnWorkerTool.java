@@ -42,7 +42,7 @@ public class SpawnWorkerTool implements ToolCallback {
                 },
                 "assignedTaskId": {
                   "type": "integer",
-                  "description": "指派给该 Worker 的任务 ID（来自 create_task 返回的 taskId）"
+                  "description": "指派给该 Worker 的任务 ID"
                 }
               },
               "required": ["name", "agentId", "assignedTaskId"]
@@ -71,17 +71,26 @@ public class SpawnWorkerTool implements ToolCallback {
             String agentId = (String) args.get("agentId");
             int assignedTaskId = ((Number) args.get("assignedTaskId")).intValue();
 
+            if (assignedTaskId <= 0) {
+                return "Error spawning worker: assignedTaskId must be a positive task ID";
+            }
+
             if (!isAgentAvailableInSession(sessionId, agentId)) {
                 return String.format("Error spawning worker: agentId=%s is not available in session %s", agentId, sessionId);
             }
 
             WorkerInstance worker = workerInstanceManager.spawn(sessionId, name, agentId, "", assignedTaskId);
 
-            log.info("[SpawnWorkerTool] Spawned worker: instanceId={}, name={}, assignedTaskId={}",
-                    worker.getInstanceId(), name, assignedTaskId);
+            log.info("[SpawnWorkerTool] Spawned worker: workerId={}, instanceId={}, name={}, assignedTaskId={}",
+                    worker.getWorkerId(), worker.getInstanceId(), name, assignedTaskId);
 
-            return String.format("Worker spawned successfully: instanceId=%s, name=%s, assignedTaskId=%d, status=%s",
-                    worker.getInstanceId(), worker.getName(), assignedTaskId, worker.getStatus());
+            return String.format(
+                    "Worker spawned successfully: workerId=%d, assignedTaskId=%d, name=%s, status=%s",
+                    worker.getWorkerId(),
+                    assignedTaskId,
+                    worker.getName(),
+                    worker.getStatus()
+            );
 
         } catch (Exception e) {
             log.error("[SpawnWorkerTool] Failed to spawn worker", e);

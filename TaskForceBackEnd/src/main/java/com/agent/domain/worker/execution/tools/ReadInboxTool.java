@@ -2,7 +2,8 @@ package com.agent.domain.worker.execution.tools;
 
 import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.agent.domain.worker.model.WorkerInstance;
+import com.agent.domain.worker.service.WorkerInstanceManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
@@ -22,7 +23,7 @@ import java.util.List;
 public class ReadInboxTool implements ToolCallback {
 
     private final InboxService inboxService;
-    private final ObjectMapper objectMapper;
+    private final WorkerInstanceManager workerInstanceManager;
 
     @Override
     public ToolDefinition getToolDefinition() {
@@ -48,6 +49,7 @@ public class ReadInboxTool implements ToolCallback {
     @Override
     public String call(String toolInput, ToolContext toolContext) {
         try {
+            String sessionId = extractSessionId(toolContext);
             String instanceId = extractInstanceId(toolContext);
             List<TeamMessage> messages = inboxService.readInbox(instanceId);
 
@@ -61,7 +63,7 @@ public class ReadInboxTool implements ToolCallback {
             result.append(String.format("Found %d messages:\n\n", messages.size()));
 
             for (TeamMessage message : messages) {
-                result.append(String.format("From: %s\n", message.getFrom()));
+                result.append(String.format("From: %s\n", formatSender(sessionId, message.getFrom())));
                 result.append(String.format("Type: %s\n", message.getType()));
                 result.append(String.format("Content: %s\n", message.getText()));
                 result.append(String.format("Time: %s\n", message.getTimestamp()));
@@ -76,6 +78,16 @@ public class ReadInboxTool implements ToolCallback {
         }
     }
 
+    private String extractSessionId(ToolContext toolContext) {
+        if (toolContext != null && toolContext.getContext() != null) {
+            Object sessionId = toolContext.getContext().get("sessionId");
+            if (sessionId != null) {
+                return sessionId.toString();
+            }
+        }
+        throw new IllegalArgumentException("sessionId not found in tool context");
+    }
+
     private String extractInstanceId(ToolContext toolContext) {
         if (toolContext != null && toolContext.getContext() != null) {
             Object instanceId = toolContext.getContext().get("instanceId");
@@ -84,5 +96,23 @@ public class ReadInboxTool implements ToolCallback {
             }
         }
         throw new IllegalArgumentException("instanceId not found in tool context");
+    }
+
+    private String formatSender(String sessionId, String sender) {
+        if (sender == null || sender.isBlank()) {
+            return "unknown";
+        }
+        if ("team-lead".equalsIgnoreCase(sender) || "lead".equalsIgnoreCase(sender)) {
+            return "lead";
+        }
+        if (sender.startsWith("worker-")) {
+            return sender;
+        }
+
+        WorkerInstance worker = workerInstanceManager.findBySessionAndInstanceId(sessionId, sender).orElse(null);
+        if (worker != null && worker.getWorkerId() > 0) {
+            return "worker-" + worker.getWorkerId();
+        }
+        return sender;
     }
 }
