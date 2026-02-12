@@ -1,5 +1,6 @@
 package com.agent.mcpserver.service;
 
+import com.agent.mcpserver.config.McpClientPoolProperties;
 import com.agent.mcpserver.dto.ToolCallResult;
 import com.agent.mcpserver.dto.ToolVO;
 import com.agent.mcpserver.entity.ToolProviderConfig;
@@ -23,7 +24,10 @@ import org.springframework.stereotype.Service;
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 工具路由器
@@ -35,19 +39,25 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ToolRouter {
 
     private final ToolProviderConfigService configService;
+    private final McpClientPoolProperties clientPoolProperties;
 
     @Lazy
     private final NativeToolScanner nativeToolScanner;
 
     /**
-     * MCP Client 缓存：providerId -> McpSyncClient
+     * MCP Client 池缓存：providerId -> ProviderClientPool
      */
-    private final Map<String, McpSyncClient> clientCache = new ConcurrentHashMap<>();
+    private final Map<String, ProviderClientPool> clientPoolCache = new ConcurrentHashMap<>();
 
     /**
      * Provider 名称映射：providerId -> providerName
      */
     private final Map<String, String> clientNameMap = new ConcurrentHashMap<>();
+
+    /**
+     * Provider 类型映射：providerId -> providerType
+     */
+    private final Map<String, ToolProviderConfig.ProviderType> providerTypeMap = new ConcurrentHashMap<>();
 
     /**
      * 工具缓存：providerId -> List<McpSchema.Tool>
@@ -69,15 +79,11 @@ public class ToolRouter {
     @PreDestroy
     public void cleanup() {
         log.info("[ToolRouter] Cleaning up providers...");
-        clientCache.values().forEach(client -> {
-            try {
-                client.closeGracefully();
-            } catch (Exception e) {
-                log.warn("[ToolRouter] Error closing client", e);
-            }
-        });
-        clientCache.clear();
+        clientPoolCache.values().forEach(ProviderClientPool::closeAll);
+        clientPoolCache.clear();
         clientNameMap.clear();
+        providerTypeMap.clear();
+        toolsCache.clear();
         toolRouteTable.clear();
     }
 
@@ -88,15 +94,10 @@ public class ToolRouter {
         log.info("[ToolRouter] Reloading all providers...");
 
         // 关闭现有 Client
-        clientCache.values().forEach(client -> {
-            try {
-                client.closeGracefully();
-            } catch (Exception e) {
-                log.warn("[ToolRouter] Error closing client during reload", e);
-            }
-        });
-        clientCache.clear();
+        clientPoolCache.values().forEach(ProviderClientPool::closeAll);
+        clientPoolCache.clear();
         clientNameMap.clear();
+        providerTypeMap.clear();
         toolsCache.clear();
         toolRouteTable.clear();
 
@@ -111,7 +112,7 @@ public class ToolRouter {
         }
 
         log.info("[ToolRouter] Loaded {} providers with {} tools (+ {} native tools)",
-                clientCache.size(), toolRouteTable.size(), nativeToolScanner.listTools().size());
+                clientPoolCache.size(), toolRouteTable.size(), nativeToolScanner.listTools().size());
     }
 
     /**
@@ -123,28 +124,27 @@ public class ToolRouter {
         String providerName = config.getName();
 
         // 如果已存在，先关闭
-        McpSyncClient existing = clientCache.remove(providerId);
+        ProviderClientPool existing = clientPoolCache.remove(providerId);
         if (existing != null) {
             log.info("[ToolRouter] Overwriting existing provider: {}", providerName);
-            existing.closeGracefully();
+            existing.closeAll();
             clientNameMap.remove(providerId);
+            providerTypeMap.remove(providerId);
             toolsCache.remove(providerId);
             toolRouteTable.entrySet().removeIf(entry -> entry.getValue().equals(providerId));
         }
 
-        // 创建 Transport
-        McpSyncClient client = createClient(config);
-
-        // 初始化连接
-        client.initialize();
-
-        // 注册到缓存
-        clientCache.put(providerId, client);
-        clientNameMap.put(providerId, providerName);
+        int poolSize = resolvePoolSize(config);
+        ProviderClientPool clientPool = createClientPool(config, poolSize);
 
         // 获取工具列表并缓存
-        McpSchema.ListToolsResult toolsResult = client.listTools();
+        McpSchema.ListToolsResult toolsResult = clientPool.referenceClient().listTools();
         List<McpSchema.Tool> tools = toolsResult.tools();
+
+        // 注册到缓存
+        clientPoolCache.put(providerId, clientPool);
+        clientNameMap.put(providerId, providerName);
+        providerTypeMap.put(providerId, config.getType());
 
         // 缓存工具列表（避免并发调用 client.listTools()）
         toolsCache.put(providerId, tools);
@@ -164,8 +164,8 @@ public class ToolRouter {
         // 更新配置状态
         configService.updateConnectionStatus(providerId, true, tools.size(), null);
 
-        log.info("[ToolRouter] Registered provider: {} ({}) with {} tools (prefix: {}::)",
-                config.getName(), providerId, tools.size(), providerName);
+        log.info("[ToolRouter] Registered provider: {} ({}) with {} tools, pool size {} (prefix: {}::)",
+                config.getName(), providerId, tools.size(), poolSize, providerName);
     }
 
     /**
@@ -220,6 +220,49 @@ public class ToolRouter {
     }
 
     /**
+     * 创建并初始化 Provider 客户端池
+     */
+    private ProviderClientPool createClientPool(ToolProviderConfig config, int poolSize) throws Exception {
+        List<McpSyncClient> clients = new ArrayList<>(poolSize);
+        try {
+            for (int i = 0; i < poolSize; i++) {
+                McpSyncClient client = createClient(config);
+                client.initialize();
+                clients.add(client);
+            }
+            return new ProviderClientPool(config.getId(), config.getName(), clients);
+        } catch (Exception e) {
+            clients.forEach(this::closeClientQuietly);
+            throw e;
+        }
+    }
+
+    /**
+     * 解析 Provider 池大小（按 Provider 类型取默认值）
+     */
+    private int resolvePoolSize(ToolProviderConfig config) {
+        int poolSize = switch (config.getType()) {
+            case STDIO -> clientPoolProperties.getStdioDefaultSize();
+            case REMOTE_SSE -> clientPoolProperties.getRemoteSseDefaultSize();
+            case STREAMABLE_HTTP -> clientPoolProperties.getStreamableHttpDefaultSize();
+        };
+
+        if (poolSize <= 0) {
+            log.warn("[ToolRouter] Invalid pool size {} for provider {}, fallback to 1",
+                    poolSize, config.getName());
+            poolSize = 1;
+        }
+
+        int maxPoolSize = Math.max(clientPoolProperties.getMaxPoolSize(), 1);
+        if (poolSize > maxPoolSize) {
+            log.warn("[ToolRouter] Pool size {} for provider {} exceeds max {}, clamped",
+                    poolSize, config.getName(), maxPoolSize);
+            poolSize = maxPoolSize;
+        }
+        return poolSize;
+    }
+
+    /**
      * 解析 JSON 数组字符串为 List
      */
     private List<String> parseArgs(String argsJson) {
@@ -255,14 +298,11 @@ public class ToolRouter {
      * 注销 Provider
      */
     public void unregisterProvider(String providerId) {
-        McpSyncClient client = clientCache.remove(providerId);
-        if (client != null) {
-            try {
-                client.closeGracefully();
-            } catch (Exception e) {
-                log.warn("[ToolRouter] Error closing client", e);
-            }
+        ProviderClientPool clientPool = clientPoolCache.remove(providerId);
+        if (clientPool != null) {
+            clientPool.closeAll();
             clientNameMap.remove(providerId);
+            providerTypeMap.remove(providerId);
             toolsCache.remove(providerId);
             toolRouteTable.entrySet().removeIf(entry -> entry.getValue().equals(providerId));
             log.info("[ToolRouter] Unregistered provider: {}", providerId);
@@ -275,7 +315,7 @@ public class ToolRouter {
     public ToolCallResult callTool(String globalToolId, Map<String, Object> arguments, String sessionId) {
         // 1. 先检查 Native 工具
         if (nativeToolScanner.hasTool(globalToolId)) {
-            log.info("[ToolRouter] Routing to native tool: {}", globalToolId);
+            log.debug("[ToolRouter] Routing to native tool: {}", globalToolId);
             try {
                 if (sessionId != null) {
                     com.agent.mcpserver.context.SessionContext.setSessionId(sessionId);
@@ -297,8 +337,8 @@ public class ToolRouter {
             return ToolCallResult.error("Tool not found: " + globalToolId);
         }
 
-        McpSyncClient client = clientCache.get(providerId);
-        if (client == null) {
+        ProviderClientPool clientPool = clientPoolCache.get(providerId);
+        if (clientPool == null) {
             log.warn("[ToolRouter] Provider not available: {}", providerId);
             return ToolCallResult.error("Provider not available: " + providerId);
         }
@@ -309,19 +349,33 @@ public class ToolRouter {
             originalToolName = globalToolId.substring(globalToolId.indexOf("::") + 2);
         }
 
-        log.info("[ToolRouter] Routing tool call: {} -> {} (original: {})",
+        log.debug("[ToolRouter] Routing tool call: {} -> {} (original: {})",
                 globalToolId, providerId, originalToolName);
 
+        McpSyncClient borrowedClient = null;
         try {
+            borrowedClient = clientPool.borrowClient(clientPoolProperties.getAcquireTimeoutSeconds());
+            if (borrowedClient == null) {
+                log.warn("[ToolRouter] Provider pool exhausted: providerId={}, poolSize={}",
+                        providerId, clientPool.size());
+                return ToolCallResult.error("Provider is busy, please retry: " + providerId);
+            }
+
             // 调用 MCP Client
             McpSchema.CallToolRequest request = new McpSchema.CallToolRequest(originalToolName, arguments);
-            McpSchema.CallToolResult result = client.callTool(request);
+            McpSchema.CallToolResult result = borrowedClient.callTool(request);
 
             // 转换为 ToolCallResult
             return convertToToolCallResult(result);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[ToolRouter] Interrupted while borrowing client: {}", globalToolId, e);
+            return ToolCallResult.error("Tool call interrupted");
         } catch (Exception e) {
             log.error("[ToolRouter] Tool call failed: {}", globalToolId, e);
             return ToolCallResult.error("Tool call failed: " + e.getMessage());
+        } finally {
+            clientPool.returnClient(borrowedClient);
         }
     }
 
@@ -380,10 +434,10 @@ public class ToolRouter {
             String providerId = entry.getKey();
             List<McpSchema.Tool> cachedTools = entry.getValue();
             String providerName = clientNameMap.get(providerId);
+            ToolProviderConfig.ProviderType providerType = providerTypeMap.get(providerId);
 
             try {
-                ToolProviderConfig config = configService.getById(providerId);
-                String sourceType = config != null ? config.getType().name() : "UNKNOWN";
+                String sourceType = providerType != null ? providerType.name() : "UNKNOWN";
 
                 for (McpSchema.Tool tool : cachedTools) {
                     String globalToolId = providerName + "::" + tool.name();
@@ -419,11 +473,11 @@ public class ToolRouter {
         }
 
         String providerName = clientNameMap.get(providerId);
+        ToolProviderConfig.ProviderType providerType = providerTypeMap.get(providerId);
         List<ToolVO> tools = new ArrayList<>();
 
         try {
-            ToolProviderConfig config = configService.getById(providerId);
-            String sourceType = config != null ? config.getType().name() : "UNKNOWN";
+            String sourceType = providerType != null ? providerType.name() : "UNKNOWN";
 
             for (McpSchema.Tool tool : cachedTools) {
                 String globalToolId = providerName + "::" + tool.name();
@@ -466,14 +520,13 @@ public class ToolRouter {
             String providerId = entry.getKey();
             String providerName = clientNameMap.get(providerId);
             List<McpSchema.Tool> cachedTools = entry.getValue();
+            ToolProviderConfig.ProviderType providerType = providerTypeMap.get(providerId);
 
             try {
-                ToolProviderConfig config = configService.getById(providerId);
-
                 providers.add(new ProviderInfo(
                         providerId,
                         providerName,
-                        config != null ? config.getType() : null,
+                        providerType,
                         true,
                         cachedTools.size()
                 ));
@@ -512,6 +565,67 @@ public class ToolRouter {
         return listToolsByProvider(providerId).stream()
                 .filter(t -> t.getName().equals(toolName))
                 .findFirst();
+    }
+
+    private void closeClientQuietly(McpSyncClient client) {
+        if (client == null) {
+            return;
+        }
+        try {
+            client.closeGracefully();
+        } catch (Exception e) {
+            log.warn("[ToolRouter] Error closing MCP client", e);
+        }
+    }
+
+    /**
+     * 单个 Provider 对应的客户端池
+     */
+    private final class ProviderClientPool {
+        private final String providerId;
+        private final String providerName;
+        private final List<McpSyncClient> allClients;
+        private final BlockingQueue<McpSyncClient> availableClients;
+
+        private ProviderClientPool(String providerId, String providerName, List<McpSyncClient> clients) {
+            this.providerId = providerId;
+            this.providerName = providerName;
+            this.allClients = List.copyOf(clients);
+            this.availableClients = new ArrayBlockingQueue<>(clients.size(), true);
+            this.availableClients.addAll(clients);
+        }
+
+        private McpSyncClient referenceClient() {
+            return allClients.get(0);
+        }
+
+        private int size() {
+            return allClients.size();
+        }
+
+        private McpSyncClient borrowClient(int timeoutSeconds) throws InterruptedException {
+            int safeTimeoutSeconds = Math.max(timeoutSeconds, 1);
+            return availableClients.poll(safeTimeoutSeconds, TimeUnit.SECONDS);
+        }
+
+        private void returnClient(McpSyncClient client) {
+            if (client == null) {
+                return;
+            }
+            boolean returned = availableClients.offer(client);
+            if (!returned) {
+                log.warn("[ToolRouter] Client pool overflow while returning client: {} ({})",
+                        providerName, providerId);
+                closeClientQuietly(client);
+            }
+        }
+
+        private void closeAll() {
+            allClients.forEach(ToolRouter.this::closeClientQuietly);
+            availableClients.clear();
+            log.info("[ToolRouter] Closed provider pool: {} ({}) size={}",
+                    providerName, providerId, allClients.size());
+        }
     }
 
     /**

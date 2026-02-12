@@ -11,7 +11,3 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
-
-rocketmq:
-  name-server: ${ROCKETMQ_NAMESRV:namesrv:9876}
-

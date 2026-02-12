@@ -7,12 +7,8 @@ import {
   Database,
   Plus,
   Trash2,
-  Terminal,
-  Globe,
   X,
   Search,
-  CheckCircle,
-  XCircle,
   ChevronDown,
   ChevronUp,
   Zap,
@@ -21,7 +17,6 @@ import {
   FileCode
 } from 'lucide-react';
 import type { ToolInfo } from '../../../shared/api';
-import { clsx } from 'clsx';
 
 export const McpMarketplacePage: React.FC = () => {
   const { t } = useTranslation();
@@ -30,6 +25,7 @@ export const McpMarketplacePage: React.FC = () => {
   // Tool search and filter
   const [toolSearch, setToolSearch] = useState('');
   const [expandedServer, setExpandedServer] = useState<string | null>(null);
+  const [deletingServerId, setDeletingServerId] = useState<string | null>(null);
 
   // Copy state
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -51,40 +47,28 @@ export const McpMarketplacePage: React.FC = () => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // JSON Templates
-  const TEMPLATE_PYTHON = `{
-  "command": "python3",
-  "args": ["-m", "mcp_server_name"],
-  "description": "Python MCP 工具描述",
-  "enabled": true
-}`;
+  const handleDeleteServer = async (serverId: string, serverName: string) => {
+    if (serverId === 'native') {
+      return;
+    }
+    const confirmed = window.confirm(t('mcp.confirmDeleteServer', { name: serverName }));
+    if (!confirmed) {
+      return;
+    }
 
-  const TEMPLATE_NPX = `{
-  "command": "npx",
-  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-  "description": "Filesystem MCP Server",
-  "enabled": true
-}`;
-
-  const TEMPLATE_LOCAL_SCRIPT = `{
-  "command": "/usr/local/bin/python3",
-  "args": ["-u", "/path/to/script.py"],
-  "description": "本地脚本工具",
-  "enabled": true,
-  "env": {
-    "PYTHONPATH": "/path/to/directory"
-  }
-}`;
-
-  const TEMPLATE_ENV_VARS = `{
-  "command": "npx",
-  "args": ["-y", "@modelcontextprotocol/server-github"],
-  "description": "GitHub MCP Server",
-  "enabled": true,
-  "env": {
-    "GITHUB_TOKEN": "\${GITHUB_TOKEN}"
-  }
-}`;
+    try {
+      setDeletingServerId(serverId);
+      await deleteServer(serverId);
+      if (expandedServer === serverId) {
+        setExpandedServer(null);
+      }
+    } catch (error) {
+      console.error('Failed to delete MCP server:', error);
+      alert(t('mcp.deleteServerFailed'));
+    } finally {
+      setDeletingServerId(null);
+    }
+  };
 
   // Handle adding tool from JSON
   const handleAddToolFromJson = async () => {
@@ -176,11 +160,33 @@ export const McpMarketplacePage: React.FC = () => {
 
   // Group tools by server
   const toolsByServer = filteredTools.reduce((acc, tool) => {
-    const server = tool.serverName || 'Unknown';
-    if (!acc[server]) acc[server] = [];
-    acc[server].push(tool);
+    const serverId = tool.serverId || tool.serverName || 'unknown';
+    const serverName = tool.serverName || tool.serverId || 'Unknown';
+    if (!acc[serverId]) {
+      acc[serverId] = { serverId, serverName, tools: [] as ToolInfo[] };
+    }
+    acc[serverId].tools.push(tool);
     return acc;
-  }, {} as Record<string, ToolInfo[]>);
+  }, {} as Record<string, { serverId: string; serverName: string; tools: ToolInfo[] }>);
+
+  if (!toolSearch.trim()) {
+    servers.forEach((server) => {
+      const serverId = server.id || server.name;
+      if (!toolsByServer[serverId]) {
+        toolsByServer[serverId] = {
+          serverId,
+          serverName: server.name,
+          tools: []
+        };
+      }
+    });
+  }
+
+  const serverEntries = Object.values(toolsByServer).sort((a, b) => {
+    if (a.serverId === 'native') return -1;
+    if (b.serverId === 'native') return 1;
+    return a.serverName.localeCompare(b.serverName);
+  });
 
   return (
     <div className="h-screen overflow-y-auto bg-slate-50">
@@ -229,11 +235,11 @@ export const McpMarketplacePage: React.FC = () => {
 
           {/* Tools by Server */}
           <div className="space-y-4">
-            {Object.entries(toolsByServer).map(([serverName, serverTools]) => (
-              <div key={serverName} className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+            {serverEntries.map(({ serverId, serverName, tools: serverTools }) => (
+              <div key={serverId} className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
                 {/* Server Header */}
                 <button
-                  onClick={() => setExpandedServer(expandedServer === serverName ? null : serverName)}
+                  onClick={() => setExpandedServer(expandedServer === serverId ? null : serverId)}
                   className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors duration-200 cursor-pointer"
                 >
                   <div className="flex items-center gap-3">
@@ -243,56 +249,77 @@ export const McpMarketplacePage: React.FC = () => {
                       {serverTools.length} {t('mcp.tools')}
                     </span>
                   </div>
-                  {expandedServer === serverName ? (
-                    <ChevronUp size={18} className="text-gray-600" />
-                  ) : (
-                    <ChevronDown size={18} className="text-gray-600" />
-                  )}
+                  <div className="flex items-center gap-2">
+                    {serverId !== 'native' && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteServer(serverId, serverName);
+                        }}
+                        disabled={deletingServerId === serverId}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                        title={t('mcp.delete')}
+                      >
+                        <Trash2 size={14} />
+                        {deletingServerId === serverId ? t('common.loading') : t('mcp.delete')}
+                      </button>
+                    )}
+                    {expandedServer === serverId ? (
+                      <ChevronUp size={18} className="text-gray-600" />
+                    ) : (
+                      <ChevronDown size={18} className="text-gray-600" />
+                    )}
+                  </div>
                 </button>
 
                 {/* Tools List */}
-                {expandedServer === serverName && (
+                {expandedServer === serverId && (
                   <div className="border-t border-gray-200">
-                    <table className="w-full text-left text-sm">
-                      <thead className="bg-slate-50 text-gray-700">
-                        <tr>
-                          <th className="p-4 font-medium">{t('mcp.toolName')}</th>
-                          <th className="p-4 font-medium">{t('mcp.description')}</th>
-                          <th className="p-4 font-medium">ID</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200">
-                        {serverTools.map(tool => (
-                          <tr key={tool.id} className="hover:bg-slate-50 transition-colors duration-200">
-                            <td className="p-4">
-                              <span className="font-medium text-orange-600">{tool.name}</span>
-                            </td>
-                            <td className="p-4 text-gray-700 max-w-md truncate">{tool.description}</td>
-                            <td className="p-4">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs text-gray-600 truncate max-w-[120px]">{tool.id}</span>
-                                <button
-                                  onClick={() => copyToClipboard(tool.id, tool.id)}
-                                  className="p-1 hover:bg-gray-100 rounded transition-colors duration-200 cursor-pointer"
-                                >
-                                  {copiedId === tool.id ? (
-                                    <Check size={12} className="text-green-600" />
-                                  ) : (
-                                    <Copy size={12} className="text-gray-600" />
-                                  )}
-                                </button>
-                              </div>
-                            </td>
+                    {serverTools.length === 0 ? (
+                      <div className="p-6 text-sm text-gray-500">{t('mcp.noTools')}</div>
+                    ) : (
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-slate-50 text-gray-700">
+                          <tr>
+                            <th className="p-4 font-medium">{t('mcp.toolName')}</th>
+                            <th className="p-4 font-medium">{t('mcp.description')}</th>
+                            <th className="p-4 font-medium">ID</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                          {serverTools.map(tool => (
+                            <tr key={tool.id} className="hover:bg-slate-50 transition-colors duration-200">
+                              <td className="p-4">
+                                <span className="font-medium text-orange-600">{tool.name}</span>
+                              </td>
+                              <td className="p-4 text-gray-700 max-w-md truncate">{tool.description}</td>
+                              <td className="p-4">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-xs text-gray-600 truncate max-w-[120px]">{tool.id}</span>
+                                  <button
+                                    onClick={() => copyToClipboard(tool.id, tool.id)}
+                                    className="p-1 hover:bg-gray-100 rounded transition-colors duration-200 cursor-pointer"
+                                  >
+                                    {copiedId === tool.id ? (
+                                      <Check size={12} className="text-green-600" />
+                                    ) : (
+                                      <Copy size={12} className="text-gray-600" />
+                                    )}
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
                   </div>
                 )}
               </div>
             ))}
 
-            {Object.keys(toolsByServer).length === 0 && (
+            {serverEntries.length === 0 && (
               <div className="text-center py-12 text-gray-500">
                 {toolSearch ? t('mcp.noToolsMatch') : t('mcp.noToolsAvailable')}
               </div>

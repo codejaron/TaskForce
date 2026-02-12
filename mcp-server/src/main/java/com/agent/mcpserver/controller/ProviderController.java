@@ -4,12 +4,12 @@ import com.agent.mcpserver.dto.ApiResponse;
 import com.agent.mcpserver.dto.ProviderConfigRequest;
 import com.agent.mcpserver.dto.ToolVO;
 import com.agent.mcpserver.entity.ToolProviderConfig;
+import com.agent.mcpserver.service.ProviderSyncPublisher;
 import com.agent.mcpserver.service.ToolProviderConfigService;
 import com.agent.mcpserver.service.ToolRouter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -27,8 +27,8 @@ public class ProviderController {
 
     private final ToolRouter toolRouter;
     private final ToolProviderConfigService configService;
+    private final ProviderSyncPublisher syncPublisher;
     private final ObjectMapper objectMapper;
-    private final RocketMQTemplate rocketMQTemplate;
 
     /**
      * 获取所有提供者列表
@@ -78,7 +78,7 @@ public class ProviderController {
                 toolRouter.registerProvider(savedConfig);
                 
                 // 通知其他实例同步
-                rocketMQTemplate.syncSend("mcp-provider-sync", "add:" + savedConfig.getId());
+                syncPublisher.publishAdd(savedConfig.getId());
 
                 int toolCount = toolRouter.listToolsByProvider(savedConfig.getId()).size();
                 return ApiResponse.success(Map.of(
@@ -131,7 +131,7 @@ public class ProviderController {
             }
 
             // 通知其他实例同步
-            rocketMQTemplate.syncSend("mcp-provider-sync", "delete:" + providerId);
+            syncPublisher.publishDelete(providerId);
 
             return ApiResponse.success(Map.of("success", true));
         } catch (Exception e) {

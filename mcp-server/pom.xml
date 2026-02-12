@@ -108,11 +108,10 @@
             <version>2.11.0</version>
         </dependency>
 
-        <!-- RocketMQ -->
+        <!-- Redis (Pub/Sub for provider sync broadcast) -->
         <dependency>
-            <groupId>org.apache.rocketmq</groupId>
-            <artifactId>rocketmq-spring-boot-starter</artifactId>
-            <version>2.3.0</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
         <!-- Test -->
