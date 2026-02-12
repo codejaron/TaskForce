@@ -697,6 +697,55 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         let msg: WorkerMessage | null = null;
 
         switch (eventType) {
+          // ===== 工具调用开始 =====
+          case 'tool_call_start':
+            {
+              const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+              const toolArgs = typeof data.toolArgs === 'string' ? data.toolArgs : JSON.stringify(data.toolArgs || {});
+              msg = {
+                id: `${Date.now()}_tool_call_${data.toolCallId || ''}`,
+                type: 'tool_call',
+                content: toolArgs,
+                timestamp: new Date().toISOString(),
+                toolName
+              };
+            }
+            break;
+
+          // ===== 工具调用完成 =====
+          case 'tool_call_complete':
+            {
+              const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+              const toolResult = typeof data.toolResult === 'string' ? data.toolResult : JSON.stringify(data.toolResult || {});
+              const status = typeof data.status === 'string' ? data.status : '';
+              msg = {
+                id: `${Date.now()}_tool_result_${data.toolCallId || ''}`,
+                type: 'tool_result',
+                content: status === 'FAILED'
+                  ? `❌ ${typeof data.errorMessage === 'string' ? data.errorMessage : toolResult}`
+                  : toolResult,
+                timestamp: new Date().toISOString(),
+                toolName
+              };
+            }
+            break;
+
+          // ===== Worker 流式输出 =====
+          case 'worker_output':
+            {
+              const output = typeof data.output === 'string' ? data.output : '';
+              if (output) {
+                msg = {
+                  id: `${Date.now()}_output`,
+                  type: 'output',
+                  content: output,
+                  timestamp: new Date().toISOString()
+                };
+              }
+            }
+            break;
+
+          // ===== 以下保留原来的，以备将来使用 =====
           case 'step_start':
             msg = {
               id: `${Date.now()}_thinking`,
@@ -704,34 +753,6 @@ export const useTeamStore = create<TeamState>((set, get) => ({
               content: typeof data.content === 'string' ? data.content : 'Worker 开始思考...',
               timestamp: new Date().toISOString()
             };
-            break;
-
-          case 'tool_call':
-            {
-              const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
-              const input = typeof data.input === 'string' ? data.input : JSON.stringify(data.input || {});
-              msg = {
-                id: `${Date.now()}_tool_call`,
-                type: 'tool_call',
-                content: input,
-                timestamp: new Date().toISOString(),
-                toolName
-              };
-            }
-            break;
-
-          case 'tool_result':
-            {
-              const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
-              const output = typeof data.output === 'string' ? data.output : JSON.stringify(data.output || {});
-              msg = {
-                id: `${Date.now()}_tool_result`,
-                type: 'tool_result',
-                content: output,
-                timestamp: new Date().toISOString(),
-                toolName
-              };
-            }
             break;
 
           case 'step_completed':
@@ -762,12 +783,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             break;
 
           default:
-            msg = {
-              id: `${Date.now()}_system`,
-              type: 'system',
-              content: JSON.stringify(data),
-              timestamp: new Date().toISOString()
-            };
+            console.warn('[Team Worker] Unknown event type:', eventType, data);
+            break;
         }
 
         if (msg) {
