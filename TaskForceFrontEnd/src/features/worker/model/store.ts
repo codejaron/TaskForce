@@ -242,6 +242,38 @@ export const useWorkerStore = create<WorkerStoreState>((set, get) => ({
           });
           break;
 
+        case 'tool_call_start':
+          worker.messages.push({
+            id: `${Date.now()}_tool_call`,
+            content: typeof data.toolArgs === 'string' ? data.toolArgs : JSON.stringify(data.toolArgs || {}),
+            role: 'assistant',
+            timestamp: new Date().toISOString(),
+            type: 'tool_use'
+          });
+          break;
+
+        case 'tool_call_complete':
+          worker.messages.push({
+            id: `${Date.now()}_tool_result`,
+            content: typeof data.toolResult === 'string' ? data.toolResult : JSON.stringify(data.toolResult || {}),
+            role: 'assistant',
+            timestamp: new Date().toISOString(),
+            type: 'tool_result'
+          });
+          break;
+
+        case 'worker_output':
+          if (data.output && typeof data.output === 'string' && data.output.trim()) {
+            worker.messages.push({
+              id: `${Date.now()}_output`,
+              content: data.output,
+              role: 'assistant',
+              timestamp: new Date().toISOString(),
+              type: 'text'
+            });
+          }
+          break;
+
         case 'status_change':
         case 'worker_status':
           worker.status = mapWorkerStatus(data.status);
@@ -268,7 +300,7 @@ export const useWorkerStore = create<WorkerStoreState>((set, get) => ({
           break;
 
         default:
-          console.log(`[Worker Store] Unknown event type for worker ${instanceId}:`, event.event || data.type);
+          console.log(`[Worker Store] Unknown event type for worker ${instanceId}:`, event.event || data.type, data);
       }
 
       workers.set(instanceId, worker);

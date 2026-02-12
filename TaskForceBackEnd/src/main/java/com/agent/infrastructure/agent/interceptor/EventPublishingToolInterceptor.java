@@ -28,6 +28,7 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
     private final EventBus eventBus;
     private final ToolCallService toolCallService;
     private final AtomicInteger sequenceCounter;
+    private final String instanceId;
 
     public EventPublishingToolInterceptor(
             String sessionId,
@@ -36,7 +37,8 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
             Long agentId,
             EventBus eventBus,
             ToolCallService toolCallService,
-            AtomicInteger sequenceCounter) {
+            AtomicInteger sequenceCounter,
+            String instanceId) {
         this.sessionId = sessionId;
         this.stepId = stepId;
         this.stepIndex = stepIndex;
@@ -44,6 +46,7 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
         this.eventBus = eventBus;
         this.toolCallService = toolCallService;
         this.sequenceCounter = sequenceCounter;
+        this.instanceId = instanceId;
     }
 
     @Override
@@ -60,9 +63,15 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
 
         // 1. 发布开始事件
         if (eventBus != null && sessionId != null) {
-            eventBus.publish(sessionId, new ToolCallStartEvent(
+            ToolCallStartEvent startEvent = new ToolCallStartEvent(
                     sessionId, stepId, stepIndex, toolCallId, toolName, serverName, toolInput, sequence
-            ));
+            );
+            eventBus.publish(sessionId, startEvent);
+
+            // 同时发到 Worker 专属通道
+            if (instanceId != null) {
+                eventBus.publishToWorker(sessionId, instanceId, startEvent);
+            }
         }
 
         // 2. Persist start record
@@ -121,9 +130,15 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
 
             // 5. 发布Complete事件
             if (eventBus != null && sessionId != null) {
-                eventBus.publish(sessionId, new ToolCallCompleteEvent(
+                ToolCallCompleteEvent completeEvent = new ToolCallCompleteEvent(
                         sessionId, stepId, stepIndex, toolCallId, toolName, result, status, errorMessage, durationMs
-                ));
+                );
+                eventBus.publish(sessionId, completeEvent);
+
+                // 同时发到 Worker 专属通道
+                if (instanceId != null) {
+                    eventBus.publishToWorker(sessionId, instanceId, completeEvent);
+                }
             }
 
             // 6. Update persist record
