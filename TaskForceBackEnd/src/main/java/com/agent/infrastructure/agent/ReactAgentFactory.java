@@ -160,7 +160,7 @@ public class ReactAgentFactory {
         // 6. 创建 Interceptor（统一处理工具调用事件发布和持久化）
         AtomicInteger sequenceCounter = new AtomicInteger(0);
         EventPublishingToolInterceptor toolInterceptor = new EventPublishingToolInterceptor(
-                sessionId, stepId, stepIndex, agentId, eventBus, toolCallService, sequenceCounter
+                sessionId, stepId, stepIndex, agentId, eventBus, toolCallService, sequenceCounter, instanceId
         );
 
         // 7. 构建 ReactAgent
@@ -272,7 +272,7 @@ public class ReactAgentFactory {
         // 5. 创建 Interceptor（统一处理工具调用事件发布和持久化）
         AtomicInteger sequenceCounter = new AtomicInteger(0);
         EventPublishingToolInterceptor toolInterceptor = new EventPublishingToolInterceptor(
-                sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter
+                sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter, null
         );
 
         // 6. 创建 Hooks
@@ -364,7 +364,7 @@ public class ReactAgentFactory {
         // 6. 创建 Interceptor（统一处理工具调用事件发布和持久化）
         AtomicInteger sequenceCounter = new AtomicInteger(0);
         EventPublishingToolInterceptor toolInterceptor = new EventPublishingToolInterceptor(
-                sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter
+                sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter, null
         );
 
         // 7. 构建 ReactAgent
