@@ -78,7 +78,8 @@ public class TeamLeadAgent {
                 );
             }
             String agentRoster = formatAgentRoster(availableAgents);
-            String systemPrompt = String.format(userMessage, agentRoster);
+            String systemPrompt = userMessage + "\n\n## 可用 Agent\n" + agentRoster
+                    + "\n重要： spawn_worker 的 agentId 必须使用上面的数字 ID，不要编造。\n";
 
             // 2. 获取 Lead 工具
             List<ToolCallback> leadTools = toolProvider.getLeadTools();

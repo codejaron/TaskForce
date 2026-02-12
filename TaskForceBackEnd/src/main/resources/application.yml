@@ -87,7 +87,7 @@ mybatis-plus:
   type-aliases-package: com.agent.infrastructure.persistence.entity
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
   global-config:
     db-config:
       id-type: auto
@@ -103,6 +103,11 @@ logging:
   level:
     com.agent: DEBUG  # 改为 DEBUG 级别，可查看 Planner/Worker/Replanner 的完整 Prompt
     org.springframework.ai: DEBUG  # Spring AI 相关日志
+    # ---- 关掉数据库相关日志 ----
+    com.agent.infrastructure.persistence.mapper: WARN
+    org.apache.ibatis: WARN
+    com.baomidou.mybatisplus: WARN
+    com.alibaba.druid: WARN
 
 # ========== Actuator 健康检查配置 ==========
 management:

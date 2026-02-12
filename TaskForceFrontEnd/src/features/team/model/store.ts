@@ -27,6 +27,13 @@ export interface WorkerMessage {
   content: string;
   timestamp: string;
   toolName?: string;
+  toolCallId?: string;
+  serverName?: string;
+  toolArgs?: string;
+  toolResult?: string;
+  toolStatus?: 'RUNNING' | 'SUCCESS' | 'FAILED';
+  errorMessage?: string;
+  durationMs?: number;
 }
 
 export interface LeadMessage {
@@ -702,12 +709,17 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             {
               const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
               const toolArgs = typeof data.toolArgs === 'string' ? data.toolArgs : JSON.stringify(data.toolArgs || {});
+              const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
               msg = {
-                id: `${Date.now()}_tool_call_${data.toolCallId || ''}`,
+                id: `${Date.now()}_tool_call_${toolCallId}`,
                 type: 'tool_call',
                 content: toolArgs,
                 timestamp: new Date().toISOString(),
-                toolName
+                toolName,
+                toolCallId,
+                serverName: typeof data.serverName === 'string' ? data.serverName : undefined,
+                toolArgs,
+                toolStatus: 'RUNNING'
               };
             }
             break;
@@ -717,15 +729,22 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             {
               const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
               const toolResult = typeof data.toolResult === 'string' ? data.toolResult : JSON.stringify(data.toolResult || {});
-              const status = typeof data.status === 'string' ? data.status : '';
+              const status = typeof data.status === 'string' ? data.status : 'SUCCESS';
+              const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
+              const errorMessage = typeof data.errorMessage === 'string' ? data.errorMessage : '';
               msg = {
-                id: `${Date.now()}_tool_result_${data.toolCallId || ''}`,
+                id: `${Date.now()}_tool_result_${toolCallId}`,
                 type: 'tool_result',
                 content: status === 'FAILED'
-                  ? `❌ ${typeof data.errorMessage === 'string' ? data.errorMessage : toolResult}`
+                  ? `❌ ${errorMessage || toolResult}`
                   : toolResult,
                 timestamp: new Date().toISOString(),
-                toolName
+                toolName,
+                toolCallId,
+                toolResult,
+                toolStatus: status === 'FAILED' ? 'FAILED' : 'SUCCESS',
+                errorMessage: errorMessage || undefined,
+                durationMs: typeof data.durationMs === 'number' ? data.durationMs : undefined
               };
             }
             break;
@@ -816,6 +835,33 @@ export const useTeamStore = create<TeamState>((set, get) => ({
                 }
               }
 
+              if ((eventType === 'tool_call_start' || eventType === 'tool_call_complete') && msg.toolCallId) {
+                const existingToolIndex = existingMessages.findIndex(
+                  m => m.toolCallId === msg!.toolCallId && (m.type === 'tool_call' || m.type === 'tool_result')
+                );
+
+                if (existingToolIndex >= 0) {
+                  const existingToolMessage = existingMessages[existingToolIndex];
+                  const mergedToolMessage: WorkerMessage = {
+                    ...existingToolMessage,
+                    ...msg,
+                    // 保留 start 阶段的参数信息，避免 complete 事件里缺少 args 时丢失
+                    toolArgs: msg.toolArgs ?? existingToolMessage.toolArgs,
+                    // 合并展示内容优先级：失败错误 > 结果 > 之前内容
+                    content: msg.content || existingToolMessage.content
+                  };
+
+                  return {
+                    ...state.workerMessages,
+                    [instanceId]: [
+                      ...existingMessages.slice(0, existingToolIndex),
+                      mergedToolMessage,
+                      ...existingMessages.slice(existingToolIndex + 1)
+                    ]
+                  };
+                }
+              }
+
               return {
                 ...state.workerMessages,
                 [instanceId]: [...existingMessages, msg]
@@ -839,8 +885,9 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     if (controller) {
       controller.abort();
       set(state => {
-        const { [instanceId]: _, ...rest } = state.workerConnections;
-        return { workerConnections: rest };
+        const nextConnections = { ...state.workerConnections };
+        delete nextConnections[instanceId];
+        return { workerConnections: nextConnections };
       });
     }
   },
