@@ -45,6 +45,8 @@ public class TaskBoardService {
      * 创建任务
      */
     public Task createTask(String sessionId, String subject, String description, List<Integer> blockedBy) {
+        List<Integer> safeBlockedBy = blockedBy == null ? new ArrayList<>() : new ArrayList<>(blockedBy);
+
         // 分配递增序号：当前 session 最大 taskId + 1
         List<Task> existingTasks = taskBoardRepository.findBySessionId(sessionId);
         int nextId = existingTasks.stream()
@@ -57,7 +59,7 @@ public class TaskBoardService {
                 .sessionId(sessionId)
                 .subject(subject)
                 .description(description)
-                .blockedBy(blockedBy)
+                .blockedBy(safeBlockedBy)
                 .status(TaskStatus.PENDING)
                 .build();
 
@@ -70,8 +72,8 @@ public class TaskBoardService {
         }
 
         // 维护双向依赖关系（更新 blocks）
-        if (blockedBy != null && !blockedBy.isEmpty()) {
-            for (int blockedByTaskId : blockedBy) {
+        if (!safeBlockedBy.isEmpty()) {
+            for (int blockedByTaskId : safeBlockedBy) {
                 Task blockedByTask = taskBoardRepository.findById(sessionId, blockedByTaskId)
                         .orElseThrow(() -> new IllegalArgumentException("Blocked by task not found: " + blockedByTaskId));
 
@@ -204,13 +206,13 @@ public class TaskBoardService {
             "task.updatedAt = ARGV[1] " +
             "redis.call('HSET', KEYS[1], KEYS[2], cjson.encode(task)) " +
             "local unblocked = {} " +
-            "if task.blocks then " +
+            "if task.blocks and type(task.blocks) == 'table' then " +
             "  for i, blockedTaskId in ipairs(task.blocks) do " +
             "    local blockedField = 'task:' .. blockedTaskId " +
             "    local blockedJson = redis.call('HGET', KEYS[1], blockedField) " +
             "    if blockedJson then " +
             "      local blockedTask = cjson.decode(blockedJson) " +
-            "      if blockedTask.blockedBy then " +
+            "      if blockedTask.blockedBy and type(blockedTask.blockedBy) == 'table' then " +
             "        local newBlockedBy = {} " +
             "        for j, depId in ipairs(blockedTask.blockedBy) do " +
             "          if depId ~= tonumber(ARGV[2]) then " +
@@ -247,17 +249,25 @@ public class TaskBoardService {
                     try {
                         @SuppressWarnings("unchecked")
                         java.util.Map<String, Object> resultMap = objectMapper.readValue(result, java.util.Map.class);
-                        @SuppressWarnings("unchecked")
-                        List<String> unblockedTaskIds = (List<String>) resultMap.get("unblocked");
+                        Object unblockedObj = resultMap.get("unblocked");
 
-                        if (unblockedTaskIds != null) {
+                        if (unblockedObj instanceof List<?> unblockedTaskIds) {
                             for (Object unblockedTaskIdObj : unblockedTaskIds) {
                                 int unblockedTaskId = unblockedTaskIdObj instanceof Number
-                                    ? ((Number) unblockedTaskIdObj).intValue()
-                                    : Integer.parseInt(unblockedTaskIdObj.toString());
+                                        ? ((Number) unblockedTaskIdObj).intValue()
+                                        : Integer.parseInt(unblockedTaskIdObj.toString());
                                 eventBus.publish(sessionId, new TaskUnblockedEvent(sessionId, unblockedTaskId, taskId));
                                 log.info("Unblocked task: taskId={}, unblocked by={}", unblockedTaskId, taskId);
                             }
+                        } else if (unblockedObj instanceof java.util.Map<?, ?>) {
+                            // Redis Lua cjson 在空 table 场景可能返回 {}，视为空列表处理
+                            log.debug("Lua returned unblocked as empty object, treating as no unblocked tasks");
+                        } else if (unblockedObj != null) {
+                            int unblockedTaskId = unblockedObj instanceof Number
+                                    ? ((Number) unblockedObj).intValue()
+                                    : Integer.parseInt(unblockedObj.toString());
+                            eventBus.publish(sessionId, new TaskUnblockedEvent(sessionId, unblockedTaskId, taskId));
+                            log.info("Unblocked task: taskId={}, unblocked by={}", unblockedTaskId, taskId);
                         }
                     } catch (Exception e) {
                         log.warn("Failed to parse unblocked tasks from Lua result", e);

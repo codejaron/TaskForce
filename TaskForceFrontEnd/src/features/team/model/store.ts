@@ -736,7 +736,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
               const output = typeof data.output === 'string' ? data.output : '';
               if (output) {
                 msg = {
-                  id: `${Date.now()}_output`,
+                  id: `${Date.now()}_output_stream`,
                   type: 'output',
                   content: output,
                   timestamp: new Date().toISOString()
@@ -789,10 +789,38 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 
         if (msg) {
           set(state => ({
-            workerMessages: {
-              ...state.workerMessages,
-              [instanceId]: [...(state.workerMessages[instanceId] || []), msg!]
-            }
+            workerMessages: (() => {
+              const existingMessages = state.workerMessages[instanceId] || [];
+
+              if (eventType === 'worker_output' && msg.type === 'output') {
+                const lastMessage = existingMessages[existingMessages.length - 1];
+
+                if (
+                  lastMessage &&
+                  lastMessage.type === 'output' &&
+                  lastMessage.id.endsWith('_output_stream')
+                ) {
+                  const updatedLastMessage: WorkerMessage = {
+                    ...lastMessage,
+                    content: lastMessage.content + msg.content,
+                    timestamp: msg.timestamp
+                  };
+
+                  return {
+                    ...state.workerMessages,
+                    [instanceId]: [
+                      ...existingMessages.slice(0, -1),
+                      updatedLastMessage
+                    ]
+                  };
+                }
+              }
+
+              return {
+                ...state.workerMessages,
+                [instanceId]: [...existingMessages, msg]
+              };
+            })()
           }));
         }
       },

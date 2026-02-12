@@ -87,6 +87,11 @@ public class TeamLeadAgent {
         try {
             // 1. 加载可用的 Agent
             List<Agent> availableAgents = loadAvailableAgents(sessionId);
+            if (availableAgents.isEmpty()) {
+                throw new IllegalStateException(
+                        "No worker agents are bound to this session. Please add agents to the session before starting Team mode."
+                );
+            }
             String agentRoster = formatAgentRoster(availableAgents);
             String systemPrompt = String.format(LEAD_SYSTEM_PROMPT_TEMPLATE, agentRoster);
 
@@ -117,7 +122,7 @@ public class TeamLeadAgent {
             AtomicBoolean completed = new AtomicBoolean(false);
             StringBuilder response = new StringBuilder();
 
-            Disposable disposable = reactAgent.stream(userMessage, config)
+            Disposable disposable = reactAgent.stream("", config)
                     .doOnNext(nodeOutput -> {
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
@@ -199,8 +204,8 @@ public class TeamLeadAgent {
         try {
             var sessionAgents = sessionService.getSessionAgents(sessionId);
             if (sessionAgents.isEmpty()) {
-                log.warn("[TeamLeadAgent] No agents found in session, loading all agents: sessionId={}", sessionId);
-                return agentService.getAllAgents();
+                log.warn("[TeamLeadAgent] No agents bound to session: sessionId={}", sessionId);
+                return List.of();
             }
 
             return sessionAgents.stream()
