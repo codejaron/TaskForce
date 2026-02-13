@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Users,
   Activity,
@@ -61,6 +61,43 @@ export const TeamStudioPage: React.FC = () => {
   useEffect(() => {
     setShowTaskBoard(false);
   }, [currentSession?.id]);
+
+  const ownerNameById = useMemo(
+    () => new Map(members.map(member => [member.instanceId, member.agentName])),
+    [members]
+  );
+
+  const blockedTargetsByTaskId = useMemo(() => {
+    const map = new Map<number, number[]>();
+    tasks.forEach(task => {
+      task.blockedBy.forEach(depId => {
+        const current = map.get(depId) || [];
+        map.set(depId, [...current, task.taskId]);
+      });
+    });
+    return map;
+  }, [tasks]);
+
+  const dependencySummary = useMemo(
+    () =>
+      tasks
+        .filter(task => task.blockedBy.length > 0)
+        .map(task => ({
+          taskId: task.taskId,
+          blockedBy: task.blockedBy
+        })),
+    [tasks]
+  );
+
+  const formatOwner = (owner?: string) => {
+    if (!owner) return '未分配';
+    const displayName = ownerNameById.get(owner);
+    if (displayName) return displayName;
+    const workerSuffix = owner.match(/_w(\d+)$/i);
+    if (workerSuffix) return `Worker #${workerSuffix[1]}`;
+    if (owner.length > 20) return `${owner.slice(0, 8)}...${owner.slice(-4)}`;
+    return owner;
+  };
 
   const handleCreate = async () => {
     if (!newSessionName || selectedAgentIds.length < 1) {
@@ -293,37 +330,67 @@ export const TeamStudioPage: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    tasks.map(task => (
-                      <div key={task.taskId} className={clsx(
-                        "p-3 rounded-lg border transition-all",
-                        task.status === 'COMPLETED' ? "bg-green-50 border-green-200" :
-                        task.status === 'WORKING' || task.status === 'ASSIGNED' ? "bg-blue-50 border-blue-200" :
-                        task.status === 'FAILED' ? "bg-red-50 border-red-200" :
-                        "bg-white border-gray-200"
-                      )}>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-gray-900">
-                            #{task.taskId} {task.subject}
-                          </span>
-                          <span className={clsx(
-                            "text-xs px-2 py-0.5 rounded-full font-medium",
-                            task.status === 'COMPLETED' ? "bg-green-100 text-green-700" :
-                            task.status === 'WORKING' ? "bg-blue-100 text-blue-700" :
-                            task.status === 'ASSIGNED' ? "bg-yellow-100 text-yellow-700" :
-                            task.status === 'FAILED' ? "bg-red-100 text-red-700" :
-                            "bg-gray-100 text-gray-600"
-                          )}>
-                            {task.status}
-                          </span>
+                    <>
+                      {dependencySummary.length > 0 && (
+                        <div className="p-3 rounded-lg border border-indigo-200 bg-indigo-50">
+                          <p className="text-[11px] uppercase tracking-wide text-indigo-700 font-semibold">
+                            依赖关系图（简版）
+                          </p>
+                          <div className="mt-1.5 space-y-1">
+                            {dependencySummary.map(item => (
+                              <p key={item.taskId} className="text-xs text-indigo-800">
+                                {item.blockedBy.map(depId => `#${depId}`).join(' + ')} {'->'} #{item.taskId}
+                              </p>
+                            ))}
+                          </div>
                         </div>
-                        {task.description && (
-                          <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>
-                        )}
-                        {task.owner && (
-                          <p className="text-xs text-gray-400 mt-1">Owner: {task.owner}</p>
-                        )}
-                      </div>
-                    ))
+                      )}
+
+                      {tasks.map(task => {
+                        const blockedBy = task.blockedBy;
+                        const blocks = blockedTargetsByTaskId.get(task.taskId) || task.blocks;
+
+                        return (
+                          <div key={task.taskId} className={clsx(
+                            "p-3 rounded-lg border transition-all",
+                            task.status === 'COMPLETED' ? "bg-green-50 border-green-200" :
+                            task.status === 'WORKING' || task.status === 'ASSIGNED' ? "bg-blue-50 border-blue-200" :
+                            task.status === 'FAILED' ? "bg-red-50 border-red-200" :
+                            "bg-white border-gray-200"
+                          )}>
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium text-gray-900">
+                                #{task.taskId} {task.subject}
+                              </span>
+                              <span className={clsx(
+                                "text-xs px-2 py-0.5 rounded-full font-medium",
+                                task.status === 'COMPLETED' ? "bg-green-100 text-green-700" :
+                                task.status === 'WORKING' ? "bg-blue-100 text-blue-700" :
+                                task.status === 'ASSIGNED' ? "bg-yellow-100 text-yellow-700" :
+                                task.status === 'FAILED' ? "bg-red-100 text-red-700" :
+                                "bg-gray-100 text-gray-600"
+                              )}>
+                                {task.status}
+                              </span>
+                            </div>
+                            {task.description && (
+                              <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>
+                            )}
+                            <p className="text-xs text-gray-500 mt-1">负责人: {formatOwner(task.owner)}</p>
+                            {blockedBy.length > 0 && (
+                              <p className="text-xs text-amber-700 mt-1">
+                                被阻塞于: {blockedBy.map(depId => `#${depId}`).join(', ')}
+                              </p>
+                            )}
+                            {blocks.length > 0 && (
+                              <p className="text-xs text-blue-700 mt-1">
+                                正在阻塞: {blocks.map(depId => `#${depId}`).join(', ')}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </>
                   )}
                 </div>
               </aside>
