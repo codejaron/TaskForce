@@ -9,6 +9,7 @@ import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.TaskClaimedEvent;
 import com.agent.infrastructure.event.events.TaskCompletedEvent;
 import com.agent.infrastructure.event.events.TaskCreatedEvent;
+import com.agent.infrastructure.event.events.TaskFailedEvent;
 import com.agent.infrastructure.event.events.TaskUnblockedEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -293,6 +294,7 @@ public class TaskBoardService {
 
         task.fail();
         taskBoardRepository.save(task);
+        eventBus.publish(sessionId, new TaskFailedEvent(sessionId, taskId, task.getOwner()));
         log.info("Task failed: sessionId={}, taskId={}", sessionId, taskId);
     }
 

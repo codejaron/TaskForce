@@ -312,6 +312,18 @@ function handleSSEEvent(
       }
       break;
 
+    case 'task_failed':
+      {
+        const taskId = typeof data.taskId === 'number' ? data.taskId : 0;
+
+        set({
+          tasks: tasks.map(t =>
+            t.taskId === taskId ? { ...t, status: 'FAILED' as const } : t
+          )
+        });
+      }
+      break;
+
     case 'task_unblocked':
       {
         const taskId = typeof data.taskId === 'number' ? data.taskId : 0;
