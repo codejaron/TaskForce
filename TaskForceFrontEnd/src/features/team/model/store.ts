@@ -19,6 +19,8 @@ export interface TaskItem {
   description?: string;
   status: 'PENDING' | 'ASSIGNED' | 'WORKING' | 'COMPLETED' | 'FAILED';
   owner?: string;
+  blockedBy: number[];
+  blocks: number[];
 }
 
 export interface WorkerMessage {
@@ -105,6 +107,70 @@ function getReconnectDelay(retryCount: number): number {
   return Math.min(baseDelay + jitter, RECONNECT_CONFIG.maxDelay);
 }
 
+function parseTaskLinks(input: unknown): number[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input
+    .map(value => {
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string') {
+        const parsed = Number.parseInt(value, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+      return null;
+    })
+    .filter((value): value is number => value !== null);
+}
+
+function normalizeTaskStatus(raw: unknown): TaskItem['status'] {
+  if (raw === 'PENDING' || raw === 'ASSIGNED' || raw === 'WORKING' || raw === 'COMPLETED' || raw === 'FAILED') {
+    return raw;
+  }
+  if (raw === 'IN_PROGRESS') {
+    return 'WORKING';
+  }
+  return 'PENDING';
+}
+
+function parseTaskItem(input: unknown): TaskItem | null {
+  if (!input || typeof input !== 'object') {
+    return null;
+  }
+
+  const data = input as Record<string, unknown>;
+  const rawTaskId = data.taskId;
+  const taskId = typeof rawTaskId === 'number'
+    ? rawTaskId
+    : typeof rawTaskId === 'string'
+      ? Number.parseInt(rawTaskId, 10)
+      : Number.NaN;
+
+  if (!Number.isFinite(taskId)) {
+    return null;
+  }
+
+  const subject = typeof data.subject === 'string' ? data.subject : '';
+  const description = typeof data.description === 'string' ? data.description : '';
+  const owner = typeof data.owner === 'string' && data.owner.trim() ? data.owner : undefined;
+  const blockedBy = parseTaskLinks(data.blockedBy);
+  const blocks = parseTaskLinks(data.blocks);
+
+  return {
+    taskId,
+    subject,
+    description,
+    owner,
+    blockedBy,
+    blocks,
+    status: normalizeTaskStatus(data.status)
+  };
+}
+
+function sortTasksById(tasks: TaskItem[]): TaskItem[] {
+  return [...tasks].sort((a, b) => a.taskId - b.taskId);
+}
+
 // ========== 事件去重 ==========
 
 const processedEventIds = new Map<string, Set<string>>();
@@ -183,12 +249,16 @@ function handleSSEEvent(
         const taskId = typeof data.taskId === 'number' ? data.taskId : 0;
         const subject = typeof data.subject === 'string' ? data.subject : '';
         const description = typeof data.description === 'string' ? data.description : '';
+        const blockedBy = parseTaskLinks(data.blockedBy);
+        const blocks = parseTaskLinks(data.blocks);
 
         const newTask: TaskItem = {
           taskId,
           subject,
           description,
           status: 'PENDING',
+          blockedBy,
+          blocks
         };
 
         const newMessage: LeadMessage = {
@@ -198,8 +268,20 @@ function handleSSEEvent(
           timestamp: new Date().toISOString()
         };
 
+        const tasksWithDependencyUpdates = tasks.map(task => {
+          if (!blockedBy.includes(task.taskId)) {
+            return task;
+          }
+
+          const nextBlocks = task.blocks.includes(taskId)
+            ? task.blocks
+            : [...task.blocks, taskId];
+
+          return { ...task, blocks: nextBlocks };
+        });
+
         set({
-          tasks: [...tasks, newTask],
+          tasks: sortTasksById([...tasksWithDependencyUpdates, newTask]),
           messages: [...messages, newMessage]
         });
       }
@@ -233,10 +315,17 @@ function handleSSEEvent(
     case 'task_unblocked':
       {
         const taskId = typeof data.taskId === 'number' ? data.taskId : 0;
+        const unblockedBy = typeof data.unblockedBy === 'number' ? data.unblockedBy : null;
 
         set({
           tasks: tasks.map(t =>
-            t.taskId === taskId ? { ...t, status: 'PENDING' as const } : t
+            t.taskId === taskId
+              ? {
+                  ...t,
+                  status: 'PENDING' as const,
+                  blockedBy: unblockedBy === null ? t.blockedBy : t.blockedBy.filter(dep => dep !== unblockedBy)
+                }
+              : t
           )
         });
       }
@@ -459,11 +548,77 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       leadStatus: 'idle',
       messages: [],
       members: [],
+      tasks: [],
       error: null,
       isConnected: false,
       isTeamStarted: false,
       teamId: null
     });
+
+    void (async () => {
+      try {
+        const [taskBoardResult, workersResult] = await Promise.allSettled([
+          api.team.getTaskBoard(sessionId),
+          api.team.getWorkers(sessionId)
+        ]);
+
+        const state = get();
+        if (state.currentSession?.id !== sessionId) {
+          return;
+        }
+
+        const nextState: Partial<TeamState> = {};
+
+        if (taskBoardResult.status === 'fulfilled') {
+          const raw = taskBoardResult.value as unknown;
+          const rawTasks = Array.isArray(raw)
+            ? raw
+            : (raw && typeof raw === 'object' && Array.isArray((raw as { tasks?: unknown }).tasks))
+              ? ((raw as { tasks: unknown[] }).tasks)
+              : [];
+
+          const normalizedTasks = rawTasks
+            .map(task => parseTaskItem(task))
+            .filter((task): task is TaskItem => task !== null);
+          const runtimeTaskMap = new Map(state.tasks.map(task => [task.taskId, task]));
+          const mergedTasks = normalizedTasks.map(snapshotTask => {
+            const runtimeTask = runtimeTaskMap.get(snapshotTask.taskId);
+            if (!runtimeTask) {
+              return snapshotTask;
+            }
+
+            return {
+              ...snapshotTask,
+              status: runtimeTask.status,
+              owner: runtimeTask.owner ?? snapshotTask.owner,
+              description: runtimeTask.description || snapshotTask.description
+            };
+          });
+
+          state.tasks.forEach(runtimeTask => {
+            if (!mergedTasks.some(task => task.taskId === runtimeTask.taskId)) {
+              mergedTasks.push(runtimeTask);
+            }
+          });
+
+          nextState.tasks = sortTasksById(mergedTasks);
+        }
+
+        if (workersResult.status === 'fulfilled') {
+          nextState.members = workersResult.value.map(worker => ({
+            instanceId: worker.instanceId,
+            agentName: worker.agentName,
+            status: worker.status,
+            currentTask: worker.currentTask,
+            createdAt: worker.createdAt
+          }));
+        }
+
+        set(nextState);
+      } catch (error) {
+        console.warn('[Team] Failed to hydrate session snapshot:', error);
+      }
+    })();
 
     // 清除旧的事件 ID
     clearEventIdSet(sessionId);

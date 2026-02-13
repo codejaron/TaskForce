@@ -80,8 +80,8 @@ public class TeamLeadAgent {
             String agentRoster = formatAgentRoster(availableAgents);
             String systemPrompt = userMessage + "\n\n## 可用 Agent\n" + agentRoster
                     + "\n重要： spawn_worker 的 agentId 必须使用上面的数字 ID，不要编造。"
-                    + "\n重要：后续 send_message/shutdown_worker 统一使用 workerId（数字）。"
-                    + "\n注意：workerId 是会话内稳定编号，不等于 taskId。\n";
+                    + "\n重要：后续 send_message/shutdown_worker 统一使用 workerId（数字），而不是 agentId。"
+                    + "\n如果不确定当前有哪些 workerId，先调用 list_teammates。\n";
 
             // 2. 获取 Lead 工具
             List<ToolCallback> leadTools = toolProvider.getLeadTools();
