@@ -22,7 +22,6 @@ public class TeamLeadToolProvider {
     private final SpawnWorkerTool spawnWorkerTool;
     private final SendMessageTool sendMessageTool;
     private final BroadcastTool broadcastTool;
-    private final ReadInboxTool readInboxTool;
     private final ShutdownWorkerTool shutdownWorkerTool;
     private final ListTasksTool listTasksTool;
     private final ListTeammatesTool listTeammatesTool;
@@ -40,7 +39,6 @@ public class TeamLeadToolProvider {
         tools.add(spawnWorkerTool);
         tools.add(sendMessageTool);
         tools.add(broadcastTool);
-        tools.add(readInboxTool);
         tools.add(shutdownWorkerTool);
         tools.add(listTasksTool);
         tools.add(listTeammatesTool);
@@ -62,7 +60,6 @@ public class TeamLeadToolProvider {
                 "spawn_worker",
                 "send_message",
                 "broadcast",
-                "read_inbox",
                 "shutdown_worker",
                 "list_tasks",
                 "list_teammates",

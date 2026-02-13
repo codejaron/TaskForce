@@ -5,7 +5,8 @@ import com.agent.domain.team.service.InboxService;
 import com.agent.domain.execution.model.AgentExecutionStatus;
 import com.agent.domain.execution.service.AgentExecutionStateService;
 import com.agent.domain.execution.service.ExecutionWaitIntentService;
-import com.agent.domain.taskboard.service.TaskBoardService;
+import com.agent.domain.team.lead.scheduling.LeadSchedulingDecision;
+import com.agent.domain.team.lead.scheduling.LeadSchedulingDecisionService;
 import com.agent.infrastructure.agent.CheckpointThreadIds;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.persistence.entity.Agent;
@@ -46,7 +47,7 @@ public class TeamLeadAgent {
     private final BaseCheckpointSaver checkpointSaver;
     private final AgentExecutionStateService executionStateService;
     private final ExecutionWaitIntentService waitIntentService;
-    private final TaskBoardService taskBoardService;
+    private final LeadSchedulingDecisionService leadSchedulingDecisionService;
 
     private static final int MAX_REACT_ITERATIONS = 50; // Lead 需要更多迭代次数
 
@@ -119,13 +120,38 @@ public class TeamLeadAgent {
                     })
                     .doOnComplete(() -> {
                         boolean waitIntent = waitIntentService.consumeWaitingReply(leadInstanceId);
-                        boolean hasUnfinishedTasks = hasUnfinishedTasks(sessionId);
-                        if (waitIntent || hasUnfinishedTasks) {
+                        LeadSchedulingDecision decision = leadSchedulingDecisionService.evaluate(sessionId);
+                        if (!waitIntent && decision.shouldWait()) {
+                            LeadSchedulingDecision recheck = leadSchedulingDecisionService.evaluate(sessionId);
+                            if (recheck.shouldContinueNow()) {
+                                decision = recheck;
+                            }
+                        }
+
+                        if (waitIntent || decision.shouldWait()) {
                             executionStateService.setStatus(
                                     leadInstanceId,
                                     AgentExecutionStatus.WAITING_REPLY,
-                                    waitIntent ? "waiting worker reply" : "waiting workers to finish"
+                                    waitIntent ? "waiting worker reply" : "waiting for inbox/taskboard wakeup"
                             );
+                        } else if (decision.shouldContinueNow()) {
+                            executionStateService.setStatus(
+                                    leadInstanceId,
+                                    AgentExecutionStatus.RUNNING,
+                                    "lead continues due to pending inbox/taskboard work"
+                            );
+                            log.info("[TeamLeadAgent] Continue lead loop immediately: sessionId={}, inbox={}, runnable={}",
+                                    sessionId, decision.hasInboxMessages(), decision.hasRunnableTasks());
+                            try {
+                                startLeadLoop(sessionId, agentId, userMessage, chatModel, chatOptions, "");
+                            } catch (Exception e) {
+                                executionStateService.setStatus(
+                                        leadInstanceId,
+                                        AgentExecutionStatus.FAILED,
+                                        "lead continue failed: " + e.getMessage()
+                                );
+                                log.error("[TeamLeadAgent] Failed to continue lead loop: sessionId={}", sessionId, e);
+                            }
                         } else {
                             executionStateService.setStatus(
                                     leadInstanceId,
@@ -208,16 +234,6 @@ public class TeamLeadAgent {
             log.debug("[TeamLeadAgent] No lead checkpoint found to clear: threadId={}", threadId);
         } catch (Exception e) {
             log.warn("[TeamLeadAgent] Failed to clear lead checkpoint: threadId={}", threadId, e);
-        }
-    }
-
-    private boolean hasUnfinishedTasks(String sessionId) {
-        try {
-            return taskBoardService.listTasks(sessionId).stream()
-                    .anyMatch(task -> !task.isCompleted() && !task.isFailed());
-        } catch (Exception e) {
-            log.warn("[TeamLeadAgent] Failed to evaluate task completion: sessionId={}", sessionId, e);
-            return false;
         }
     }
 

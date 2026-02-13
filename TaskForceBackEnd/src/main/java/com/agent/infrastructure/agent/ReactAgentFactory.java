@@ -1,6 +1,9 @@
 package com.agent.infrastructure.agent;
 
 import com.agent.domain.team.lead.TeamLeadToolProvider;
+import com.agent.domain.team.lead.hook.LeadIdleYieldHook;
+import com.agent.domain.team.lead.hook.LeadInboxCheckHook;
+import com.agent.domain.team.lead.scheduling.LeadSchedulingDecisionService;
 import com.agent.domain.worker.execution.WorkerToolProvider;
 import com.agent.domain.worker.hook.InboxCheckHook;
 import com.agent.infrastructure.agent.hook.ModelCallLimitHook;
@@ -58,6 +61,7 @@ public class ReactAgentFactory {
     private final RedisInboxRepository redisInboxRepository;
     private final TeamLeadToolProvider teamLeadToolProvider;
     private final WorkerToolProvider workerToolProvider;
+    private final LeadSchedulingDecisionService leadSchedulingDecisionService;
 
     public ReactAgentFactory(
             AgentMapper agentMapper,
@@ -72,6 +76,7 @@ public class ReactAgentFactory {
             RedisInboxRepository redisInboxRepository,
             @Lazy TeamLeadToolProvider teamLeadToolProvider,
             @Lazy WorkerToolProvider workerToolProvider,
+            @Lazy LeadSchedulingDecisionService leadSchedulingDecisionService,
             @org.springframework.beans.factory.annotation.Autowired(required = false)
             com.alibaba.cloud.ai.graph.agent.hook.skills.SkillsAgentHook skillsAgentHook) {
         this.agentMapper = agentMapper;
@@ -87,6 +92,7 @@ public class ReactAgentFactory {
         this.redisInboxRepository = redisInboxRepository;
         this.teamLeadToolProvider = teamLeadToolProvider;
         this.workerToolProvider = workerToolProvider;
+        this.leadSchedulingDecisionService = leadSchedulingDecisionService;
     }
 
     /**
@@ -377,7 +383,15 @@ public class ReactAgentFactory {
         ModelCallLimitHook limitHook = new ModelCallLimitHook(maxModelCalls);
         hooks.add(limitHook);
 
-        // 5.2 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
+        // 5.2 添加 Lead Inbox 自动收件 Hook
+        LeadInboxCheckHook leadInboxCheckHook = new LeadInboxCheckHook(redisInboxRepository, sessionId);
+        hooks.add(leadInboxCheckHook);
+
+        // 5.3 添加 Lead 空转让出 Hook（系统状态机判定）
+        LeadIdleYieldHook leadIdleYieldHook = new LeadIdleYieldHook(sessionId, leadSchedulingDecisionService);
+        hooks.add(leadIdleYieldHook);
+
+        // 5.4 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
         if (skillsAgentHook != null) {
             hooks.add(skillsAgentHook);
             log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());
