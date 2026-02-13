@@ -1,5 +1,6 @@
 package com.agent.domain.team.lead.tools;
 
+import com.agent.domain.execution.service.ExecutionWaitIntentService;
 import com.agent.domain.worker.model.WorkerInstance;
 import com.agent.domain.worker.service.WorkerInstanceManager;
 import com.agent.service.SessionService;
@@ -24,6 +25,7 @@ public class SpawnWorkerTool implements ToolCallback {
 
     private final WorkerInstanceManager workerInstanceManager;
     private final SessionService sessionService;
+    private final ExecutionWaitIntentService waitIntentService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -80,6 +82,7 @@ public class SpawnWorkerTool implements ToolCallback {
             }
 
             WorkerInstance worker = workerInstanceManager.spawn(sessionId, name, agentId, "", assignedTaskId);
+            waitIntentService.markWaitingReply(sessionId + "_lead", "spawned worker");
 
             log.info("[SpawnWorkerTool] Spawned worker: workerId={}, instanceId={}, name={}, assignedTaskId={}",
                     worker.getWorkerId(), worker.getInstanceId(), name, assignedTaskId);

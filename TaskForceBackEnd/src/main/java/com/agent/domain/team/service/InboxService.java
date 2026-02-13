@@ -3,6 +3,8 @@ package com.agent.domain.team.service;
 import com.agent.domain.team.model.Team;
 import com.agent.domain.team.model.TeamMember;
 import com.agent.domain.team.model.TeamMessage;
+import com.agent.infrastructure.event.EventBus;
+import com.agent.infrastructure.event.events.InboxMessageEvent;
 import com.agent.infrastructure.persistence.redis.RedisInboxRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +23,7 @@ public class InboxService {
 
     private final RedisInboxRepository inboxRepository;
     private final TeamService teamService;
+    private final EventBus eventBus;
 
     /**
      * 发送消息
@@ -40,6 +43,13 @@ public class InboxService {
                 message.getFrom(), instanceId, sessionId);
 
         inboxRepository.send(sessionId, instanceId, message);
+        eventBus.publish(sessionId, new InboxMessageEvent(
+                sessionId,
+                message.getFrom(),
+                instanceId,
+                message.getType(),
+                message.getText()
+        ));
     }
 
     /**

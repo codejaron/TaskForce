@@ -19,6 +19,8 @@ public enum WorkerStatus {
      */
     WAITING,
 
+    WAITING_REPLY,
+
     /**
      * 已关闭
      */

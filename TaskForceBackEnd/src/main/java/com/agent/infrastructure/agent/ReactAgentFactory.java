@@ -4,6 +4,7 @@ import com.agent.domain.team.lead.TeamLeadToolProvider;
 import com.agent.domain.worker.execution.WorkerToolProvider;
 import com.agent.domain.worker.hook.InboxCheckHook;
 import com.agent.infrastructure.agent.hook.ModelCallLimitHook;
+import com.agent.infrastructure.agent.interceptor.ContextEnrichingToolInterceptor;
 import com.agent.infrastructure.agent.interceptor.EventPublishingToolInterceptor;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.llm.ChatModelFactory;
@@ -151,7 +152,16 @@ public class ReactAgentFactory {
             log.info("  Added InboxCheckHook for worker instance: {}", instanceId);
         }
 
-        // 5.3 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
+        // 5.3 添加 SummarizationHook（控制长链路上下文）
+        SummarizationHook summarizationHook = SummarizationHook.builder()
+                .model(chatModel)
+                .maxTokensBeforeSummary(6000)
+                .messagesToKeep(10)
+                .build();
+        hooks.add(summarizationHook);
+        log.info("  Added SummarizationHook for worker (maxTokens: 6000, keepMessages: 10)");
+
+        // 5.4 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
         if (skillsAgentHook != null) {
             hooks.add(skillsAgentHook);
             log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());
@@ -316,9 +326,16 @@ public class ReactAgentFactory {
      * @param sessionId     会话 ID
      * @param systemPrompt  系统提示词
      * @param maxModelCalls 最大模型调用次数
+     * @param chatModel     预先构建的聊天模型（可选）
+     * @param chatOptions   预先配置的模型参数（可选）
      * @return ReactAgent 实例
      */
-    public ReactAgent buildTeamLeadAgent(Long agentId, String sessionId, String systemPrompt, int maxModelCalls) {
+    public ReactAgent buildTeamLeadAgent(Long agentId,
+                                         String sessionId,
+                                         String systemPrompt,
+                                         int maxModelCalls,
+                                         ChatModel chatModel,
+                                         OpenAiChatOptions chatOptions) {
         // 1. 加载 Agent 配置
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
@@ -327,22 +344,27 @@ public class ReactAgentFactory {
 
         log.info("[ReactAgentFactory] Building ReactAgent for Team Lead: {} (id: {})", agent.getName(), agentId);
 
-        // 2. 创建 ChatModel
-        if (agent.getProviderId() == null) {
-            throw new IllegalArgumentException(
-                "Agent must have a provider configured. Please set providerId for agent: " + agent.getId()
-            );
+        // 2. 解析 ChatModel / ChatOptions（优先使用调用方传入值）
+        ChatModel finalChatModel = chatModel;
+        OpenAiChatOptions finalChatOptions = chatOptions;
+
+        if (finalChatModel == null) {
+            if (agent.getProviderId() == null) {
+                throw new IllegalArgumentException(
+                        "Agent must have a provider configured. Please set providerId for agent: " + agent.getId()
+                );
+            }
+            String overrideModel = agent.getModel();
+            finalChatModel = chatModelFactory.createChatModel(agent.getProviderId(), overrideModel);
+            log.info("  Using LLM Provider: {} with model: {}", agent.getProviderId(), overrideModel);
         }
 
-        String overrideModel = agent.getModel();
-        ChatModel chatModel = chatModelFactory.createChatModel(agent.getProviderId(), overrideModel);
-        log.info("  Using LLM Provider: {} with model: {}", agent.getProviderId(), overrideModel);
-
-        // 3. 配置模型参数
-        OpenAiChatOptions chatOptions = OpenAiChatOptions.builder()
-                .temperature(agent.getTemperature().doubleValue())
-                .maxTokens(agent.getMaxTokens())
-                .build();
+        if (finalChatOptions == null) {
+            finalChatOptions = OpenAiChatOptions.builder()
+                    .temperature(agent.getTemperature().doubleValue())
+                    .maxTokens(agent.getMaxTokens())
+                    .build();
+        }
 
         // 4. 加载 Lead 内部工具（不是 MCP 工具）
         List<ToolCallback> leadTools = teamLeadToolProvider.getLeadTools();
@@ -361,7 +383,8 @@ public class ReactAgentFactory {
             log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());
         }
 
-        // 6. 创建 Interceptor（统一处理工具调用事件发布和持久化）
+        // 6. 创建 Interceptor（统一处理上下文注入 + 工具调用事件发布和持久化）
+        ContextEnrichingToolInterceptor contextInterceptor = new ContextEnrichingToolInterceptor(sessionId, null);
         AtomicInteger sequenceCounter = new AtomicInteger(0);
         EventPublishingToolInterceptor toolInterceptor = new EventPublishingToolInterceptor(
                 sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter, null
@@ -370,12 +393,12 @@ public class ReactAgentFactory {
         // 7. 构建 ReactAgent
         ReactAgent reactAgent = ReactAgent.builder()
                 .name("TeamLead-" + agent.getName())
-                .model(chatModel)
-                .chatOptions(chatOptions)
+                .model(finalChatModel)
+                .chatOptions(finalChatOptions)
                 .systemPrompt(systemPrompt)
                 .tools(leadTools)
                 .hooks(hooks)
-                .interceptors(toolInterceptor)
+                .interceptors(contextInterceptor, toolInterceptor)
                 .saver(checkpointSaver)
                 .build();
 

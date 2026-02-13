@@ -1,5 +1,6 @@
 package com.agent.domain.worker.execution.tools;
 
+import com.agent.domain.execution.service.ExecutionWaitIntentService;
 import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
 import com.agent.domain.worker.model.WorkerInstance;
@@ -25,6 +26,7 @@ public class SendMessageTool implements ToolCallback {
 
     private final InboxService inboxService;
     private final WorkerInstanceManager workerInstanceManager;
+    private final ExecutionWaitIntentService waitIntentService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -44,6 +46,10 @@ public class SendMessageTool implements ToolCallback {
                 "messageType": {
                   "type": "string",
                   "description": "消息类型（可选，默认为 MESSAGE）"
+                },
+                "expectReply": {
+                  "type": "boolean",
+                  "description": "是否需要等待对方回复。为 true 时当前 Worker 本轮执行结束后进入 WAITING_REPLY。"
                 }
               },
               "required": ["workerId", "text"]
@@ -72,6 +78,7 @@ public class SendMessageTool implements ToolCallback {
             int workerId = ((Number) args.get("workerId")).intValue();
             String text = (String) args.get("text");
             String messageType = (String) args.getOrDefault("messageType", "MESSAGE");
+            boolean expectReply = Boolean.TRUE.equals(args.get("expectReply"));
 
             WorkerInstance senderWorker = workerInstanceManager.findBySessionAndInstanceId(sessionId, instanceId).orElse(null);
             String sender = senderWorker != null && senderWorker.getWorkerId() > 0
@@ -101,8 +108,15 @@ public class SendMessageTool implements ToolCallback {
 
             inboxService.send(message);
 
+            if (expectReply) {
+                waitIntentService.markWaitingReply(instanceId, "send_message expectReply=true");
+            }
+
             log.info("[SendMessageTool] Sent message from {} to {}", sender, targetLabel);
 
+            if (expectReply) {
+                return String.format("Message sent successfully to %s, waiting for reply", targetLabel);
+            }
             return String.format("Message sent successfully to %s", targetLabel);
 
         } catch (Exception e) {

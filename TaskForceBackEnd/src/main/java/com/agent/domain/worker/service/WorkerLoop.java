@@ -1,6 +1,9 @@
 package com.agent.domain.worker.service;
 
 import com.agent.domain.context.assembly.ContextAssembler;
+import com.agent.domain.execution.model.AgentExecutionStatus;
+import com.agent.domain.execution.service.AgentExecutionStateService;
+import com.agent.domain.execution.service.ExecutionWaitIntentService;
 import com.agent.domain.taskboard.dto.TaskUpdateRequest;
 import com.agent.domain.taskboard.model.Task;
 import com.agent.domain.taskboard.model.TaskStatus;
@@ -10,12 +13,14 @@ import com.agent.domain.team.service.InboxService;
 import com.agent.domain.worker.model.WorkerInstance;
 import com.agent.domain.worker.model.WorkerStatus;
 import com.agent.domain.worker.repository.WorkerInstanceRepository;
+import com.agent.infrastructure.agent.CheckpointThreadIds;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.WorkerOutputEvent;
 import com.agent.service.SessionExecutionTracker;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
+import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.Disposable;
@@ -48,8 +53,15 @@ public class WorkerLoop implements Runnable {
     private final SessionExecutionTracker executionTracker;
     private final InboxService inboxService;
     private final ContextAssembler contextAssembler;
+    private final BaseCheckpointSaver checkpointSaver;
+    private final AgentExecutionStateService executionStateService;
+    private final ExecutionWaitIntentService waitIntentService;
+    private final String startupResumeInput;
+    private final Runnable onStopped;
 
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
+    private final AtomicBoolean pausedForReply = new AtomicBoolean(false);
+    private final AtomicBoolean failed = new AtomicBoolean(false);
     private volatile Thread loopThread;
 
     public WorkerLoop(
@@ -60,7 +72,12 @@ public class WorkerLoop implements Runnable {
             EventBus eventBus,
             SessionExecutionTracker executionTracker,
             InboxService inboxService,
-            ContextAssembler contextAssembler){
+            ContextAssembler contextAssembler,
+            BaseCheckpointSaver checkpointSaver,
+            AgentExecutionStateService executionStateService,
+            ExecutionWaitIntentService waitIntentService,
+            String startupResumeInput,
+            Runnable onStopped) {
         this.workerInstance = workerInstance;
         this.workerRepository = workerRepository;
         this.taskBoardService = taskBoardService;
@@ -69,6 +86,11 @@ public class WorkerLoop implements Runnable {
         this.executionTracker = executionTracker;
         this.inboxService = inboxService;
         this.contextAssembler = contextAssembler;
+        this.checkpointSaver = checkpointSaver;
+        this.executionStateService = executionStateService;
+        this.waitIntentService = waitIntentService;
+        this.startupResumeInput = startupResumeInput;
+        this.onStopped = onStopped == null ? () -> {} : onStopped;
     }
 
     @Override
@@ -78,11 +100,21 @@ public class WorkerLoop implements Runnable {
                 workerInstance.getInstanceId(), workerInstance.getName(),
                 workerInstance.getAssignedTaskId());
 
+        waitIntentService.clear(workerInstance.getInstanceId());
+        executionStateService.setStatus(
+                workerInstance.getInstanceId(),
+                AgentExecutionStatus.RUNNING,
+                "worker loop started"
+        );
+
         try {
             // ===== 阶段一：执行初始指派任务 =====
             int assignedTaskId = workerInstance.getAssignedTaskId();
             if (assignedTaskId != 0) {
-                executeAssignedTask(assignedTaskId);
+                executeAssignedTask(assignedTaskId, startupResumeInput);
+                if (pausedForReply.get() || shutdown.get()) {
+                    return;
+                }
             }
 
             // ===== 阶段二：进入待命循环，等待 Leader 指令 =====
@@ -94,7 +126,10 @@ public class WorkerLoop implements Runnable {
                     // 如果 Leader 通过 inbox 指派了新任务，执行它
                     int newTaskId = workerInstance.getAssignedTaskId();
                     if (newTaskId != 0) {
-                        executeAssignedTask(newTaskId);
+                        executeAssignedTask(newTaskId, null);
+                        if (pausedForReply.get()) {
+                            return;
+                        }
                     }
 
                     Thread.sleep(POLL_INTERVAL_MS);
@@ -111,11 +146,43 @@ public class WorkerLoop implements Runnable {
         } catch (InterruptedException e) {
             log.info("[WorkerLoop] Worker interrupted: instanceId={}",
                     workerInstance.getInstanceId());
+        } catch (Exception e) {
+            failed.set(true);
+            executionStateService.setStatus(
+                    workerInstance.getInstanceId(),
+                    AgentExecutionStatus.FAILED,
+                    "worker loop exception: " + e.getMessage()
+            );
+            log.error("[WorkerLoop] Worker failed: instanceId={}", workerInstance.getInstanceId(), e);
         } finally {
-            workerInstance.shutdown();
-            workerRepository.save(workerInstance);
-            log.info("[WorkerLoop] Worker loop stopped: instanceId={}",
-                    workerInstance.getInstanceId());
+            if (shutdown.get()) {
+                releaseWorkerCheckpoint();
+                workerInstance.shutdown();
+                workerRepository.save(workerInstance);
+                executionStateService.setStatus(
+                        workerInstance.getInstanceId(),
+                        AgentExecutionStatus.COMPLETED,
+                        "worker shutdown"
+                );
+            } else if (pausedForReply.get()) {
+                executionStateService.setStatus(
+                        workerInstance.getInstanceId(),
+                        AgentExecutionStatus.WAITING_REPLY,
+                        "waiting inbox reply"
+                );
+            } else if (failed.get()) {
+                releaseWorkerCheckpoint();
+                workerInstance.completeWork();
+                workerRepository.save(workerInstance);
+                executionStateService.setStatus(
+                        workerInstance.getInstanceId(),
+                        AgentExecutionStatus.FAILED,
+                        "worker loop stopped with failure"
+                );
+            }
+            onStopped.run();
+            log.info("[WorkerLoop] Worker loop stopped: instanceId={}, pausedForReply={}, shutdown={}",
+                    workerInstance.getInstanceId(), pausedForReply.get(), shutdown.get());
         }
     }
 
@@ -172,6 +239,7 @@ public class WorkerLoop implements Runnable {
 
             case "USER_MESSAGE":
             case "INSTRUCTION":
+            case "MESSAGE":
                 log.info("[WorkerLoop] Received instruction: {}", message.getText());
                 break;
 
@@ -185,7 +253,7 @@ public class WorkerLoop implements Runnable {
      * 执行指派的任务
      * 处理阻塞等待 → 验证 owner → 执行 → 完成的完整流程
      */
-    private void executeAssignedTask(int taskId) throws InterruptedException {
+    private void executeAssignedTask(int taskId, String resumeMessage) throws InterruptedException {
         log.info("[WorkerLoop] Preparing to execute assigned task: taskId={}, instanceId={}",
                 taskId, workerInstance.getInstanceId());
 
@@ -193,6 +261,10 @@ public class WorkerLoop implements Runnable {
         Task task = waitForTaskUnblocked(taskId);
         if (task == null) {
             // shutdown 或任务不存在
+            if (!shutdown.get()) {
+                workerInstance.clearAssignedTask();
+                workerRepository.save(workerInstance);
+            }
             return;
         }
 
@@ -203,6 +275,7 @@ public class WorkerLoop implements Runnable {
                     taskId, workerInstance.getInstanceId(), task.getOwner());
             workerInstance.clearAssignedTask();
             workerRepository.save(workerInstance);
+            releaseWorkerCheckpoint();
             return;
         }
 
@@ -210,11 +283,15 @@ public class WorkerLoop implements Runnable {
                 task.getTaskId(), task.getSubject());
 
         // 3. 直接执行
-        executeTask(task);
-
-        // 4. 清除指派标记
-        workerInstance.clearAssignedTask();
-        workerRepository.save(workerInstance);
+        TaskExecutionOutcome outcome = executeTask(task, resumeMessage);
+        if (outcome == TaskExecutionOutcome.WAITING_FOR_REPLY) {
+            pausedForReply.set(true);
+            return;
+        }
+        if (outcome.isTerminal()) {
+            workerInstance.clearAssignedTask();
+            workerRepository.save(workerInstance);
+        }
     }
 
     /**
@@ -257,7 +334,7 @@ public class WorkerLoop implements Runnable {
     /**
      * 执行任务
      */
-    private void executeTask(Task task) {
+    private TaskExecutionOutcome executeTask(Task task, String resumeMessage) {
         log.info("[WorkerLoop] Executing task: taskId={}, subject={}",
                 task.getTaskId(), task.getSubject());
 
@@ -267,7 +344,24 @@ public class WorkerLoop implements Runnable {
             workerRepository.save(workerInstance);
 
             // 2. 更新任务状态为 IN_PROGRESS
-            taskBoardService.startTask(workerInstance.getSessionId(), task.getTaskId());
+            if (task.getStatus() == TaskStatus.ASSIGNED) {
+                taskBoardService.startTask(workerInstance.getSessionId(), task.getTaskId());
+            } else if (task.getStatus() == TaskStatus.IN_PROGRESS) {
+                log.info("[WorkerLoop] Resuming in-progress task from checkpoint: taskId={}", task.getTaskId());
+            } else if (task.isCompleted()) {
+                workerInstance.completeWork();
+                workerRepository.save(workerInstance);
+                releaseWorkerCheckpoint();
+                return TaskExecutionOutcome.COMPLETED;
+            } else if (task.isFailed()) {
+                workerInstance.completeWork();
+                workerRepository.save(workerInstance);
+                releaseWorkerCheckpoint();
+                return TaskExecutionOutcome.FAILED;
+            } else {
+                throw new IllegalStateException(
+                        "Unsupported task status for execution: " + task.getStatus() + ", taskId=" + task.getTaskId());
+            }
 
             // 3. 构建执行指令
             String instruction = buildTaskInstruction(task);
@@ -284,22 +378,15 @@ public class WorkerLoop implements Runnable {
             );
 
             // 5. 配置 RunnableConfig（传递 sessionId 和 instanceId 到 metadata）
-            RunnableConfig config = RunnableConfig.builder()
-                    .threadId(workerInstance.getSessionId() + "_" + task.getTaskId())
-                    .addMetadata("sessionId", workerInstance.getSessionId())
-                    .addMetadata("instanceId", workerInstance.getInstanceId())
-                    .build();
+            RunnableConfig config = buildWorkerConfig();
+            String agentInput = buildAgentInput(resumeMessage);
 
             // 6. 执行任务（流式）
-            StringBuilder response = new StringBuilder();
-
-            Disposable disposable = reactAgent.stream("", config)
+            Disposable disposable = reactAgent.stream(agentInput, config)
                     .doOnNext(nodeOutput -> {
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
                             if (chunk != null && !chunk.isEmpty()) {
-                                response.append(chunk);
-
                                 // 发布实时事件给前端
                                 try {
                                     WorkerOutputEvent event = new WorkerOutputEvent(
@@ -343,25 +430,40 @@ public class WorkerLoop implements Runnable {
                         .owner(null)
                         .build();
                 taskBoardService.updateTask(workerInstance.getSessionId(), task.getTaskId(), updateRequest);
+                workerInstance.completeWork();
+                workerRepository.save(workerInstance);
+                releaseWorkerCheckpoint();
+                return TaskExecutionOutcome.INTERRUPTED;
             } else {
-                // Worker 应该在 ReAct 循环中主动调用 complete_task 标记完成
-                // 如果流结束后任务仍未完成，说明 Worker 未能完成（可能达到迭代上限）
+                boolean shouldWaitReply = waitIntentService.consumeWaitingReply(workerInstance.getInstanceId());
                 Task updatedTask = taskBoardService.getTask(workerInstance.getSessionId(), task.getTaskId());
                 if (updatedTask.isCompleted()) {
                     log.info("[WorkerLoop] Task completed by worker: taskId={}", task.getTaskId());
+                    workerInstance.completeWork();
+                    workerRepository.save(workerInstance);
+                    releaseWorkerCheckpoint();
+                    return TaskExecutionOutcome.COMPLETED;
                 } else if (updatedTask.isFailed()) {
                     log.info("[WorkerLoop] Task already marked as failed: taskId={}", task.getTaskId());
+                    workerInstance.completeWork();
+                    workerRepository.save(workerInstance);
+                    releaseWorkerCheckpoint();
+                    return TaskExecutionOutcome.FAILED;
+                } else if (shouldWaitReply) {
+                    log.info("[WorkerLoop] Task paused waiting for inbox reply: taskId={}", task.getTaskId());
+                    workerInstance.startWaitingReply(task.getTaskId());
+                    workerRepository.save(workerInstance);
+                    return TaskExecutionOutcome.WAITING_FOR_REPLY;
                 } else {
-                    // 未完成 = Worker 没调 complete_task，标记为失败
-                    log.warn("[WorkerLoop] Task not completed after execution ended (likely hit iteration limit): taskId={}",
+                    log.warn("[WorkerLoop] Task ended without complete_task and no wait intent, marking failed: taskId={}",
                             task.getTaskId());
                     taskBoardService.failTask(workerInstance.getSessionId(), task.getTaskId());
+                    workerInstance.completeWork();
+                    workerRepository.save(workerInstance);
+                    releaseWorkerCheckpoint();
+                    return TaskExecutionOutcome.FAILED;
                 }
             }
-
-            // 8. 更新 Worker 状态
-            workerInstance.completeWork();
-            workerRepository.save(workerInstance);
 
         } catch (Exception e) {
             log.error("[WorkerLoop] Failed to execute task: taskId={}", task.getTaskId(), e);
@@ -376,6 +478,52 @@ public class WorkerLoop implements Runnable {
             // 恢复 Worker 状态
             workerInstance.completeWork();
             workerRepository.save(workerInstance);
+            releaseWorkerCheckpoint();
+            return TaskExecutionOutcome.FAILED;
+        }
+    }
+
+    private RunnableConfig buildWorkerConfig() {
+        return RunnableConfig.builder()
+                .threadId(CheckpointThreadIds.workerThreadId(workerInstance.getInstanceId()))
+                .addMetadata("sessionId", workerInstance.getSessionId())
+                .addMetadata("instanceId", workerInstance.getInstanceId())
+                .build();
+    }
+
+    private String buildAgentInput(String resumeMessage) {
+        if (resumeMessage == null || resumeMessage.isBlank()) {
+            return "";
+        }
+        return resumeMessage;
+    }
+
+    private void releaseWorkerCheckpoint() {
+        String threadId = CheckpointThreadIds.workerThreadId(workerInstance.getInstanceId());
+        try {
+            checkpointSaver.release(RunnableConfig.builder().threadId(threadId).build());
+            log.info("[WorkerLoop] Released checkpoint: threadId={}", threadId);
+        } catch (IllegalStateException e) {
+            log.debug("[WorkerLoop] No checkpoint found to release: threadId={}", threadId);
+        } catch (Exception e) {
+            log.warn("[WorkerLoop] Failed to release checkpoint: threadId={}", threadId, e);
+        }
+    }
+
+    private enum TaskExecutionOutcome {
+        COMPLETED(true),
+        FAILED(true),
+        INTERRUPTED(true),
+        WAITING_FOR_REPLY(false);
+
+        private final boolean terminal;
+
+        TaskExecutionOutcome(boolean terminal) {
+            this.terminal = terminal;
+        }
+
+        boolean isTerminal() {
+            return terminal;
         }
     }
 
