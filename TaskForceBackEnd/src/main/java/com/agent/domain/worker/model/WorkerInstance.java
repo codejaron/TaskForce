@@ -135,6 +135,10 @@ public class WorkerInstance {
         return status == WorkerStatus.WAITING;
     }
 
+    public boolean isWaitingReply() {
+        return status == WorkerStatus.WAITING_REPLY;
+    }
+
     /**
      * 是否已关闭
      */
@@ -165,6 +169,12 @@ public class WorkerInstance {
      */
     public void startWaiting() {
         this.status = WorkerStatus.WAITING;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void startWaitingReply(int taskId) {
+        this.status = WorkerStatus.WAITING_REPLY;
+        this.currentTaskId = taskId;
         this.updatedAt = LocalDateTime.now();
     }
 

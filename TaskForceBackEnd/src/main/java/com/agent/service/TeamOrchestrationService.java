@@ -1,5 +1,7 @@
 package com.agent.service;
 
+import com.agent.domain.execution.model.AgentExecutionStatus;
+import com.agent.domain.execution.service.AgentExecutionStateService;
 import com.agent.domain.taskboard.service.TaskBoardService;
 import com.agent.domain.team.lead.TeamLeadAgent;
 import com.agent.domain.team.model.TeamMessage;
@@ -7,13 +9,12 @@ import com.agent.domain.team.repository.TeamRepository;
 import com.agent.domain.team.service.InboxService;
 import com.agent.domain.team.service.TeamService;
 import com.agent.domain.worker.service.WorkerInstanceManager;
-import com.agent.infrastructure.agent.ReactAgentFactory;
+import com.agent.infrastructure.llm.ChatModelFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.OrchestrationEvent;
 import com.agent.infrastructure.event.events.ErrorEvent;
 import com.agent.infrastructure.event.events.TeamCreatedEvent;
 import com.agent.infrastructure.event.events.TeamStartedEvent;
-import com.agent.infrastructure.llm.ChatModelFactory;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.persistence.mapper.AgentMapper;
 import com.agent.infrastructure.prompt.PromptManager;
@@ -23,12 +24,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
-import reactor.core.Disposable;
-import reactor.core.publisher.Flux;
 
-import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Team Orchestration Service
@@ -45,15 +45,15 @@ public class TeamOrchestrationService {
     private final TeamService teamService;
     private final TeamRepository teamRepository;
     private final InboxService inboxService;
-    private final ReactAgentFactory reactAgentFactory;
     private final ChatModelFactory chatModelFactory;
     private final AgentMapper agentMapper;
     private final PromptManager promptManager;
     private final EventBus eventBus;
     private final SessionExecutionTracker executionTracker;
     private final ObjectMapper objectMapper;
+    private final AgentExecutionStateService executionStateService;
 
-    private static final int MAX_LEAD_ITERATIONS = 50;
+    private final Map<String, LeadRuntimeContext> leadRuntimeContexts = new ConcurrentHashMap<>();
 
     /**
      * 启动团队会话
@@ -110,20 +110,29 @@ public class TeamOrchestrationService {
 
             // 6. 构建 Lead Prompt
             String leadPrompt = promptManager.buildTeamLeadPrompt(userGoal);
-
-            // 7. 启动 Team Lead Agent
-            Disposable leadDisposable = teamLeadAgent.startLeadLoop(
-                    sessionId,
+            LeadRuntimeContext runtimeContext = new LeadRuntimeContext(
                     leadAgent.getId(),
                     leadPrompt,
                     chatModel,
                     chatOptions
+            );
+            leadRuntimeContexts.put(sessionId, runtimeContext);
+
+            // 7. 启动 Team Lead Agent
+            teamLeadAgent.startLeadLoop(
+                    sessionId,
+                    leadAgent.getId(),
+                    leadPrompt,
+                    chatModel,
+                    chatOptions,
+                    ""
             );
 
             log.info("[TeamOrchestrationService] Team Lead started: sessionId={}", sessionId);
 
         } catch (Exception e) {
             log.error("[TeamOrchestrationService] Failed to start team session: sessionId={}", sessionId, e);
+            leadRuntimeContexts.remove(sessionId);
             eventBus.publish(sessionId, new ErrorEvent(sessionId, e.getMessage()));
         }
     }
@@ -140,24 +149,29 @@ public class TeamOrchestrationService {
         try {
             // 1. 停止 Team Lead
             teamLeadAgent.stopLeadLoop(sessionId);
+            leadRuntimeContexts.remove(sessionId);
+            executionStateService.setStatus(sessionId + "_lead", AgentExecutionStatus.COMPLETED, "session stopped");
 
             // 2. 停止所有 Worker
             workerInstanceManager.shutdownAllBySession(sessionId);
 
-            // 3. 关闭团队
+            // 3. 清理 Lead checkpoint
+            teamLeadAgent.clearLeadCheckpoint(sessionId);
+
+            // 4. 关闭团队
             try {
                 teamService.shutdown(sessionId);
             } catch (Exception e) {
                 log.warn("[TeamOrchestrationService] Team shutdown skipped or failed: {}", e.getMessage());
             }
 
-            // 4. 清理任务板（可选：保留任务历史）
+            // 5. 清理任务板（可选：保留任务历史）
             // taskBoardService.deleteAllTasks(sessionId);
 
-            // 5. 取消订阅
+            // 6. 取消订阅
             eventBus.unsubscribe(sessionId);
 
-            // 6. 取消执行跟踪
+            // 7. 取消执行跟踪
             executionTracker.cancelExecution(sessionId);
 
             log.info("[TeamOrchestrationService] Session stopped: sessionId={}", sessionId);
@@ -176,6 +190,47 @@ public class TeamOrchestrationService {
     public void sendMessageToLead(String sessionId, String message) {
         log.info("[TeamOrchestrationService] Sending message to Lead: sessionId={}, message={}", sessionId, message);
         teamLeadAgent.sendMessageToLead(sessionId, message);
+    }
+
+    public boolean resumeLeadIfWaiting(String sessionId) {
+        String leadInstanceId = sessionId + "_lead";
+        LeadRuntimeContext runtimeContext = leadRuntimeContexts.get(sessionId);
+        if (runtimeContext == null) {
+            return false;
+        }
+
+        boolean transitioned = executionStateService.transitionIf(
+                leadInstanceId,
+                AgentExecutionStatus.WAITING_REPLY,
+                AgentExecutionStatus.RUNNING,
+                "wakeup by inbox message"
+        );
+        if (!transitioned) {
+            return false;
+        }
+
+        try {
+            List<TeamMessage> messages = inboxService.readInbox(leadInstanceId);
+            String inputMessage = formatWakeupInput(messages);
+            teamLeadAgent.startLeadLoop(
+                    sessionId,
+                    runtimeContext.agentId(),
+                    runtimeContext.systemPrompt(),
+                    runtimeContext.chatModel(),
+                    runtimeContext.chatOptions(),
+                    inputMessage
+            );
+            log.info("[TeamOrchestrationService] Lead resumed: sessionId={}", sessionId);
+            return true;
+        } catch (Exception e) {
+            executionStateService.setStatus(
+                    leadInstanceId,
+                    AgentExecutionStatus.FAILED,
+                    "lead resume failed: " + e.getMessage()
+            );
+            log.error("[TeamOrchestrationService] Failed to resume lead: sessionId={}", sessionId, e);
+            return false;
+        }
     }
 
     /**
@@ -246,6 +301,24 @@ public class TeamOrchestrationService {
         }
     }
 
+    private String formatWakeupInput(List<TeamMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (TeamMessage message : messages) {
+            if (message.getText() == null || message.getText().isBlank()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append("\n\n");
+            }
+            builder.append("From ").append(message.getFrom() == null ? "unknown" : message.getFrom())
+                    .append(": ").append(message.getText());
+        }
+        return builder.toString();
+    }
+
     /**
      * 会话状态 DTO
      */
@@ -254,6 +327,13 @@ public class TeamOrchestrationService {
             String status,
             int taskCount,
             int workerCount
+    ) {}
+
+    private record LeadRuntimeContext(
+            Long agentId,
+            String systemPrompt,
+            ChatModel chatModel,
+            OpenAiChatOptions chatOptions
     ) {}
 
     /**

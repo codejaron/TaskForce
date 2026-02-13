@@ -1,5 +1,6 @@
 package com.agent.domain.team.lead.tools;
 
+import com.agent.domain.execution.service.ExecutionWaitIntentService;
 import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
 import com.agent.domain.worker.model.WorkerInstance;
@@ -25,6 +26,7 @@ public class SendMessageTool implements ToolCallback {
 
     private final InboxService inboxService;
     private final WorkerInstanceManager workerInstanceManager;
+    private final ExecutionWaitIntentService waitIntentService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -44,6 +46,10 @@ public class SendMessageTool implements ToolCallback {
                 "messageType": {
                   "type": "string",
                   "description": "消息类型（可选，默认为 INSTRUCTION）"
+                },
+                "expectReply": {
+                  "type": "boolean",
+                  "description": "是否等待该 Worker 回复。为 true 时 Lead 本轮执行结束后进入 WAITING_REPLY。"
                 }
               },
               "required": ["workerId", "content"]
@@ -71,6 +77,7 @@ public class SendMessageTool implements ToolCallback {
             int workerId = ((Number) args.get("workerId")).intValue();
             String content = (String) args.get("content");
             String messageType = (String) args.getOrDefault("messageType", "INSTRUCTION");
+            boolean expectReply = Boolean.TRUE.equals(args.get("expectReply"));
 
             WorkerInstance worker = workerInstanceManager.findBySessionAndWorkerId(sessionId, workerId)
                     .orElse(null);
@@ -87,9 +94,16 @@ public class SendMessageTool implements ToolCallback {
 
             inboxService.send(message);
 
+            if (expectReply) {
+                waitIntentService.markWaitingReply(sessionId + "_lead", "lead send_message expectReply=true");
+            }
+
             log.info("[SendMessageTool] Sent message: sessionId={}, workerId={}, instanceId={}",
                     sessionId, workerId, worker.getInstanceId());
 
+            if (expectReply) {
+                return String.format("Message sent successfully to worker #%d, waiting for reply", workerId);
+            }
             return String.format("Message sent successfully to worker #%d", workerId);
 
         } catch (Exception e) {

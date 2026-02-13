@@ -2,29 +2,28 @@ package com.agent.domain.team.lead;
 
 import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
+import com.agent.domain.execution.model.AgentExecutionStatus;
+import com.agent.domain.execution.service.AgentExecutionStateService;
+import com.agent.domain.execution.service.ExecutionWaitIntentService;
+import com.agent.domain.taskboard.service.TaskBoardService;
+import com.agent.infrastructure.agent.CheckpointThreadIds;
 import com.agent.infrastructure.agent.ReactAgentFactory;
-import com.agent.infrastructure.agent.interceptor.ContextEnrichingToolInterceptor;
-import com.agent.infrastructure.agent.interceptor.EventPublishingToolInterceptor;
-import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.service.AgentService;
 import com.agent.service.SessionExecutionTracker;
 import com.agent.service.SessionService;
-import com.agent.service.ToolCallService;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
+import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 import reactor.core.Disposable;
 
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Team Lead Agent
@@ -39,13 +38,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 @RequiredArgsConstructor
 public class TeamLeadAgent {
 
-    private final TeamLeadToolProvider toolProvider;
-    private final EventBus eventBus;
+    private final ReactAgentFactory reactAgentFactory;
     private final SessionExecutionTracker executionTracker;
     private final InboxService inboxService;
     private final SessionService sessionService;
     private final AgentService agentService;
-    private final ToolCallService toolCallService;
+    private final BaseCheckpointSaver checkpointSaver;
+    private final AgentExecutionStateService executionStateService;
+    private final ExecutionWaitIntentService waitIntentService;
+    private final TaskBoardService taskBoardService;
 
     private static final int MAX_REACT_ITERATIONS = 50; // Lead 需要更多迭代次数
 
@@ -57,7 +58,8 @@ public class TeamLeadAgent {
      * @param agentId       Agent ID
      * @param userMessage   用户消息
      * @param chatModel     聊天模型
-     * @param chatOptions   模型选项
+     * @param chatOptions   模型参数
+     * @param inputMessage  本轮输入消息（唤醒续跑时传入）
      * @return Disposable 用于取消执行
      */
     public Disposable startLeadLoop(
@@ -65,9 +67,14 @@ public class TeamLeadAgent {
             Long agentId,
             String userMessage,
             ChatModel chatModel,
-            OpenAiChatOptions chatOptions) {
+            OpenAiChatOptions chatOptions,
+            String inputMessage) {
 
         log.info("[TeamLeadAgent] Starting Lead loop: sessionId={}, agentId={}", sessionId, agentId);
+        String leadInstanceId = sessionId + "_lead";
+
+        waitIntentService.clear(leadInstanceId);
+        executionStateService.setStatus(leadInstanceId, AgentExecutionStatus.RUNNING, "lead loop started");
 
         try {
             // 1. 加载可用的 Agent
@@ -83,50 +90,58 @@ public class TeamLeadAgent {
                     + "\n重要：后续 send_message/shutdown_worker 统一使用 workerId（数字），而不是 agentId。"
                     + "\n如果不确定当前有哪些 workerId，先调用 list_teammates。\n";
 
-            // 2. 获取 Lead 工具
-            List<ToolCallback> leadTools = toolProvider.getLeadTools();
-            log.info("[TeamLeadAgent] Loaded {} Lead tools", leadTools.size());
-
-            // 3. 构建 ReactAgent（添加 interceptor 传递 sessionId）
-            ContextEnrichingToolInterceptor contextInterceptor = new ContextEnrichingToolInterceptor(sessionId, null);
-            AtomicInteger sequenceCounter = new AtomicInteger(0);
-            EventPublishingToolInterceptor eventInterceptor = new EventPublishingToolInterceptor(
-                    sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter, null
+            // 2. 通过工厂收敛 Lead Agent 组装逻辑
+            ReactAgent reactAgent = reactAgentFactory.buildTeamLeadAgent(
+                    agentId,
+                    sessionId,
+                    systemPrompt,
+                    MAX_REACT_ITERATIONS,
+                    chatModel,
+                    chatOptions
             );
-            ReactAgent reactAgent = ReactAgent.builder()
-                    .name("TeamLead")
-                    .model(chatModel)
-                    .chatOptions(chatOptions)
-                    .systemPrompt(systemPrompt)
-                    .tools(leadTools)
-                    .interceptors(contextInterceptor,eventInterceptor)
-                    .build();
 
             // 3. 配置 RunnableConfig（传递 sessionId 到 metadata）
             RunnableConfig config = RunnableConfig.builder()
-                    .threadId(sessionId + "_lead")
+                    .threadId(CheckpointThreadIds.leadThreadId(sessionId))
                     .addMetadata("sessionId", sessionId)
                     .build();
 
             // 4. 启动流式执行
-            AtomicBoolean completed = new AtomicBoolean(false);
-            StringBuilder response = new StringBuilder();
-
-            Disposable disposable = reactAgent.stream("", config)
+            String runInput = inputMessage == null ? "" : inputMessage;
+            Disposable disposable = reactAgent.stream(runInput, config)
                     .doOnNext(nodeOutput -> {
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
                             if (chunk != null && !chunk.isEmpty()) {
-                                response.append(chunk);
                                 log.debug("[TeamLeadAgent] Received chunk: {}", chunk);
                             }
                         }
                     })
                     .doOnComplete(() -> {
-                        completed.set(true);
+                        boolean waitIntent = waitIntentService.consumeWaitingReply(leadInstanceId);
+                        boolean hasUnfinishedTasks = hasUnfinishedTasks(sessionId);
+                        if (waitIntent || hasUnfinishedTasks) {
+                            executionStateService.setStatus(
+                                    leadInstanceId,
+                                    AgentExecutionStatus.WAITING_REPLY,
+                                    waitIntent ? "waiting worker reply" : "waiting workers to finish"
+                            );
+                        } else {
+                            executionStateService.setStatus(
+                                    leadInstanceId,
+                                    AgentExecutionStatus.COMPLETED,
+                                    "lead run completed"
+                            );
+                            clearLeadCheckpoint(sessionId);
+                        }
                         log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
                     })
                     .doOnError(e -> {
+                        executionStateService.setStatus(
+                                leadInstanceId,
+                                AgentExecutionStatus.FAILED,
+                                "lead loop error: " + e.getMessage()
+                        );
                         log.error("[TeamLeadAgent] Lead loop error: sessionId={}", sessionId, e);
                     })
                     .subscribe();
@@ -182,6 +197,28 @@ public class TeamLeadAgent {
     public void stopLeadLoop(String sessionId) {
         log.info("[TeamLeadAgent] Stopping Lead loop: sessionId={}", sessionId);
         executionTracker.cancelExecution(sessionId);
+    }
+
+    public void clearLeadCheckpoint(String sessionId) {
+        String threadId = CheckpointThreadIds.leadThreadId(sessionId);
+        try {
+            checkpointSaver.release(RunnableConfig.builder().threadId(threadId).build());
+            log.info("[TeamLeadAgent] Cleared lead checkpoint: threadId={}", threadId);
+        } catch (IllegalStateException e) {
+            log.debug("[TeamLeadAgent] No lead checkpoint found to clear: threadId={}", threadId);
+        } catch (Exception e) {
+            log.warn("[TeamLeadAgent] Failed to clear lead checkpoint: threadId={}", threadId, e);
+        }
+    }
+
+    private boolean hasUnfinishedTasks(String sessionId) {
+        try {
+            return taskBoardService.listTasks(sessionId).stream()
+                    .anyMatch(task -> !task.isCompleted() && !task.isFailed());
+        } catch (Exception e) {
+            log.warn("[TeamLeadAgent] Failed to evaluate task completion: sessionId={}", sessionId, e);
+            return false;
+        }
     }
 
     /**

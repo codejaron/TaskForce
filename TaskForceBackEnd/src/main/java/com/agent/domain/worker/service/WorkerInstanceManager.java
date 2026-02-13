@@ -1,7 +1,11 @@
 package com.agent.domain.worker.service;
 
 import com.agent.domain.context.assembly.ContextAssembler;
+import com.agent.domain.execution.model.AgentExecutionStatus;
+import com.agent.domain.execution.service.AgentExecutionStateService;
+import com.agent.domain.execution.service.ExecutionWaitIntentService;
 import com.agent.domain.taskboard.service.TaskBoardService;
+import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
 import com.agent.domain.worker.model.WorkerInstance;
 import com.agent.domain.worker.repository.WorkerInstanceRepository;
@@ -9,6 +13,7 @@ import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.WorkerSpawnedEvent;
 import com.agent.service.SessionExecutionTracker;
+import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -37,6 +42,9 @@ public class WorkerInstanceManager {
     private final SessionExecutionTracker executionTracker;
     private final InboxService inboxService;
     private final ContextAssembler contextAssembler;
+    private final BaseCheckpointSaver checkpointSaver;
+    private final AgentExecutionStateService executionStateService;
+    private final ExecutionWaitIntentService waitIntentService;
 
     public WorkerInstanceManager(
             WorkerInstanceRepository workerRepository,
@@ -45,7 +53,10 @@ public class WorkerInstanceManager {
             EventBus eventBus,
             SessionExecutionTracker executionTracker,
             InboxService inboxService,
-            ContextAssembler contextAssembler) {
+            ContextAssembler contextAssembler,
+            BaseCheckpointSaver checkpointSaver,
+            AgentExecutionStateService executionStateService,
+            ExecutionWaitIntentService waitIntentService) {
         this.workerRepository = workerRepository;
         this.taskBoardService = taskBoardService;
         this.reactAgentFactory = reactAgentFactory;
@@ -53,6 +64,9 @@ public class WorkerInstanceManager {
         this.executionTracker = executionTracker;
         this.inboxService = inboxService;
         this.contextAssembler = contextAssembler;
+        this.checkpointSaver = checkpointSaver;
+        this.executionStateService = executionStateService;
+        this.waitIntentService = waitIntentService;
     }
 
     // 线程池：用于运行 WorkerLoop
@@ -102,20 +116,12 @@ public class WorkerInstanceManager {
         }
 
         // 3. 创建 WorkerLoop
-        WorkerLoop workerLoop = new WorkerLoop(
-                instance,
-                workerRepository,
-                taskBoardService,
-                reactAgentFactory,
-                eventBus,
-                executionTracker,
-                inboxService,
-                contextAssembler
-        );
+        WorkerLoop workerLoop = createWorkerLoop(instance, "");
 
         // 4. 启动 WorkerLoop
         runningLoops.put(instance.getInstanceId(), workerLoop);
         workerExecutor.submit(workerLoop);
+        executionStateService.setStatus(instance.getInstanceId(), AgentExecutionStatus.RUNNING, "worker spawned");
 
         // 5. 发布 worker_spawned 事件
         eventBus.publish(sessionId, new WorkerSpawnedEvent(sessionId, instance.getInstanceId(), name, agentId));
@@ -138,6 +144,41 @@ public class WorkerInstanceManager {
         return spawn(sessionId, name, agentId, initialPrompt, 0);
     }
 
+    public boolean resumeIfWaitingReply(String instanceId) {
+        Optional<WorkerInstance> instanceOpt = workerRepository.findById(instanceId);
+        if (instanceOpt.isEmpty()) {
+            return false;
+        }
+
+        WorkerInstance instance = instanceOpt.get();
+        if (instance.isShutdown() || runningLoops.containsKey(instanceId)) {
+            return false;
+        }
+
+        boolean transitioned = executionStateService.transitionIf(
+                instanceId,
+                AgentExecutionStatus.WAITING_REPLY,
+                AgentExecutionStatus.RUNNING,
+                "wakeup by inbox message"
+        );
+        if (!transitioned) {
+            return false;
+        }
+
+        try {
+            String resumeInput = formatResumeInput(inboxService.readInbox(instanceId));
+            WorkerLoop workerLoop = createWorkerLoop(instance, resumeInput);
+            runningLoops.put(instanceId, workerLoop);
+            workerExecutor.submit(workerLoop);
+            log.info("[WorkerInstanceManager] Worker resumed: instanceId={}", instanceId);
+            return true;
+        } catch (Exception e) {
+            executionStateService.setStatus(instanceId, AgentExecutionStatus.FAILED, "resume failed: " + e.getMessage());
+            log.error("[WorkerInstanceManager] Failed to resume worker: instanceId={}", instanceId, e);
+            return false;
+        }
+    }
+
     /**
      * 优雅关闭 Worker 实例
      *
@@ -149,16 +190,15 @@ public class WorkerInstanceManager {
 
         // 1. 查找 WorkerLoop
         WorkerLoop workerLoop = runningLoops.get(instanceId);
-        if (workerLoop == null) {
-            log.warn("[WorkerInstanceManager] Worker loop not found: instanceId={}", instanceId);
-            return false;
+        if (workerLoop != null) {
+            // 2. 请求关闭
+            workerLoop.requestShutdown();
+
+            // 3. 从跟踪中移除
+            runningLoops.remove(instanceId);
+        } else {
+            log.info("[WorkerInstanceManager] Worker loop already stopped: instanceId={}", instanceId);
         }
-
-        // 2. 请求关闭
-        workerLoop.requestShutdown();
-
-        // 3. 从跟踪中移除
-        runningLoops.remove(instanceId);
 
         // 4. 更新数据库状态
         Optional<WorkerInstance> instanceOpt = workerRepository.findById(instanceId);
@@ -166,10 +206,11 @@ public class WorkerInstanceManager {
             WorkerInstance instance = instanceOpt.get();
             instance.shutdown();
             workerRepository.save(instance);
+            executionStateService.setStatus(instanceId, AgentExecutionStatus.COMPLETED, "worker shutdown");
+            waitIntentService.clear(instanceId);
+            return true;
         }
-
-        log.info("[WorkerInstanceManager] Worker shutdown requested: instanceId={}", instanceId);
-        return true;
+        return false;
     }
 
     /**
@@ -284,6 +325,43 @@ public class WorkerInstanceManager {
                         worker.getInstanceId());
             }
         }
+    }
+
+    private WorkerLoop createWorkerLoop(WorkerInstance instance, String startupResumeInput) {
+        return new WorkerLoop(
+                instance,
+                workerRepository,
+                taskBoardService,
+                reactAgentFactory,
+                eventBus,
+                executionTracker,
+                inboxService,
+                contextAssembler,
+                checkpointSaver,
+                executionStateService,
+                waitIntentService,
+                startupResumeInput,
+                () -> runningLoops.remove(instance.getInstanceId())
+        );
+    }
+
+    private String formatResumeInput(List<TeamMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder();
+        for (TeamMessage message : messages) {
+            if (message.getText() == null || message.getText().isBlank()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append("\n\n");
+            }
+            builder.append("From ").append(message.getFrom() == null ? "unknown" : message.getFrom())
+                    .append(": ").append(message.getText());
+        }
+        return builder.toString();
     }
 
     private int nextWorkerId(String sessionId) {
