@@ -274,8 +274,8 @@ public class RedisStreamEventBus implements EventBus {
             // Pub/Sub 通知
             redisTemplate.convertAndSend(channel, recordId.getValue());
 
-            log.debug("[RedisStreamEventBus] Published to worker: sessionId={}, instanceId={}, type={}",
-                    sessionId, instanceId, event.getEventType());
+//            log.debug("[RedisStreamEventBus] Published to worker: sessionId={}, instanceId={}, type={}",
+//                    sessionId, instanceId, event.getEventType());
 
         } catch (Exception e) {
             log.error("[RedisStreamEventBus] Publish to worker failed: sessionId={}, instanceId={}",

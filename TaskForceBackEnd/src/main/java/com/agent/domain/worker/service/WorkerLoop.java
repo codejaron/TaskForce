@@ -378,7 +378,7 @@ public class WorkerLoop implements Runnable {
             );
 
             // 5. 配置 RunnableConfig（传递 sessionId 和 instanceId 到 metadata）
-            RunnableConfig config = buildWorkerConfig();
+            RunnableConfig config = buildWorkerConfig(task.getTaskId());
             String agentInput = buildAgentInput(resumeMessage);
 
             // 6. 执行任务（流式）
@@ -483,11 +483,12 @@ public class WorkerLoop implements Runnable {
         }
     }
 
-    private RunnableConfig buildWorkerConfig() {
+    private RunnableConfig buildWorkerConfig(int currentTaskId) {
         return RunnableConfig.builder()
                 .threadId(CheckpointThreadIds.workerThreadId(workerInstance.getInstanceId()))
                 .addMetadata("sessionId", workerInstance.getSessionId())
                 .addMetadata("instanceId", workerInstance.getInstanceId())
+                .addMetadata("currentTaskId", currentTaskId)
                 .build();
     }
 
@@ -537,7 +538,8 @@ public class WorkerLoop implements Runnable {
         instruction.append("## 当前任务\n\n");
         instruction.append("**").append(task.getSubject()).append("**\n\n");
         instruction.append(task.getDescription()).append("\n\n");
-        instruction.append("完成后请调用 complete_task 标记完成。\n");
+        instruction.append("你当前执行的任务ID是 ").append(task.getTaskId()).append("。\n");
+        instruction.append("完成后请调用 complete_task 标记完成，taskId 必须使用当前任务ID。\n");
 
         // 如果有依赖任务的输出，只附加相关上下文
         try {
