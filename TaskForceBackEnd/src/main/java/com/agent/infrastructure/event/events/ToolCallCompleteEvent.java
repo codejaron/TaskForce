@@ -14,6 +14,7 @@ public class ToolCallCompleteEvent extends OrchestrationEvent {
     private String toolCallId;
     private String toolName;
     private String toolResult;
+    private String instanceId;
     private String status;  // SUCCESS/FAILED
     private String errorMessage;
     private Long durationMs;
@@ -25,13 +26,14 @@ public class ToolCallCompleteEvent extends OrchestrationEvent {
 
     public ToolCallCompleteEvent(String sessionId, String stepId, Integer stepIndex,
                                  String toolCallId, String toolName, String toolResult,
-                                 String status, String errorMessage, Long durationMs) {
+                                 String status, String errorMessage, Long durationMs, String instanceId) {
         super(sessionId);
         this.stepId = stepId;
         this.stepIndex = stepIndex;
         this.toolCallId = toolCallId;
         this.toolName = toolName;
         this.toolResult = toolResult;
+        this.instanceId = instanceId;
         this.status = status;
         this.errorMessage = errorMessage;
         this.durationMs = durationMs;

@@ -15,6 +15,7 @@ public class ToolCallStartEvent extends OrchestrationEvent {
     private String toolName;
     private String serverName;
     private String toolArgs;
+    private String instanceId;
     private Integer sequence;
 
     // 无参构造函数（Jackson 反序列化需要）
@@ -24,7 +25,7 @@ public class ToolCallStartEvent extends OrchestrationEvent {
 
     public ToolCallStartEvent(String sessionId, String stepId, Integer stepIndex,
                               String toolCallId, String toolName, String serverName, 
-                              String toolArgs, Integer sequence) {
+                              String toolArgs, String instanceId, Integer sequence) {
         super(sessionId);
         this.stepId = stepId;
         this.stepIndex = stepIndex;
@@ -32,6 +33,7 @@ public class ToolCallStartEvent extends OrchestrationEvent {
         this.toolName = toolName;
         this.serverName = serverName;
         this.toolArgs = toolArgs;
+        this.instanceId = instanceId;
         this.sequence = sequence;
     }
 

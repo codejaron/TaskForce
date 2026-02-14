@@ -42,11 +42,20 @@ export interface WorkerMessage {
 
 export interface LeadMessage {
   id: string;
-  type: 'system' | 'lead' | 'worker' | 'user';
+  type: 'system' | 'lead' | 'worker' | 'user' | 'tool_call' | 'tool_result';
   content: string;
   timestamp: string;
   agentName?: string;
   workerId?: string;
+  instanceId?: string;
+  toolName?: string;
+  toolCallId?: string;
+  serverName?: string;
+  toolArgs?: string;
+  toolResult?: string;
+  toolStatus?: 'RUNNING' | 'SUCCESS' | 'FAILED';
+  errorMessage?: string;
+  durationMs?: number;
 }
 
 export type LeadStatus = 'idle' | 'active' | 'shutdown';
@@ -469,6 +478,123 @@ function handleSSEEvent(
       }
       break;
 
+    case 'tool_call_start':
+      {
+        const instanceId = typeof data.instanceId === 'string' && data.instanceId.trim()
+          ? data.instanceId
+          : undefined;
+        // Worker 工具调用在右侧 Worker 面板展示，Lead 面板只展示 instanceId 为空的事件
+        if (instanceId) {
+          break;
+        }
+
+        const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+        const serverName = typeof data.serverName === 'string' ? data.serverName : undefined;
+        const toolArgs = typeof data.toolArgs === 'string'
+          ? data.toolArgs
+          : JSON.stringify(data.toolArgs || {});
+        const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
+
+        const newMessage: LeadMessage = {
+          id: `${Date.now()}_lead_tool_call_${toolCallId || toolName}`,
+          type: 'tool_call',
+          content: toolArgs,
+          timestamp: new Date().toISOString(),
+          agentName: 'Lead',
+          toolName,
+          toolCallId,
+          serverName,
+          toolArgs,
+          toolStatus: 'RUNNING'
+        };
+
+        set(state => {
+          if (toolCallId) {
+            const existingIndex = state.messages.findIndex(
+              msg => msg.toolCallId === toolCallId && (msg.type === 'tool_call' || msg.type === 'tool_result')
+            );
+            if (existingIndex >= 0) {
+              const existing = state.messages[existingIndex];
+              const merged: LeadMessage = {
+                ...existing,
+                ...newMessage,
+                content: existing.content || newMessage.content,
+                toolArgs: existing.toolArgs || newMessage.toolArgs
+              };
+              return {
+                messages: [
+                  ...state.messages.slice(0, existingIndex),
+                  merged,
+                  ...state.messages.slice(existingIndex + 1)
+                ]
+              };
+            }
+          }
+          return { messages: [...state.messages, newMessage] };
+        });
+      }
+      break;
+
+    case 'tool_call_complete':
+      {
+        const instanceId = typeof data.instanceId === 'string' && data.instanceId.trim()
+          ? data.instanceId
+          : undefined;
+        if (instanceId) {
+          break;
+        }
+
+        const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+        const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
+        const toolResult = typeof data.toolResult === 'string'
+          ? data.toolResult
+          : JSON.stringify(data.toolResult || {});
+        const errorMessage = typeof data.errorMessage === 'string' ? data.errorMessage : '';
+        const statusRaw = typeof data.status === 'string' ? data.status : 'SUCCESS';
+        const toolStatus: LeadMessage['toolStatus'] = statusRaw === 'FAILED' ? 'FAILED' : 'SUCCESS';
+
+        const newMessage: LeadMessage = {
+          id: `${Date.now()}_lead_tool_result_${toolCallId || toolName}`,
+          type: 'tool_result',
+          content: toolStatus === 'FAILED'
+            ? `❌ ${errorMessage || toolResult || 'Tool call failed'}`
+            : (toolResult || 'Tool call completed'),
+          timestamp: new Date().toISOString(),
+          agentName: 'Lead',
+          toolName,
+          toolCallId,
+          toolResult,
+          toolStatus,
+          errorMessage: errorMessage || undefined,
+          durationMs: typeof data.durationMs === 'number' ? data.durationMs : undefined
+        };
+
+        set(state => {
+          if (toolCallId) {
+            const existingIndex = state.messages.findIndex(
+              msg => msg.toolCallId === toolCallId && (msg.type === 'tool_call' || msg.type === 'tool_result')
+            );
+            if (existingIndex >= 0) {
+              const existing = state.messages[existingIndex];
+              const merged: LeadMessage = {
+                ...existing,
+                ...newMessage,
+                toolArgs: newMessage.toolArgs ?? existing.toolArgs
+              };
+              return {
+                messages: [
+                  ...state.messages.slice(0, existingIndex),
+                  merged,
+                  ...state.messages.slice(existingIndex + 1)
+                ]
+              };
+            }
+          }
+          return { messages: [...state.messages, newMessage] };
+        });
+      }
+      break;
+
     case 'team_shutdown':
       {
         const newMessage: LeadMessage = {
@@ -481,7 +607,19 @@ function handleSSEEvent(
         set({
           teamPhase: 'closed',
           leadStatus: 'shutdown',
+          isTeamStarted: false,
           messages: [...messages, newMessage]
+        });
+      }
+      break;
+
+    case 'session_complete':
+      {
+        set({
+          teamPhase: 'closed',
+          leadStatus: 'idle',
+          isTeamStarted: false,
+          members: members.map(member => ({ ...member, status: 'STOPPED' }))
         });
       }
       break;

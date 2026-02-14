@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useTeamStore } from '../../team/model/store';
-import { Send, Bot, User, Loader2, Users, AlertCircle, StopCircle } from 'lucide-react';
+import { Send, Bot, User, Loader2, Users, AlertCircle, StopCircle, Wrench, CheckCircle2, XCircle } from 'lucide-react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -120,6 +120,8 @@ export const LeadChatPanel: React.FC = () => {
               const isUser = msg.type === 'user';
               const isSystem = msg.type === 'system';
               const isWorker = msg.type === 'worker';
+              const isToolCall = msg.type === 'tool_call';
+              const isToolResult = msg.type === 'tool_result';
 
               return (
                 <div key={msg.id || idx} className="w-full">
@@ -159,6 +161,41 @@ export const LeadChatPanel: React.FC = () => {
                             ? "bg-slate-100 text-slate-900 rounded-tr-sm"
                             : "bg-white border border-slate-200 text-slate-900 rounded-tl-sm shadow-sm"
                         )}>
+                          {(isToolCall || isToolResult) && (
+                            <div className="mb-2 flex items-center justify-between gap-2 border-b border-slate-200 pb-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <Wrench size={14} className="text-violet-600 shrink-0" />
+                                <span className="text-xs font-semibold text-slate-700 truncate">
+                                  {msg.toolName || 'tool'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {msg.toolStatus === 'RUNNING' && (
+                                  <>
+                                    <Loader2 size={13} className="animate-spin text-amber-600" />
+                                    <span className="text-[11px] text-amber-700">运行中</span>
+                                  </>
+                                )}
+                                {msg.toolStatus === 'SUCCESS' && (
+                                  <>
+                                    <CheckCircle2 size={13} className="text-emerald-600" />
+                                    <span className="text-[11px] text-emerald-700">完成</span>
+                                  </>
+                                )}
+                                {msg.toolStatus === 'FAILED' && (
+                                  <>
+                                    <XCircle size={13} className="text-rose-600" />
+                                    <span className="text-[11px] text-rose-700">失败</span>
+                                  </>
+                                )}
+                                {typeof msg.durationMs === 'number' && msg.durationMs > 0 && (
+                                  <span className="text-[11px] text-slate-500">
+                                    {msg.durationMs}ms
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
                           <div className="break-words max-w-full overflow-hidden">
                             <ReactMarkdown
                               remarkPlugins={[remarkGfm]}

@@ -7,8 +7,11 @@ import com.agent.domain.execution.service.AgentExecutionStateService;
 import com.agent.domain.execution.service.ExecutionWaitIntentService;
 import com.agent.domain.team.lead.scheduling.LeadSchedulingDecision;
 import com.agent.domain.team.lead.scheduling.LeadSchedulingDecisionService;
+import com.agent.domain.worker.service.WorkerInstanceManager;
 import com.agent.infrastructure.agent.CheckpointThreadIds;
 import com.agent.infrastructure.agent.ReactAgentFactory;
+import com.agent.infrastructure.event.EventBus;
+import com.agent.infrastructure.event.events.SessionCompleteEvent;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.service.AgentService;
 import com.agent.service.SessionExecutionTracker;
@@ -48,6 +51,8 @@ public class TeamLeadAgent {
     private final AgentExecutionStateService executionStateService;
     private final ExecutionWaitIntentService waitIntentService;
     private final LeadSchedulingDecisionService leadSchedulingDecisionService;
+    private final WorkerInstanceManager workerInstanceManager;
+    private final EventBus eventBus;
 
     private static final int MAX_REACT_ITERATIONS = 50; // Lead 需要更多迭代次数
 
@@ -153,11 +158,16 @@ public class TeamLeadAgent {
                                 log.error("[TeamLeadAgent] Failed to continue lead loop: sessionId={}", sessionId, e);
                             }
                         } else {
+                            workerInstanceManager.shutdownAllBySession(sessionId);
                             executionStateService.setStatus(
                                     leadInstanceId,
                                     AgentExecutionStatus.COMPLETED,
                                     "lead run completed"
                             );
+                            eventBus.publish(sessionId, new SessionCompleteEvent(
+                                    sessionId,
+                                    "Team lead completed all tasks"
+                            ));
                             clearLeadCheckpoint(sessionId);
                         }
                         log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
