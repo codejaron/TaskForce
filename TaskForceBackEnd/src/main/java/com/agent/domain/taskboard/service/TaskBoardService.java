@@ -7,9 +7,7 @@ import com.agent.domain.taskboard.repository.TaskBoardRepository;
 import com.agent.domain.taskboard.validator.TaskValidator;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.TaskClaimedEvent;
-import com.agent.infrastructure.event.events.TaskCompletedEvent;
 import com.agent.infrastructure.event.events.TaskCreatedEvent;
-import com.agent.infrastructure.event.events.TaskFailedEvent;
 import com.agent.infrastructure.event.events.TaskUnblockedEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -19,10 +17,7 @@ import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -254,18 +249,11 @@ public class TaskBoardService {
 
             // 解析结果并发布事件
             if (result != null && result.contains("success")) {
-                eventBus.publish(sessionId, new TaskCompletedEvent(
-                        sessionId,
-                        taskId,
-                        task.getOwner(),
-                        normalizedCompletionNote
-                ));
-
                 // 解析被解锁的任务列表
                 if (result.contains("unblocked")) {
                     try {
                         @SuppressWarnings("unchecked")
-                        java.util.Map<String, Object> resultMap = objectMapper.readValue(result, java.util.Map.class);
+                        Map<String, Object> resultMap = objectMapper.readValue(result, java.util.Map.class);
                         Object unblockedObj = resultMap.get("unblocked");
 
                         if (unblockedObj instanceof List<?> unblockedTaskIds) {
@@ -310,7 +298,6 @@ public class TaskBoardService {
 
         task.fail();
         taskBoardRepository.save(task);
-        eventBus.publish(sessionId, new TaskFailedEvent(sessionId, taskId, task.getOwner()));
         log.info("Task failed: sessionId={}, taskId={}", sessionId, taskId);
     }
 
