@@ -16,6 +16,8 @@ import com.agent.domain.worker.repository.WorkerInstanceRepository;
 import com.agent.infrastructure.agent.CheckpointThreadIds;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
+import com.agent.infrastructure.event.events.TaskCompletedEvent;
+import com.agent.infrastructure.event.events.TaskFailedEvent;
 import com.agent.infrastructure.event.events.WorkerOutputEvent;
 import com.agent.service.SessionExecutionTracker;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
@@ -25,6 +27,8 @@ import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.Disposable;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -61,6 +65,7 @@ public class WorkerLoop implements Runnable {
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
     private final AtomicBoolean pausedForReply = new AtomicBoolean(false);
     private final AtomicBoolean failed = new AtomicBoolean(false);
+    private final Deque<String> pendingTextInputs = new ArrayDeque<>();
     private volatile AgentExecutionStatus lastReportedStatus;
     private volatile Thread loopThread;
 
@@ -118,15 +123,36 @@ public class WorkerLoop implements Runnable {
                     return;
                 }
 
+                String inboxInput = drainPendingTextInputs();
                 int taskId = workerInstance.getAssignedTaskId();
-                if (taskId == 0) {
+                if (taskId != 0) {
+                    String currentResumeInput = mergeInputs(
+                            resumeInputUsed ? null : resumeInput,
+                            inboxInput
+                    );
+                    resumeInputUsed = true;
+                    executeAssignedTask(taskId, currentResumeInput);
+                    if (shutdown.get() || pausedForReply.get()) {
+                        return;
+                    }
+                    continue;
+                }
+
+                String instructionInput = mergeInputs(
+                        resumeInputUsed ? null : resumeInput,
+                        inboxInput
+                );
+                resumeInputUsed = true;
+                if (instructionInput == null || instructionInput.isBlank()) {
                     reportExecutionStatus(workerInstance.getInstanceId(), AgentExecutionStatus.IDLE, "worker idle");
                     return;
                 }
 
-                String currentResumeInput = resumeInputUsed ? null : resumeInput;
-                resumeInputUsed = true;
-                executeAssignedTask(taskId, currentResumeInput);
+                TaskExecutionOutcome outcome = executeInstructionMessage(instructionInput);
+                if (outcome == TaskExecutionOutcome.WAITING_FOR_REPLY) {
+                    pausedForReply.set(true);
+                    return;
+                }
                 if (shutdown.get() || pausedForReply.get()) {
                     return;
                 }
@@ -229,6 +255,9 @@ public class WorkerLoop implements Runnable {
             case "INSTRUCTION":
             case "MESSAGE":
                 log.info("[WorkerLoop] Received instruction: {}", message.getText());
+                if (message.getText() != null && !message.getText().isBlank()) {
+                    pendingTextInputs.addLast(message.getText().trim());
+                }
                 break;
 
             default:
@@ -277,6 +306,7 @@ public class WorkerLoop implements Runnable {
             return;
         }
         if (outcome.isTerminal()) {
+            publishTaskTerminalEvent(taskId, outcome);
             workerInstance.clearAssignedTask();
             workerRepository.save(workerInstance);
         }
@@ -490,6 +520,107 @@ public class WorkerLoop implements Runnable {
         }
     }
 
+    private TaskExecutionOutcome executeInstructionMessage(String instructionMessage) {
+        log.info("[WorkerLoop] Executing direct instruction: instanceId={}", workerInstance.getInstanceId());
+        reportExecutionStatus(
+                workerInstance.getInstanceId(),
+                AgentExecutionStatus.EXECUTING,
+                "worker executing direct instruction"
+        );
+
+        try {
+            workerInstance.startWorking(0);
+            workerRepository.save(workerInstance);
+
+            String instruction = """
+                    你是团队模式下的 Worker，正在处理 Team Lead 的直接指令（非任务板任务）。
+                    必须按输入内容执行，并在完成后通过 send_message 向 Lead 回复结果。
+                    send_message 的目标为 Lead（workerId=0），回复内容应可直接用于 Lead 决策。
+                    """;
+            ReactAgent reactAgent = reactAgentFactory.buildWorkerReactAgent(
+                    Long.valueOf(workerInstance.getAgentId()),
+                    instruction,
+                    MAX_REACT_ITERATIONS,
+                    workerInstance.getSessionId(),
+                    "direct_instruction",
+                    null,
+                    workerInstance.getInstanceId()
+            );
+
+            RunnableConfig config = buildWorkerConfig(0);
+            Disposable disposable = reactAgent.stream(instructionMessage, config)
+                    .doOnNext(nodeOutput -> {
+                        if (nodeOutput instanceof StreamingOutput streamingOutput) {
+                            String chunk = streamingOutput.chunk();
+                            if (chunk != null && !chunk.isEmpty()) {
+                                try {
+                                    WorkerOutputEvent event = new WorkerOutputEvent(
+                                            workerInstance.getSessionId(),
+                                            workerInstance.getInstanceId(),
+                                            0,
+                                            chunk
+                                    );
+                                    eventBus.publishToWorker(
+                                            workerInstance.getSessionId(),
+                                            workerInstance.getInstanceId(),
+                                            event
+                                    );
+                                } catch (Exception e) {
+                                    log.warn("[WorkerLoop] Failed to publish direct-instruction output event", e);
+                                }
+                            }
+                        }
+                    })
+                    .doOnComplete(() -> log.info(
+                            "[WorkerLoop] Direct instruction execution completed: instanceId={}",
+                            workerInstance.getInstanceId()
+                    ))
+                    .doOnError(e -> log.error(
+                            "[WorkerLoop] Direct instruction execution error: instanceId={}",
+                            workerInstance.getInstanceId(), e
+                    ))
+                    .subscribe();
+
+            executionTracker.registerDisposable(workerInstance.getSessionId(), disposable);
+
+            while (!disposable.isDisposed() && !shutdown.get()) {
+                Thread.sleep(100);
+            }
+
+            if (shutdown.get()) {
+                workerInstance.completeWork();
+                workerRepository.save(workerInstance);
+                releaseWorkerCheckpoint();
+                return TaskExecutionOutcome.INTERRUPTED;
+            }
+
+            boolean shouldWaitReply = waitIntentService.consumeWaitingReply(workerInstance.getInstanceId());
+            if (shouldWaitReply) {
+                workerInstance.startWaitingReply(0);
+                workerRepository.save(workerInstance);
+                return TaskExecutionOutcome.WAITING_FOR_REPLY;
+            }
+
+            workerInstance.completeWork();
+            workerRepository.save(workerInstance);
+            releaseWorkerCheckpoint();
+            return TaskExecutionOutcome.COMPLETED;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            workerInstance.completeWork();
+            workerRepository.save(workerInstance);
+            releaseWorkerCheckpoint();
+            return TaskExecutionOutcome.INTERRUPTED;
+        } catch (Exception e) {
+            log.error("[WorkerLoop] Failed to execute direct instruction: instanceId={}",
+                    workerInstance.getInstanceId(), e);
+            workerInstance.completeWork();
+            workerRepository.save(workerInstance);
+            releaseWorkerCheckpoint();
+            return TaskExecutionOutcome.FAILED;
+        }
+    }
+
     private RunnableConfig buildWorkerConfig(int currentTaskId) {
         return RunnableConfig.builder()
                 .threadId(CheckpointThreadIds.workerThreadId(workerInstance.getInstanceId()))
@@ -504,6 +635,78 @@ public class WorkerLoop implements Runnable {
             return "";
         }
         return resumeMessage;
+    }
+
+    private String drainPendingTextInputs() {
+        if (pendingTextInputs.isEmpty()) {
+            return null;
+        }
+        StringBuilder builder = new StringBuilder();
+        while (!pendingTextInputs.isEmpty()) {
+            String text = pendingTextInputs.pollFirst();
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append("\n\n");
+            }
+            builder.append(text);
+        }
+        return builder.toString();
+    }
+
+    private String mergeInputs(String first, String second) {
+        boolean firstBlank = first == null || first.isBlank();
+        boolean secondBlank = second == null || second.isBlank();
+        if (firstBlank && secondBlank) {
+            return null;
+        }
+        if (firstBlank) {
+            return second;
+        }
+        if (secondBlank) {
+            return first;
+        }
+        if (first.trim().equals(second.trim())) {
+            return first;
+        }
+        return first + "\n\n" + second;
+    }
+
+    private void publishTaskTerminalEvent(int taskId, TaskExecutionOutcome outcome) {
+        if (taskId <= 0 || outcome == null) {
+            return;
+        }
+
+        String sessionId = workerInstance.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+
+        try {
+            Task latestTask = taskBoardService.getTask(sessionId, taskId);
+            if (outcome == TaskExecutionOutcome.COMPLETED && latestTask.isCompleted()) {
+                eventBus.publish(sessionId, new TaskCompletedEvent(
+                        sessionId,
+                        taskId,
+                        latestTask.getOwner(),
+                        latestTask.getCompletionNote()
+                ));
+                log.info("[WorkerLoop] Published task-completed event at worker terminal: taskId={}", taskId);
+                return;
+            }
+
+            if (outcome == TaskExecutionOutcome.FAILED && latestTask.isFailed()) {
+                eventBus.publish(sessionId, new TaskFailedEvent(
+                        sessionId,
+                        taskId,
+                        latestTask.getOwner()
+                ));
+                log.info("[WorkerLoop] Published task-failed event at worker terminal: taskId={}", taskId);
+            }
+        } catch (Exception e) {
+            log.warn("[WorkerLoop] Failed to publish task terminal event: taskId={}, outcome={}", taskId, outcome, e);
+        }
     }
 
     private void releaseWorkerCheckpoint() {
