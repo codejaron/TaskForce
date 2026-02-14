@@ -279,6 +279,14 @@ function toTimeValue(value?: string): number {
   return Number.isNaN(ms) ? 0 : ms;
 }
 
+function toUserFriendlySystemContent(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.startsWith('团队已启动') || /^team started\b/i.test(trimmed)) {
+    return '团队已启动';
+  }
+  return content;
+}
+
 function toLeadMessageFromHistory(item: TeamHistoryMessageDTO): LeadMessage | null {
   const timestamp = toTimestampIso(item.createdAt);
   if (item.messageType === 'TEAM_USER' && item.agentName?.startsWith('worker:')) {
@@ -314,7 +322,7 @@ function toLeadMessageFromHistory(item: TeamHistoryMessageDTO): LeadMessage | nu
     return {
       id: `history_msg_${item.id}`,
       type: 'system',
-      content: item.content || '',
+      content: toUserFriendlySystemContent(item.content || ''),
       timestamp
     };
   }
@@ -537,7 +545,7 @@ function handleSSEEvent(
         const newMessage: LeadMessage = {
           id: `${Date.now()}_team_started`,
           type: 'system',
-          content: `团队已启动 (Team ID: ${teamId})`,
+          content: '团队已启动',
           timestamp: new Date().toISOString()
         };
         set({

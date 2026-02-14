@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useTeamStore } from '../../team/model/store';
-import { Send, Bot, User, Loader2, Users, AlertCircle, StopCircle, Wrench, CheckCircle2, XCircle } from 'lucide-react';
+import type { LeadMessage } from '../../team/model/store';
+import { Send, Bot, User, Loader2, Users, AlertCircle, StopCircle, Wrench, CheckCircle2, ChevronDown } from 'lucide-react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -8,7 +9,7 @@ import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 
 export const LeadChatPanel: React.FC = () => {
-  const { messages, sendToLead, stopTeam, isConnected, leadStatus } = useTeamStore();
+  const { messages, sendToLead, stopTeam, leadStatus } = useTeamStore();
   const [inputMessage, setInputMessage] = useState('');
   const [isStopping, setIsStopping] = useState(false);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
@@ -82,19 +83,7 @@ export const LeadChatPanel: React.FC = () => {
             </div>
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Team Lead</h2>
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                {isConnected ? (
-                  <>
-                    <span className="w-2 h-2 bg-green-500 rounded-full" />
-                    <span>Connected</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="w-2 h-2 bg-gray-400 rounded-full" />
-                    <span>Disconnected</span>
-                  </>
-                )}
-              </div>
+              <div className="text-sm text-gray-500">Team Coordinator</div>
             </div>
           </div>
         </div>
@@ -146,7 +135,7 @@ export const LeadChatPanel: React.FC = () => {
                           <Bot size={20} className="text-white" />
                         )}
                       </div>
-                      <div className="max-w-[70%]">
+                      <div className={clsx("max-w-[70%]", (isToolCall || isToolResult) && "max-w-[88%]")}>
                         <div className="text-xs text-gray-500 mb-1 flex items-center gap-2">
                           {msg.agentName || (isUser ? 'You' : isWorker ? 'Worker' : 'Lead')}
                           {msg.timestamp && (
@@ -155,127 +144,96 @@ export const LeadChatPanel: React.FC = () => {
                             </span>
                           )}
                         </div>
-                        <div className={clsx(
-                          "px-4 py-3 rounded-2xl text-sm",
-                          isUser
-                            ? "bg-slate-100 text-slate-900 rounded-tr-sm"
-                            : "bg-white border border-slate-200 text-slate-900 rounded-tl-sm shadow-sm"
-                        )}>
-                          {(isToolCall || isToolResult) && (
-                            <div className="mb-2 flex items-center justify-between gap-2 border-b border-slate-200 pb-2">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <Wrench size={14} className="text-violet-600 shrink-0" />
-                                <span className="text-xs font-semibold text-slate-700 truncate">
-                                  {msg.toolName || 'tool'}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-1 shrink-0">
-                                {msg.toolStatus === 'RUNNING' && (
-                                  <>
-                                    <Loader2 size={13} className="animate-spin text-amber-600" />
-                                    <span className="text-[11px] text-amber-700">运行中</span>
-                                  </>
-                                )}
-                                {msg.toolStatus === 'SUCCESS' && (
-                                  <>
-                                    <CheckCircle2 size={13} className="text-emerald-600" />
-                                    <span className="text-[11px] text-emerald-700">完成</span>
-                                  </>
-                                )}
-                                {msg.toolStatus === 'FAILED' && (
-                                  <>
-                                    <XCircle size={13} className="text-rose-600" />
-                                    <span className="text-[11px] text-rose-700">失败</span>
-                                  </>
-                                )}
-                                {typeof msg.durationMs === 'number' && msg.durationMs > 0 && (
-                                  <span className="text-[11px] text-slate-500">
-                                    {msg.durationMs}ms
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                          <div className="break-words max-w-full overflow-hidden">
-                            <ReactMarkdown
-                              remarkPlugins={[remarkGfm]}
-                              components={{
-                                p: ({ children }) => <p className="mb-2 last:mb-0 break-words">{children}</p>,
-                                pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-gray-200 rounded p-2 text-xs">{children}</pre>,
-                                code(props: unknown) {
-                                  const { inline, className, children, ...rest } = props as {
-                                    inline?: boolean;
-                                    className?: string;
-                                    children?: unknown;
-                                    [key: string]: unknown;
-                                  };
-                                  const match = /language-(\w+)/.exec(className || '');
-                                  const text = String(children ?? '');
+                        {(isToolCall || isToolResult) ? (
+                          <LeadToolCallBubble message={msg} />
+                        ) : (
+                          <div className={clsx(
+                            "px-4 py-3 rounded-2xl text-sm",
+                            isUser
+                              ? "bg-slate-100 text-slate-900 rounded-tr-sm"
+                              : "bg-white border border-slate-200 text-slate-900 rounded-tl-sm shadow-sm"
+                          )}>
+                            <div className="break-words max-w-full overflow-hidden">
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                  p: ({ children }) => <p className="mb-2 last:mb-0 break-words">{children}</p>,
+                                  pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-gray-200 rounded p-2 text-xs">{children}</pre>,
+                                  code(props: unknown) {
+                                    const { inline, className, children, ...rest } = props as {
+                                      inline?: boolean;
+                                      className?: string;
+                                      children?: unknown;
+                                      [key: string]: unknown;
+                                    };
+                                    const match = /language-(\w+)/.exec(className || '');
+                                    const text = String(children ?? '');
 
-                                  if (!inline && match) {
-                                    return (
-                                      <div className="my-2 overflow-x-auto rounded">
-                                        <SyntaxHighlighter
-                                          {...(rest as any)}
-                                          style={oneLight}
-                                          language={match[1]}
-                                          PreTag="div"
-                                          customStyle={{ margin: 0, fontSize: '0.75rem' }}
-                                          wrapLongLines={false}
-                                        >
-                                          {text.replace(/\n$/, '')}
-                                        </SyntaxHighlighter>
-                                      </div>
-                                    );
-                                  }
-
-                                  if (!inline) {
-                                    if (!text.includes('\n') && text.length < 100) {
+                                    if (!inline && match) {
                                       return (
-                                        <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
-                                          {children as any}
-                                        </code>
+                                        <div className="my-2 overflow-x-auto rounded">
+                                          <SyntaxHighlighter
+                                            {...(rest as any)}
+                                            style={oneLight}
+                                            language={match[1]}
+                                            PreTag="div"
+                                            customStyle={{ margin: 0, fontSize: '0.75rem' }}
+                                            wrapLongLines={false}
+                                          >
+                                            {text.replace(/\n$/, '')}
+                                          </SyntaxHighlighter>
+                                        </div>
                                       );
                                     }
-                                    return (
-                                      <div className="my-2 overflow-x-auto rounded">
-                                        <SyntaxHighlighter
-                                          {...(rest as any)}
-                                          style={oneLight}
-                                          language="text"
-                                          PreTag="div"
-                                          customStyle={{ margin: 0, fontSize: '0.75rem' }}
-                                          wrapLongLines={false}
-                                        >
-                                          {text.replace(/\n$/, '')}
-                                        </SyntaxHighlighter>
-                                      </div>
-                                    );
-                                  }
 
-                                  return (
-                                    <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
-                                      {children as any}
-                                    </code>
-                                  );
-                                },
-                                ul: ({ children }) => <ul className="list-disc list-outside mb-2 space-y-1 ml-4">{children}</ul>,
-                                ol: ({ children }) => <ol className="list-decimal list-outside mb-2 space-y-1 ml-4">{children}</ol>,
-                                li: ({ children }) => <li className="break-words">{children}</li>,
-                                h1: ({ children }) => <h1 className="text-lg font-bold mb-2 break-words">{children}</h1>,
-                                h2: ({ children }) => <h2 className="text-base font-bold mb-2 break-words">{children}</h2>,
-                                h3: ({ children }) => <h3 className="text-sm font-bold mb-1 break-words">{children}</h3>,
-                                blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-3 my-2 italic break-words">{children}</blockquote>,
-                                a: ({ href, children }) => <a href={href} className="text-purple-600 hover:underline break-all" target="_blank" rel="noopener noreferrer">{children}</a>,
-                                table: ({ children }) => <div className="overflow-x-auto my-2"><table className="min-w-full border-collapse">{children}</table></div>,
-                                th: ({ children }) => <th className="border border-gray-300 px-2 py-1 bg-gray-100 text-left break-words">{children}</th>,
-                                td: ({ children }) => <td className="border border-gray-300 px-2 py-1 break-words">{children}</td>
-                              }}
-                            >
-                              {msg.content}
-                            </ReactMarkdown>
+                                    if (!inline) {
+                                      if (!text.includes('\n') && text.length < 100) {
+                                        return (
+                                          <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
+                                            {children as any}
+                                          </code>
+                                        );
+                                      }
+                                      return (
+                                        <div className="my-2 overflow-x-auto rounded">
+                                          <SyntaxHighlighter
+                                            {...(rest as any)}
+                                            style={oneLight}
+                                            language="text"
+                                            PreTag="div"
+                                            customStyle={{ margin: 0, fontSize: '0.75rem' }}
+                                            wrapLongLines={false}
+                                          >
+                                            {text.replace(/\n$/, '')}
+                                          </SyntaxHighlighter>
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
+                                        {children as any}
+                                      </code>
+                                    );
+                                  },
+                                  ul: ({ children }) => <ul className="list-disc list-outside mb-2 space-y-1 ml-4">{children}</ul>,
+                                  ol: ({ children }) => <ol className="list-decimal list-outside mb-2 space-y-1 ml-4">{children}</ol>,
+                                  li: ({ children }) => <li className="break-words">{children}</li>,
+                                  h1: ({ children }) => <h1 className="text-lg font-bold mb-2 break-words">{children}</h1>,
+                                  h2: ({ children }) => <h2 className="text-base font-bold mb-2 break-words">{children}</h2>,
+                                  h3: ({ children }) => <h3 className="text-sm font-bold mb-1 break-words">{children}</h3>,
+                                  blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-3 my-2 italic break-words">{children}</blockquote>,
+                                  a: ({ href, children }) => <a href={href} className="text-purple-600 hover:underline break-all" target="_blank" rel="noopener noreferrer">{children}</a>,
+                                  table: ({ children }) => <div className="overflow-x-auto my-2"><table className="min-w-full border-collapse">{children}</table></div>,
+                                  th: ({ children }) => <th className="border border-gray-300 px-2 py-1 bg-gray-100 text-left break-words">{children}</th>,
+                                  td: ({ children }) => <td className="border border-gray-300 px-2 py-1 break-words">{children}</td>
+                                }}
+                              >
+                                {msg.content}
+                              </ReactMarkdown>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -326,4 +284,92 @@ export const LeadChatPanel: React.FC = () => {
       </div>
     </div>
   );
+};
+
+const LeadToolCallBubble: React.FC<{ message: LeadMessage }> = ({ message }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  const status = message.toolStatus || (message.type === 'tool_result' ? 'SUCCESS' : 'RUNNING');
+  const statusLabel = status === 'FAILED' ? '失败' : status === 'SUCCESS' ? '完成' : '执行中';
+  const statusIcon = status === 'FAILED'
+    ? <AlertCircle size={14} className="text-red-600" />
+    : status === 'SUCCESS'
+      ? <CheckCircle2 size={14} className="text-green-600" />
+      : <Loader2 size={14} className="animate-spin text-blue-600" />;
+
+  const cardStyle = status === 'FAILED'
+    ? 'border-red-200 bg-red-50'
+    : status === 'SUCCESS'
+      ? 'border-purple-200 bg-purple-50'
+      : 'border-amber-200 bg-amber-50';
+
+  const displayToolName = message.serverName
+    ? `${message.serverName}::${message.toolName || 'Tool'}`
+    : (message.toolName || 'Tool');
+
+  const argsText = formatJsonString(message.toolArgs || (message.type === 'tool_call' ? message.content : ''));
+  const resultText = formatJsonString(message.toolResult || (message.type === 'tool_result' ? message.content : ''));
+
+  return (
+    <div className={clsx("rounded-xl border px-3 py-2 text-sm shadow-sm", cardStyle)}>
+      <button
+        className="w-full flex items-center gap-2 cursor-pointer"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <Wrench size={14} className="text-gray-600 shrink-0" />
+        <span className="text-sm font-semibold text-gray-700 truncate">{displayToolName}</span>
+        <span className="ml-auto text-xs text-gray-400">{new Date(message.timestamp).toLocaleTimeString()}</span>
+        <span className="ml-1">{statusIcon}</span>
+        <span className={clsx(
+          "text-[11px] px-2 py-0.5 rounded-full font-medium",
+          status === 'FAILED' ? 'bg-red-100 text-red-700' :
+          status === 'SUCCESS' ? 'bg-purple-100 text-purple-700' :
+          'bg-amber-100 text-amber-700'
+        )}>
+          {statusLabel}
+        </span>
+        <ChevronDown size={14} className={clsx("text-gray-500 transition-transform", expanded && "rotate-180")} />
+      </button>
+
+      {expanded && (
+        <div className="mt-2 border-t border-gray-200/70 pt-2 space-y-2">
+          {argsText && (
+            <div>
+              <div className="text-xs text-gray-500 mb-1">参数</div>
+              <pre className="bg-white/80 rounded-md p-2 text-xs text-gray-700 whitespace-pre-wrap break-all max-h-32 overflow-auto">
+                {argsText}
+              </pre>
+            </div>
+          )}
+
+          {(resultText || message.errorMessage) && (
+            <div>
+              <div className="text-xs text-gray-500 mb-1">结果</div>
+              <pre className={clsx(
+                "rounded-md p-2 text-xs whitespace-pre-wrap break-all max-h-56 overflow-auto",
+                message.errorMessage ? "bg-red-50 text-red-700" : "bg-white/80 text-gray-700"
+              )}>
+                {message.errorMessage || resultText}
+              </pre>
+            </div>
+          )}
+
+          {typeof message.durationMs === 'number' && (
+            <div className="text-xs text-gray-500">
+              耗时: {message.durationMs}ms
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const formatJsonString = (value: string): string => {
+  if (!value) return '';
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
 };

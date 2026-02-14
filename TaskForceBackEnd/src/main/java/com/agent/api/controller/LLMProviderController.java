@@ -23,8 +23,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * LLM Provider 控制器
@@ -224,48 +226,52 @@ public class LLMProviderController {
     @PostMapping("/fetch-models")
     public ApiResponse<List<Map<String, String>>> fetchModels(@RequestBody RemoteModelsRequest req) {
         try {
-            String url = req.getBaseUrl();
-            if (url == null || url.isBlank()) {
+            String baseUrl = req.getBaseUrl();
+            if (baseUrl == null || baseUrl.isBlank()) {
                 return ApiResponse.error("baseUrl is required");
             }
-            // normalize: remove trailing slash first
-            url = url.trim();
-            if (url.endsWith("/")) url = url.substring(0, url.length() - 1);
 
-            String full;
-            // if base already ends with /v1, then just append /models
-            if (url.endsWith("/v1")) {
-                full = url + "/models";
-            } else {
-                full = url + "/v1/models";
-            }
+            List<String> candidates = buildModelFetchCandidates(baseUrl);
+            String lastError = null;
 
-            HttpRequest.Builder rb = HttpRequest.newBuilder()
-                    .uri(URI.create(full))
-                    .timeout(Duration.ofSeconds(10))
-                    .GET();
-            if (req.getApiKey() != null && !req.getApiKey().isEmpty()) {
-                rb.header("Authorization", "Bearer " + req.getApiKey());
-            }
-            rb.header("Accept", "application/json");
-
-            HttpRequest httpRequest = rb.build();
-            HttpResponse<String> resp = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() >= 400) {
-                return ApiResponse.error("Failed to fetch models: " + resp.statusCode() + " " + resp.body());
-            }
-            JsonNode root = objectMapper.readTree(resp.body());
-            List<Map<String, String>> out = new ArrayList<>();
-            if (root.has("data") && root.get("data").isArray()) {
-                for (JsonNode item : root.get("data")) {
-                    if (item.has("id")) {
-                        String id = item.get("id").asText();
-                        out.add(Map.of("modelValue", id, "displayName", id));
+            for (String full : candidates) {
+                try {
+                    HttpRequest.Builder rb = HttpRequest.newBuilder()
+                            .uri(URI.create(full))
+                            .timeout(Duration.ofSeconds(10))
+                            .GET();
+                    if (req.getApiKey() != null && !req.getApiKey().isEmpty()) {
+                        rb.header("Authorization", "Bearer " + req.getApiKey());
                     }
+                    rb.header("Accept", "application/json");
+
+                    HttpRequest httpRequest = rb.build();
+                    HttpResponse<String> resp = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+                    if (resp.statusCode() >= 400) {
+                        lastError = "Failed to fetch models: " + resp.statusCode() + " " + resp.body();
+                        continue;
+                    }
+                    JsonNode root = objectMapper.readTree(resp.body());
+                    List<Map<String, String>> out = new ArrayList<>();
+                    if (root.has("data") && root.get("data").isArray()) {
+                        for (JsonNode item : root.get("data")) {
+                            if (item.has("id")) {
+                                String id = item.get("id").asText();
+                                out.add(Map.of("modelValue", id, "displayName", id));
+                            }
+                        }
+                    }
+                    return ApiResponse.success(out);
+                } catch (IllegalArgumentException e) {
+                    lastError = "Invalid model URL: " + full;
+                } catch (IOException e) {
+                    lastError = e.getMessage();
                 }
             }
-            return ApiResponse.success(out);
-        } catch (IOException | InterruptedException e) {
+
+            return ApiResponse.error(lastError != null ? lastError : "Failed to fetch models");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             log.error("Failed to fetch remote models", e);
             return ApiResponse.error(e.getMessage());
         }
@@ -327,5 +333,54 @@ public class LLMProviderController {
             log.error("Failed to mask API key", e);
             return "****";
         }
+    }
+
+    private List<String> buildModelFetchCandidates(String rawBaseUrl) {
+        String base = trimTrailingSlash(rawBaseUrl.trim());
+        Set<String> candidates = new LinkedHashSet<>();
+
+        // If user entered a chat completion endpoint, convert it to a models endpoint first.
+        if (base.endsWith("/v1/chat/completions")) {
+            candidates.add(base.substring(0, base.length() - "/chat/completions".length()) + "/models");
+        } else if (base.endsWith("/chat/completions")) {
+            candidates.add(base.substring(0, base.length() - "/chat/completions".length()) + "/models");
+        }
+
+        String stripped = stripBaseTail(base);
+        if (!stripped.isEmpty()) {
+            candidates.add(stripped + "/models");
+            candidates.add(stripped + "/v1/models");
+        }
+
+        if (base.endsWith("/v1")) {
+            candidates.add(base + "/models");
+        } else if (base.endsWith("/models")) {
+            candidates.add(base);
+        }
+
+        // Last fallback: use exactly what user provided.
+        candidates.add(base);
+        return new ArrayList<>(candidates);
+    }
+
+    private String stripBaseTail(String base) {
+        if (base.endsWith("/v1/chat/completions")) {
+            return base.substring(0, base.length() - "/v1/chat/completions".length());
+        }
+        if (base.endsWith("/chat/completions")) {
+            return base.substring(0, base.length() - "/chat/completions".length());
+        }
+        if (base.endsWith("/v1")) {
+            return base.substring(0, base.length() - "/v1".length());
+        }
+        return base;
+    }
+
+    private String trimTrailingSlash(String input) {
+        String result = input;
+        while (result.endsWith("/") && result.length() > 1) {
+            result = result.substring(0, result.length() - 1);
+        }
+        return result;
     }
 }

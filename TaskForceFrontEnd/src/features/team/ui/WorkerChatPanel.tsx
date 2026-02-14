@@ -39,7 +39,7 @@ export const WorkerChatPanel: React.FC = () => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
     }
@@ -86,22 +86,22 @@ export const WorkerChatPanel: React.FC = () => {
 
       {/* Input */}
       <div className="flex-shrink-0 p-4 border-t border-gray-200 bg-white">
-        <div className="flex items-end gap-2">
-          <textarea
+        <div className="flex gap-3">
+          <input
+            type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="发送消息给 Worker..."
-            className="flex-1 resize-none bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-            rows={2}
+            className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none shadow-sm"
             disabled={isSending}
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || isSending}
-            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-medium transition-colors duration-200 flex items-center gap-2 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+            {isSending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
           </button>
         </div>
       </div>
