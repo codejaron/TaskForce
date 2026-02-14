@@ -64,7 +64,7 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
         // 1. 发布开始事件
         if (eventBus != null && sessionId != null) {
             ToolCallStartEvent startEvent = new ToolCallStartEvent(
-                    sessionId, stepId, stepIndex, toolCallId, toolName, serverName, toolInput, sequence
+                    sessionId, stepId, stepIndex, toolCallId, toolName, serverName, toolInput, instanceId, sequence
             );
             if (instanceId != null) {
                 // Worker 工具调用只发 Worker 通道
@@ -132,7 +132,7 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
             // 5. 发布Complete事件
             if (eventBus != null && sessionId != null) {
                 ToolCallCompleteEvent completeEvent = new ToolCallCompleteEvent(
-                        sessionId, stepId, stepIndex, toolCallId, toolName, result, status, errorMessage, durationMs
+                        sessionId, stepId, stepIndex, toolCallId, toolName, result, status, errorMessage, durationMs, instanceId
                 );
                 eventBus.publish(sessionId, completeEvent);
 
