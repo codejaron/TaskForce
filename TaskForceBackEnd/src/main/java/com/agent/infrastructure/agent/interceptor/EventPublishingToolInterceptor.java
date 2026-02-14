@@ -79,7 +79,7 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
         if (toolCallService != null && sessionId != null) {
             try {
                 toolCallService.createToolCall(
-                        sessionId, stepId, agentId, toolCallId, toolName, serverName, toolInput, sequence
+                        sessionId, stepId, agentId, toolCallId, toolName, serverName, instanceId, toolInput, sequence
                 );
             } catch (Exception e) {
                 log.warn("Failed to persist tool call start: {}", e.getMessage());

@@ -193,6 +193,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     tool_call_id VARCHAR(64) NOT NULL COMMENT '唯一标识',
     tool_name VARCHAR(200) NOT NULL COMMENT '工具名称',
     server_name VARCHAR(200) COMMENT 'MCP Server 名称（便于前端展示和调试）',
+    instance_id VARCHAR(128) NULL COMMENT '触发调用的实例ID（Worker/Lead）',
     tool_args JSON COMMENT '工具参数',
     tool_result LONGTEXT COMMENT '工具执行结果',
     status VARCHAR(20) DEFAULT 'RUNNING' COMMENT '状态: RUNNING/SUCCESS/FAILED',
@@ -203,6 +204,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     sequence INT DEFAULT 0 COMMENT '同一步骤中的调用顺序',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_session_id (session_id),
+    INDEX idx_tool_calls_session_started (session_id, started_at),
+    INDEX idx_tool_calls_session_instance_started (session_id, instance_id, started_at),
     INDEX idx_step_id (step_id),
     INDEX idx_tool_call_id (tool_call_id),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -218,4 +221,3 @@ VALUES
 -- ========================================
 -- 迁移完成
 -- ========================================
-

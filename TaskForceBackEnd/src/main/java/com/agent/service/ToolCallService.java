@@ -25,7 +25,7 @@ public class ToolCallService {
      */
     @Transactional
     public ToolCall createToolCall(String sessionId, String stepId, Long agentId,
-                                   String toolCallId, String toolName, String serverName,
+                                   String toolCallId, String toolName, String serverName, String instanceId,
                                    String toolArgs, int sequence) {
         ToolCall toolCall = ToolCall.builder()
                 .sessionId(sessionId)
@@ -34,6 +34,7 @@ public class ToolCallService {
                 .toolCallId(toolCallId)
                 .toolName(toolName)
                 .serverName(serverName)
+                .instanceId(instanceId)
                 .toolArgs(toolArgs)
                 .status("RUNNING")
                 .startedAt(LocalDateTime.now())

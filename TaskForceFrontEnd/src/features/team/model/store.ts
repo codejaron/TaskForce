@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../../../shared/api';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
-import type { Session } from '../../../shared/api/types';
+import type { Session, TeamSessionHistoryDTO, TeamHistoryMessageDTO, TeamHistoryToolCallDTO } from '../../../shared/api/types';
 import { apiUrl } from '../../../shared/api/base';
 
 // ========== 类型定义 ==========
@@ -103,6 +103,7 @@ interface TeamState {
 
 let currentAbortController: AbortController | null = null;
 let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let selectSessionEpoch = 0;
 
 const RECONNECT_CONFIG = {
   maxRetries: 5,
@@ -197,6 +198,290 @@ function getEventIdSet(sessionId: string): Set<string> {
 
 function clearEventIdSet(sessionId: string) {
   processedEventIds.delete(sessionId);
+}
+
+const LAST_EVENT_ID_STORAGE_KEY = 'team:last-event-id-by-session';
+
+function loadLastEventIdBySession(): Record<string, string> {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  try {
+    const raw = window.sessionStorage.getItem(LAST_EVENT_ID_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, string> : {};
+  } catch {
+    return {};
+  }
+}
+
+let lastEventIdBySession: Record<string, string> = loadLastEventIdBySession();
+
+function persistLastEventIdBySession() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(LAST_EVENT_ID_STORAGE_KEY, JSON.stringify(lastEventIdBySession));
+  } catch {
+    // ignore persistence failure
+  }
+}
+
+function getLastEventId(sessionId: string): string | undefined {
+  const id = lastEventIdBySession[sessionId];
+  return id && id.trim() ? id : undefined;
+}
+
+function saveLastEventId(sessionId: string, eventId: string) {
+  if (!sessionId || !eventId || !eventId.trim()) {
+    return;
+  }
+  if (lastEventIdBySession[sessionId] === eventId) {
+    return;
+  }
+  lastEventIdBySession = {
+    ...lastEventIdBySession,
+    [sessionId]: eventId
+  };
+  persistLastEventIdBySession();
+}
+
+function removeLastEventId(sessionId: string) {
+  if (!lastEventIdBySession[sessionId]) {
+    return;
+  }
+  const next = { ...lastEventIdBySession };
+  delete next[sessionId];
+  lastEventIdBySession = next;
+  persistLastEventIdBySession();
+}
+
+function toTimestampIso(value?: string): string {
+  if (!value) {
+    return new Date().toISOString();
+  }
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) {
+    return new Date().toISOString();
+  }
+  return new Date(ms).toISOString();
+}
+
+function toTimeValue(value?: string): number {
+  if (!value) {
+    return 0;
+  }
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+function toLeadMessageFromHistory(item: TeamHistoryMessageDTO): LeadMessage | null {
+  const timestamp = toTimestampIso(item.createdAt);
+  if (item.messageType === 'TEAM_USER' && item.agentName?.startsWith('worker:')) {
+    return null;
+  }
+  if (item.messageType === 'TEAM_USER') {
+    return {
+      id: `history_msg_${item.id}`,
+      type: 'user',
+      content: item.content || '',
+      timestamp
+    };
+  }
+  if (item.messageType === 'TEAM_LEAD') {
+    return {
+      id: `history_msg_${item.id}`,
+      type: 'lead',
+      content: item.content || '',
+      timestamp,
+      agentName: item.agentName || 'Lead'
+    };
+  }
+  if (item.messageType === 'TEAM_WORKER') {
+    return {
+      id: `history_msg_${item.id}`,
+      type: 'worker',
+      content: item.content || '',
+      timestamp,
+      agentName: item.agentName || 'Worker'
+    };
+  }
+  if (item.messageType === 'TEAM_SYSTEM') {
+    return {
+      id: `history_msg_${item.id}`,
+      type: 'system',
+      content: item.content || '',
+      timestamp
+    };
+  }
+  return null;
+}
+
+function toWorkerUserMessageFromHistory(item: TeamHistoryMessageDTO): { instanceId: string; message: WorkerMessage } | null {
+  if (item.messageType !== 'TEAM_USER') {
+    return null;
+  }
+  const agentName = item.agentName || '';
+  if (!agentName.startsWith('worker:')) {
+    return null;
+  }
+  const instanceId = agentName.slice('worker:'.length).trim();
+  if (!instanceId) {
+    return null;
+  }
+  return {
+    instanceId,
+    message: {
+      id: `history_msg_${item.id}`,
+      type: 'user',
+      content: item.content || '',
+      timestamp: toTimestampIso(item.createdAt)
+    }
+  };
+}
+
+function toLeadToolMessageFromHistory(item: TeamHistoryToolCallDTO): LeadMessage {
+  const timestamp = toTimestampIso(item.completedAt || item.startedAt);
+  const isRunning = item.status === 'RUNNING';
+  return {
+    id: `history_tool_${item.toolCallId}`,
+    type: isRunning ? 'tool_call' : 'tool_result',
+    content: isRunning
+      ? (item.toolArgs || '{}')
+      : (item.status === 'FAILED'
+          ? `❌ ${item.errorMessage || item.toolResult || 'Tool call failed'}`
+          : (item.toolResult || 'Tool call completed')),
+    timestamp,
+    agentName: 'Lead',
+    toolName: item.toolName,
+    toolCallId: item.toolCallId,
+    serverName: item.serverName,
+    toolArgs: item.toolArgs,
+    toolResult: item.toolResult,
+    toolStatus: isRunning ? 'RUNNING' : (item.status === 'FAILED' ? 'FAILED' : 'SUCCESS'),
+    errorMessage: item.errorMessage,
+    durationMs: item.durationMs
+  };
+}
+
+function toWorkerToolMessageFromHistory(item: TeamHistoryToolCallDTO): WorkerMessage {
+  const isRunning = item.status === 'RUNNING';
+  return {
+    id: `history_tool_${item.toolCallId}`,
+    type: isRunning ? 'tool_call' : 'tool_result',
+    content: isRunning
+      ? (item.toolArgs || '{}')
+      : (item.status === 'FAILED'
+          ? `❌ ${item.errorMessage || item.toolResult || 'Tool call failed'}`
+          : (item.toolResult || 'Tool call completed')),
+    timestamp: toTimestampIso(item.completedAt || item.startedAt),
+    toolName: item.toolName,
+    toolCallId: item.toolCallId,
+    serverName: item.serverName,
+    toolArgs: item.toolArgs,
+    toolResult: item.toolResult,
+    toolStatus: isRunning ? 'RUNNING' : (item.status === 'FAILED' ? 'FAILED' : 'SUCCESS'),
+    errorMessage: item.errorMessage,
+    durationMs: item.durationMs
+  };
+}
+
+function buildHistoryState(history: TeamSessionHistoryDTO): {
+  leadMessages: LeadMessage[];
+  workerMessages: Record<string, WorkerMessage[]>;
+} {
+  const leadMessages: LeadMessage[] = [];
+  const workerMessages: Record<string, WorkerMessage[]> = {};
+
+  history.messages.forEach(item => {
+    const workerUserMessage = toWorkerUserMessageFromHistory(item);
+    if (workerUserMessage) {
+      const existing = workerMessages[workerUserMessage.instanceId] || [];
+      workerMessages[workerUserMessage.instanceId] = [...existing, workerUserMessage.message];
+      return;
+    }
+    const leadMessage = toLeadMessageFromHistory(item);
+    if (leadMessage) {
+      leadMessages.push(leadMessage);
+    }
+  });
+
+  history.toolCalls.forEach(item => {
+    if (item.instanceId && item.instanceId.trim()) {
+      const existing = workerMessages[item.instanceId] || [];
+      workerMessages[item.instanceId] = [...existing, toWorkerToolMessageFromHistory(item)];
+      return;
+    }
+    leadMessages.push(toLeadToolMessageFromHistory(item));
+  });
+
+  leadMessages.sort((a, b) => toTimeValue(a.timestamp) - toTimeValue(b.timestamp));
+  Object.keys(workerMessages).forEach(instanceId => {
+    workerMessages[instanceId] = [...workerMessages[instanceId]]
+      .sort((a, b) => toTimeValue(a.timestamp) - toTimeValue(b.timestamp));
+  });
+
+  return { leadMessages, workerMessages };
+}
+
+function mergeLeadMessages(base: LeadMessage[], live: LeadMessage[]): LeadMessage[] {
+  const merged = new Map<string, LeadMessage>();
+
+  [...base, ...live].forEach(item => {
+    const key = item.toolCallId
+      ? `tool:${item.toolCallId}`
+      : item.id
+        ? `id:${item.id}`
+        : `msg:${item.type}:${item.timestamp}:${item.content}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, item);
+      return;
+    }
+    merged.set(key, { ...existing, ...item });
+  });
+
+  return [...merged.values()].sort((a, b) => toTimeValue(a.timestamp) - toTimeValue(b.timestamp));
+}
+
+function mergeWorkerMessageList(base: WorkerMessage[], live: WorkerMessage[]): WorkerMessage[] {
+  const merged = new Map<string, WorkerMessage>();
+  [...base, ...live].forEach(item => {
+    const key = item.toolCallId
+      ? `tool:${item.toolCallId}`
+      : item.id
+        ? `id:${item.id}`
+        : `msg:${item.type}:${item.timestamp}:${item.content}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, item);
+      return;
+    }
+    merged.set(key, { ...existing, ...item });
+  });
+  return [...merged.values()].sort((a, b) => toTimeValue(a.timestamp) - toTimeValue(b.timestamp));
+}
+
+function mergeWorkerMessageMaps(
+  base: Record<string, WorkerMessage[]>,
+  live: Record<string, WorkerMessage[]>
+): Record<string, WorkerMessage[]> {
+  const instanceIds = new Set<string>([
+    ...Object.keys(base || {}),
+    ...Object.keys(live || {})
+  ]);
+
+  const merged: Record<string, WorkerMessage[]> = {};
+  instanceIds.forEach(instanceId => {
+    const baseList = base?.[instanceId] || [];
+    const liveList = live?.[instanceId] || [];
+    merged[instanceId] = mergeWorkerMessageList(baseList, liveList);
+  });
+  return merged;
 }
 
 // ========== SSE 事件处理 ==========
@@ -697,7 +982,14 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   },
 
   selectSession: (session: Session) => {
-    console.log('[Team] Selecting session:', session.id);
+    const currentSessionId = get().currentSession?.id;
+    if (currentSessionId && currentSessionId === session.id) {
+      console.debug('[Team] Skip selectSession for current session:', session.id);
+      return;
+    }
+
+    const currentEpoch = ++selectSessionEpoch;
+    console.log('[Team] Selecting session:', session.id, 'epoch=', currentEpoch);
 
     // 断开旧连接
     get().disconnectStream();
@@ -719,17 +1011,28 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 
     void (async () => {
       try {
-        const [taskBoardResult, workersResult] = await Promise.allSettled([
+        const [historyResult, taskBoardResult, workersResult] = await Promise.allSettled([
+          api.team.getHistory(sessionId, 200),
           api.team.getTaskBoard(sessionId),
           api.team.getWorkers(sessionId)
         ]);
 
         const state = get();
-        if (state.currentSession?.id !== sessionId) {
+        if (state.currentSession?.id !== sessionId || currentEpoch !== selectSessionEpoch) {
+          console.debug('[Team] Skip stale hydration result:', { sessionId, currentEpoch, latest: selectSessionEpoch });
           return;
         }
 
         const nextState: Partial<TeamState> = {};
+        let historyMessages: LeadMessage[] | undefined;
+        let historyWorkerMessages: Record<string, WorkerMessage[]> | undefined;
+
+        if (historyResult.status === 'fulfilled') {
+          const history = historyResult.value;
+          const { leadMessages, workerMessages } = buildHistoryState(history);
+          historyMessages = leadMessages;
+          historyWorkerMessages = workerMessages;
+        }
 
         if (taskBoardResult.status === 'fulfilled') {
           const raw = taskBoardResult.value as unknown;
@@ -777,7 +1080,40 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           }));
         }
 
-        set(nextState);
+        set(current => {
+          if (current.currentSession?.id !== sessionId || currentEpoch !== selectSessionEpoch) {
+            return {};
+          }
+
+          const patch: Partial<TeamState> = { ...nextState };
+
+          if (historyMessages) {
+            patch.messages = mergeLeadMessages(historyMessages, current.messages);
+          }
+
+          if (historyWorkerMessages) {
+            patch.workerMessages = mergeWorkerMessageMaps(historyWorkerMessages, current.workerMessages);
+          }
+
+          if (nextState.tasks) {
+            const runtimeTaskMap = new Map(current.tasks.map(task => [task.taskId, task]));
+            patch.tasks = sortTasksById(nextState.tasks.map(task => {
+              const runtimeTask = runtimeTaskMap.get(task.taskId);
+              if (!runtimeTask) {
+                return task;
+              }
+              return {
+                ...task,
+                status: runtimeTask.status,
+                owner: runtimeTask.owner ?? task.owner,
+                description: runtimeTask.description || task.description,
+                completionNote: runtimeTask.completionNote ?? task.completionNote
+              };
+            }));
+          }
+
+          return patch;
+        });
       } catch (error) {
         console.warn('[Team] Failed to hydrate session snapshot:', error);
       }
@@ -800,13 +1136,17 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     const connectSSE = () => {
       const controller = new AbortController();
       currentAbortController = controller;
+      const lastEventId = getLastEventId(sessionId);
+      const headers = lastEventId ? { 'Last-Event-ID': lastEventId } : undefined;
+      // Desktop App 没有浏览器标签页切换，但 session 切换/断网重连仍走同一条 SSE 恢复链路。
 
       fetchEventSource(eventSourceUrl, {
         signal: controller.signal,
+        headers,
 
         async onopen(response) {
           if (response.ok) {
-            console.log('[Team SSE] Connection established');
+            console.log('[Team SSE] Connection established:', { sessionId, lastEventId: lastEventId || null });
             set({ isConnected: true });
             reconnectAttempts = 0;
           } else {
@@ -815,6 +1155,12 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         },
 
         onmessage(ev) {
+          if (typeof ev.id === 'string' && ev.id.trim()) {
+            saveLastEventId(sessionId, ev.id);
+          }
+          if (!ev.event || ev.event === 'message') {
+            console.debug('[Team SSE] Received message event:', { sessionId, id: ev.id, event: ev.event });
+          }
           handleSSEEvent(ev, sessionId, set, get);
         },
 
@@ -881,6 +1227,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   deleteSession: async (sessionId: string) => {
     try {
       await api.sessions.delete(sessionId);
+      removeLastEventId(sessionId);
 
       set(state => {
         const newSessions = state.sessions.filter(s => s.id !== sessionId);
@@ -912,6 +1259,21 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 
     const sessionId = currentSession.id;
 
+    const optimisticUserMessage: LeadMessage = {
+      id: `${Date.now()}_user_message`,
+      type: 'user',
+      content: message,
+      timestamp: new Date().toISOString()
+    };
+
+    set(state => ({
+      messages: [...state.messages, optimisticUserMessage]
+    }));
+    console.debug('[Team] Optimistic message appended:', {
+      sessionId,
+      isFirstMessage: !isTeamStarted
+    });
+
     try {
       // 如果是第一条消息，先启动团队
       if (!isTeamStarted) {
@@ -925,18 +1287,6 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         console.log('[Team] Sending message to lead:', message);
         await api.team.sendMessageToLead(sessionId, message);
       }
-
-      // 乐观更新：立即显示用户消息
-      const newMessage: LeadMessage = {
-        id: `${Date.now()}_user_message`,
-        type: 'user',
-        content: message,
-        timestamp: new Date().toISOString()
-      };
-
-      set(state => ({
-        messages: [...state.messages, newMessage]
-      }));
     } catch (error: unknown) {
       console.error('[Team] Failed to send message:', error);
       const errMsg = error instanceof Error ? error.message : 'Failed to send message';
@@ -946,6 +1296,18 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         // 首条消息失败时回滚，避免进入“已启动但实际未启动”的假状态
         isTeamStarted: isTeamStarted ? true : false
       });
+
+      set(state => ({
+        messages: [
+          ...state.messages,
+          {
+            id: `${Date.now()}_send_error`,
+            type: 'system',
+            content: `发送失败: ${errMsg}`,
+            timestamp: new Date().toISOString()
+          }
+        ]
+      }));
     }
   },
 

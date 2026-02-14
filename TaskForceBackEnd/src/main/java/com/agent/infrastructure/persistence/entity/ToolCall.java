@@ -39,6 +39,9 @@ public class ToolCall {
     @TableField("server_name")
     private String serverName;
 
+    @TableField("instance_id")
+    private String instanceId;
+
     @TableField("tool_args")
     private String toolArgs;
 
