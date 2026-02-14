@@ -35,7 +35,7 @@ public class CompleteTaskTool implements ToolCallback {
                 },
                 "summary": {
                   "type": "string",
-                  "description": "任务完成总结（可选）"
+                  "description": "任务完成一句话总结（建议填写，会写入 completionNote）"
                 }
               },
               "required": ["taskId"]
@@ -77,12 +77,12 @@ public class CompleteTaskTool implements ToolCallback {
             }
             String summary = (String) args.get("summary");
 
-            taskBoardService.completeTask(sessionId, taskId);
+            taskBoardService.completeTask(sessionId, taskId, summary);
 
             log.info("[CompleteTaskTool] Task completed: taskId={}", taskId);
 
             String result = (summary != null && !summary.isEmpty())
-                    ? String.format("Task #%d completed successfully. Summary: %s", taskId, summary)
+                    ? String.format("Task #%d completed successfully. completionNote: %s", taskId, summary)
                     : String.format("Task #%d completed successfully", taskId);
 
             if (currentTaskId != null && requestedTaskId != null && !requestedTaskId.equals(currentTaskId)) {

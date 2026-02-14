@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useTeamStore } from '../../team/model/store';
-import { Send, Bot, User, Loader2, Users, AlertCircle } from 'lucide-react';
+import { Send, Bot, User, Loader2, Users, AlertCircle, StopCircle } from 'lucide-react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -8,8 +8,9 @@ import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 
 export const LeadChatPanel: React.FC = () => {
-  const { messages, sendToLead, isConnected, leadStatus } = useTeamStore();
+  const { messages, sendToLead, stopTeam, isConnected, leadStatus } = useTeamStore();
   const [inputMessage, setInputMessage] = useState('');
+  const [isStopping, setIsStopping] = useState(false);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -55,6 +56,16 @@ export const LeadChatPanel: React.FC = () => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
+    }
+  };
+
+  const handleStop = async () => {
+    if (isStopping) return;
+    setIsStopping(true);
+    try {
+      await stopTeam();
+    } finally {
+      setIsStopping(false);
     }
   };
 
@@ -256,9 +267,20 @@ export const LeadChatPanel: React.FC = () => {
             placeholder="Send a message to the team lead..."
             className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none shadow-sm"
           />
+          {isActive && (
+            <button
+              onClick={handleStop}
+              disabled={isStopping}
+              className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium transition-colors duration-200 flex items-center gap-2 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Stop current team execution"
+            >
+              {isStopping ? <Loader2 size={20} className="animate-spin" /> : <StopCircle size={20} />}
+              <span className="hidden sm:inline">{isStopping ? 'Stopping...' : 'Stop'}</span>
+            </button>
+          )}
           <button
             onClick={handleSend}
-            disabled={!inputMessage.trim()}
+            disabled={!inputMessage.trim() || isStopping}
             className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-colors duration-200 flex items-center gap-2 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send size={20} />

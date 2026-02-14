@@ -60,7 +60,7 @@ export interface ChannelModel {
 export interface Session {
   id: string;
   name: string;
-  type: 'SINGLE' | 'GROUP' | 'CHAT';
+  type: 'SINGLE' | 'GROUP' | 'TEAM' | 'CHAT';
   status: string;
   currentRound: number;
   createdAt: string;
@@ -78,6 +78,7 @@ export interface Message {
   toolName?: string;
   toolArgs?: string;
   toolResult?: string;
+  stepId?: string;
   sequence: number;
   status?: 'STREAMING' | 'COMPLETED';  // 消息状态：流式输出中或已完成
   createdAt: string;

@@ -16,7 +16,7 @@ import java.util.Map;
 public class ProviderConfigRequest {
     
     private String name;
-    private String type;  // "STDIO" or "REMOTE_SSE" or "SSE"
+    private String type;  // "STDIO" / "REMOTE_SSE" / "SSE" / "STREAMABLE_HTTP"
     private Boolean enabled;
     private String description;
     
@@ -27,6 +27,7 @@ public class ProviderConfigRequest {
     
     // SSE 配置
     private String sseUrl;
+    private String httpUrl;
     private Map<String, String> headers;  // 前端发送对象
     private Integer timeout;
     
@@ -40,12 +41,7 @@ public class ProviderConfigRequest {
                 .description(this.description);
         
         // 处理类型（兼容 "SSE" 和 "REMOTE_SSE"）
-        ToolProviderConfig.ProviderType providerType;
-        if ("SSE".equalsIgnoreCase(this.type) || "REMOTE_SSE".equalsIgnoreCase(this.type)) {
-            providerType = ToolProviderConfig.ProviderType.REMOTE_SSE;
-        } else {
-            providerType = ToolProviderConfig.ProviderType.STDIO;
-        }
+        ToolProviderConfig.ProviderType providerType = resolveProviderType(this.type);
         builder.type(providerType);
         
         // STDIO 配置
@@ -74,6 +70,25 @@ public class ProviderConfigRequest {
             }
         }
         
+        // Streamable HTTP 配置
+        if (providerType == ToolProviderConfig.ProviderType.STREAMABLE_HTTP) {
+            builder.httpUrl(this.httpUrl != null ? this.httpUrl : this.sseUrl); // 兼容旧字段
+            builder.timeout(this.timeout != null ? this.timeout : 30);
+        }
+
         return builder.build();
+    }
+
+    private ToolProviderConfig.ProviderType resolveProviderType(String type) {
+        if (type == null || type.isBlank()) {
+            return ToolProviderConfig.ProviderType.STDIO;
+        }
+        if ("SSE".equalsIgnoreCase(type) || "REMOTE_SSE".equalsIgnoreCase(type)) {
+            return ToolProviderConfig.ProviderType.REMOTE_SSE;
+        }
+        if ("STREAMABLE_HTTP".equalsIgnoreCase(type) || "HTTP".equalsIgnoreCase(type)) {
+            return ToolProviderConfig.ProviderType.STREAMABLE_HTTP;
+        }
+        return ToolProviderConfig.ProviderType.STDIO;
     }
 }

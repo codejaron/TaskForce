@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, createHashRouter } from 'react-router-dom';
 import { DashboardPage } from '../pages/Dashboard/ui/DashboardPage';
 import { AgentWorkshopPage } from '../pages/AgentWorkshop/ui/AgentWorkshopPage';
 import { McpMarketplacePage } from '../pages/McpMarketplace/ui/McpMarketplacePage';
@@ -10,7 +10,7 @@ import { SystemConfigPage } from '../pages/SystemConfig/ui/SystemConfigPage';
 import { SkillsPage } from '../pages/Skills/ui/SkillsPage';
 import { Layout } from './Layout';
 
-export const router = createBrowserRouter([
+const routes = [
   {
     path: '/',
     element: <Layout />,
@@ -53,4 +53,10 @@ export const router = createBrowserRouter([
       },
     ],
   },
-]);
+];
+
+const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:';
+
+export const router = isFileProtocol
+  ? createHashRouter(routes)
+  : createBrowserRouter(routes);

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { api } from '../../../shared/api';
 import type { Task, TaskStatus } from '../../../shared/api';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
+import { apiUrl } from '../../../shared/api/base';
 
 interface TaskBoardState {
   tasks: Task[];
@@ -103,7 +104,7 @@ export const useTaskBoardStore = create<TaskBoardState>((set, get) => ({
     // Clear previous event IDs for this session
     clearEventIdSet(sessionId);
 
-    const eventSourceUrl = `/api/v2/team/session/${sessionId}/taskboard/events`;
+    const eventSourceUrl = apiUrl(`/v2/team/session/${sessionId}/taskboard/events`);
     const controller = new AbortController();
     currentAbortController = controller;
 

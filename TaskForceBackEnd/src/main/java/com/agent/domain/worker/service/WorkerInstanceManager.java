@@ -1,10 +1,10 @@
 package com.agent.domain.worker.service;
 
-import com.agent.domain.context.assembly.ContextAssembler;
 import com.agent.domain.execution.model.AgentExecutionStatus;
 import com.agent.domain.execution.service.AgentExecutionStateService;
 import com.agent.domain.execution.service.ExecutionWaitIntentService;
 import com.agent.domain.taskboard.service.TaskBoardService;
+import com.agent.domain.team.context.TeamTaskContextService;
 import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
 import com.agent.domain.worker.model.WorkerInstance;
@@ -41,7 +41,7 @@ public class WorkerInstanceManager {
     private final EventBus eventBus;
     private final SessionExecutionTracker executionTracker;
     private final InboxService inboxService;
-    private final ContextAssembler contextAssembler;
+    private final TeamTaskContextService teamTaskContextService;
     private final BaseCheckpointSaver checkpointSaver;
     private final AgentExecutionStateService executionStateService;
     private final ExecutionWaitIntentService waitIntentService;
@@ -53,7 +53,7 @@ public class WorkerInstanceManager {
             EventBus eventBus,
             SessionExecutionTracker executionTracker,
             InboxService inboxService,
-            ContextAssembler contextAssembler,
+            TeamTaskContextService teamTaskContextService,
             BaseCheckpointSaver checkpointSaver,
             AgentExecutionStateService executionStateService,
             ExecutionWaitIntentService waitIntentService) {
@@ -63,7 +63,7 @@ public class WorkerInstanceManager {
         this.eventBus = eventBus;
         this.executionTracker = executionTracker;
         this.inboxService = inboxService;
-        this.contextAssembler = contextAssembler;
+        this.teamTaskContextService = teamTaskContextService;
         this.checkpointSaver = checkpointSaver;
         this.executionStateService = executionStateService;
         this.waitIntentService = waitIntentService;
@@ -336,7 +336,7 @@ public class WorkerInstanceManager {
                 eventBus,
                 executionTracker,
                 inboxService,
-                contextAssembler,
+                teamTaskContextService,
                 checkpointSaver,
                 executionStateService,
                 waitIntentService,

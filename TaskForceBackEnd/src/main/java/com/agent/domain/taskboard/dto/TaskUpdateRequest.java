@@ -46,4 +46,9 @@ public class TaskUpdateRequest {
      * 阻塞的任务列表
      */
     private List<Integer> blocks;
+
+    /**
+     * 任务完成说明（一句话）
+     */
+    private String completionNote;
 }

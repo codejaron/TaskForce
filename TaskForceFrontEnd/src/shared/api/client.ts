@@ -1,6 +1,5 @@
-import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO, ToolCallDTO, TeamStartRequest, TeamMessage, TaskBoard, WorkerInstance } from './types';
-
-const API_BASE = '/api';
+import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO, ToolCallDTO, TaskBoard, WorkerInstance } from './types';
+import { API_BASE } from './base';
 
 // Backend ApiResponse format: { code: number, message: string, data?: T }
 interface ApiResponse<T> {

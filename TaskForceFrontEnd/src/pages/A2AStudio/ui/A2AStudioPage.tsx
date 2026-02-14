@@ -608,10 +608,6 @@ export const A2AStudioPage: React.FC = () => {
                                 )}>
                                   <div className="break-words max-w-full overflow-hidden">
                                     {(() => {
-                                      // 判断是否为流式传输中
-                                      // 只有最后一条消息才可能正在流式传输
-                                      const isStreaming = isRunning && (idx === messages.length - 1);
-
                                       // 统一使用 ReactMarkdown 渲染（不再区分流式和历史消息）
                                       return (
                                         <ReactMarkdown

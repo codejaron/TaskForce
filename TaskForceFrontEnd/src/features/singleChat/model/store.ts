@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { api } from '../../../shared/api';
 import type { Session, A2AMessage, ToolCallDTO } from '../../../shared/api';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
+import { apiUrl } from '../../../shared/api/base';
 
 interface SingleChatState {
   sessions: Session[];
@@ -116,7 +117,7 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
       currentAbortController = controller;
 
       // 建立 SSE 连接
-      const eventSourceUrl = `/api/sessions/${sessionId}/single-chat`;
+      const eventSourceUrl = apiUrl(`/sessions/${sessionId}/single-chat`);
 
       fetchEventSource(eventSourceUrl, {
         method: 'POST',

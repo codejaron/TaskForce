@@ -22,7 +22,7 @@ import java.util.*;
  * 内部调用 MCP filesystem 工具
  */
 @Slf4j
-@Service
+//@Service
 @RequiredArgsConstructor
 public class WorkspaceTools {
 
