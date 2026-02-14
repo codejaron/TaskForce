@@ -341,7 +341,8 @@ public class ReactAgentFactory {
                                          String systemPrompt,
                                          int maxModelCalls,
                                          ChatModel chatModel,
-                                         OpenAiChatOptions chatOptions) {
+                                         OpenAiChatOptions chatOptions,
+                                         boolean enableIdleYield) {
         // 1. 加载 Agent 配置
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
@@ -383,13 +384,18 @@ public class ReactAgentFactory {
         ModelCallLimitHook limitHook = new ModelCallLimitHook(maxModelCalls);
         hooks.add(limitHook);
 
-        // 5.2 添加 Lead Inbox 自动收件 Hook
+        // 5.2 添加 Lead 空转让出 Hook（系统状态机判定）
+        // 放在 InboxCheck 之前，避免读走 inbox 后误判 shouldWait 并提前跳过本轮。
+        if (enableIdleYield) {
+            LeadIdleYieldHook leadIdleYieldHook = new LeadIdleYieldHook(sessionId, leadSchedulingDecisionService);
+            hooks.add(leadIdleYieldHook);
+        } else {
+            log.info("[ReactAgentFactory] Lead idle-yield hook disabled for this round: sessionId={}", sessionId);
+        }
+
+        // 5.3 添加 Lead Inbox 自动收件 Hook
         LeadInboxCheckHook leadInboxCheckHook = new LeadInboxCheckHook(redisInboxRepository, sessionId);
         hooks.add(leadInboxCheckHook);
-
-        // 5.3 添加 Lead 空转让出 Hook（系统状态机判定）
-        LeadIdleYieldHook leadIdleYieldHook = new LeadIdleYieldHook(sessionId, leadSchedulingDecisionService);
-        hooks.add(leadIdleYieldHook);
 
         // 5.4 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
         if (skillsAgentHook != null) {

@@ -40,7 +40,7 @@ public class LeadIdleYieldHook extends ModelHook {
 
     @Override
     public int getOrder() {
-        return 150;
+        return 130;
     }
 
     @Override

@@ -202,9 +202,25 @@ public class TeamOrchestrationService {
         boolean transitioned = executionStateService.transitionIf(
                 leadInstanceId,
                 AgentExecutionStatus.WAITING_REPLY,
-                AgentExecutionStatus.RUNNING,
+                AgentExecutionStatus.EXECUTING,
                 "wakeup by inbox message"
         );
+        if (!transitioned) {
+            transitioned = executionStateService.transitionIf(
+                    leadInstanceId,
+                    AgentExecutionStatus.IDLE,
+                    AgentExecutionStatus.EXECUTING,
+                    "wakeup by inbox message"
+            );
+        }
+        if (!transitioned) {
+            transitioned = executionStateService.transitionIf(
+                    leadInstanceId,
+                    AgentExecutionStatus.RUNNING,
+                    AgentExecutionStatus.EXECUTING,
+                    "wakeup by inbox message (legacy running)"
+            );
+        }
         if (!transitioned) {
             return false;
         }

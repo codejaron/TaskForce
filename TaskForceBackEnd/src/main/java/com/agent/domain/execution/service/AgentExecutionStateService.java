@@ -45,13 +45,23 @@ public class AgentExecutionStateService {
     }
 
     public void setStatus(String instanceId, AgentExecutionStatus status, String detail) {
-        AgentExecutionState state = AgentExecutionState.builder()
-                .instanceId(instanceId)
-                .status(status)
-                .detail(detail)
-                .updatedAt(LocalDateTime.now())
-                .build();
-        writeState(instanceId, state);
+        Object lock = locks.computeIfAbsent(instanceId, key -> new Object());
+        synchronized (lock) {
+            AgentExecutionState current = getState(instanceId);
+            AgentExecutionStatus fromStatus = current == null ? null : current.getStatus();
+
+            AgentExecutionState state = AgentExecutionState.builder()
+                    .instanceId(instanceId)
+                    .status(status)
+                    .detail(detail)
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+            writeState(instanceId, state);
+            log.info(
+                    "[AgentExecutionStateService] Transition applied: instanceId={}, from={}, to={}, trigger=setStatus, detail={}, result=APPLIED",
+                    instanceId, fromStatus, status, detail
+            );
+        }
     }
 
     public boolean transitionIf(String instanceId,
@@ -64,10 +74,24 @@ public class AgentExecutionStateService {
             AgentExecutionStatus currentStatus = current == null ? null : current.getStatus();
 
             if (currentStatus != expectedStatus) {
+                log.info(
+                        "[AgentExecutionStateService] Transition rejected: instanceId={}, from={}, expected={}, to={}, trigger=transitionIf, detail={}, result=REJECTED",
+                        instanceId, currentStatus, expectedStatus, targetStatus, detail
+                );
                 return false;
             }
 
-            setStatus(instanceId, targetStatus, detail);
+            AgentExecutionState target = AgentExecutionState.builder()
+                    .instanceId(instanceId)
+                    .status(targetStatus)
+                    .detail(detail)
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+            writeState(instanceId, target);
+            log.info(
+                    "[AgentExecutionStateService] Transition applied: instanceId={}, from={}, to={}, expected={}, trigger=transitionIf, detail={}, result=APPLIED",
+                    instanceId, currentStatus, targetStatus, expectedStatus, detail
+            );
             return true;
         }
     }
