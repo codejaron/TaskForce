@@ -191,8 +191,17 @@ public class TaskBoardService {
      * 使用 Lua 脚本实现原子性操作
      */
     public void completeTask(String sessionId, int taskId) {
+        completeTask(sessionId, taskId, null);
+    }
+
+    /**
+     * 完成任务（自动解锁下游任务）并记录 completionNote
+     */
+    public void completeTask(String sessionId, int taskId, String completionNote) {
         Task task = taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
+
+        String normalizedCompletionNote = normalizeCompletionNote(completionNote);
 
         String key = KEY_PREFIX + sessionId;
         String field = FIELD_PREFIX + taskId;
@@ -205,6 +214,7 @@ public class TaskBoardService {
             "task.status = 'COMPLETED' " +
             "task.completedAt = ARGV[1] " +
             "task.updatedAt = ARGV[1] " +
+            "if ARGV[3] and ARGV[3] ~= '' then task.completionNote = ARGV[3] end " +
             "redis.call('HSET', KEYS[1], KEYS[2], cjson.encode(task)) " +
             "local unblocked = {} " +
             "if task.blocks and type(task.blocks) == 'table' then " +
@@ -238,12 +248,18 @@ public class TaskBoardService {
                 script,
                 Arrays.asList(key, field),
                 LocalDateTime.now().toString(),
-                String.valueOf(taskId)
+                String.valueOf(taskId),
+                normalizedCompletionNote != null ? normalizedCompletionNote : ""
             );
 
             // 解析结果并发布事件
             if (result != null && result.contains("success")) {
-                eventBus.publish(sessionId, new TaskCompletedEvent(sessionId, taskId, task.getOwner()));
+                eventBus.publish(sessionId, new TaskCompletedEvent(
+                        sessionId,
+                        taskId,
+                        task.getOwner(),
+                        normalizedCompletionNote
+                ));
 
                 // 解析被解锁的任务列表
                 if (result.contains("unblocked")) {
@@ -318,6 +334,9 @@ public class TaskBoardService {
         if (updates.getOwner() != null) {
             task.setOwner(updates.getOwner());
         }
+        if (updates.getCompletionNote() != null) {
+            task.setCompletionNote(normalizeCompletionNote(updates.getCompletionNote()));
+        }
 
         task.setUpdatedAt(LocalDateTime.now());
         taskBoardRepository.save(task);
@@ -338,6 +357,20 @@ public class TaskBoardService {
      */
     public List<Task> listTasks(String sessionId) {
         return taskBoardRepository.findBySessionId(sessionId);
+    }
+
+    private String normalizeCompletionNote(String completionNote) {
+        if (completionNote == null) {
+            return null;
+        }
+        String normalized = completionNote.replace('\n', ' ').replace('\r', ' ').trim();
+        if (normalized.isBlank()) {
+            return null;
+        }
+        if (normalized.length() > 280) {
+            return normalized.substring(0, 280);
+        }
+        return normalized;
     }
 
     /**

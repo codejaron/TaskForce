@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { api } from '../../../shared/api';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import type { Session } from '../../../shared/api/types';
+import { apiUrl } from '../../../shared/api/base';
 
 // ========== 类型定义 ==========
 
@@ -17,6 +18,7 @@ export interface TaskItem {
   taskId: number;
   subject: string;
   description?: string;
+  completionNote?: string;
   status: 'PENDING' | 'ASSIGNED' | 'WORKING' | 'COMPLETED' | 'FAILED';
   owner?: string;
   blockedBy: number[];
@@ -152,6 +154,7 @@ function parseTaskItem(input: unknown): TaskItem | null {
 
   const subject = typeof data.subject === 'string' ? data.subject : '';
   const description = typeof data.description === 'string' ? data.description : '';
+  const completionNote = typeof data.completionNote === 'string' ? data.completionNote : undefined;
   const owner = typeof data.owner === 'string' && data.owner.trim() ? data.owner : undefined;
   const blockedBy = parseTaskLinks(data.blockedBy);
   const blocks = parseTaskLinks(data.blocks);
@@ -160,6 +163,7 @@ function parseTaskItem(input: unknown): TaskItem | null {
     taskId,
     subject,
     description,
+    completionNote,
     owner,
     blockedBy,
     blocks,
@@ -194,7 +198,6 @@ function handleSSEEvent(
   set: (partial: TeamState | Partial<TeamState> | ((state: TeamState) => TeamState | Partial<TeamState>), replace?: false) => void,
   get: () => TeamState
 ) {
-  const eventType = ev.event;
   let eventData: unknown;
 
   try {
@@ -205,6 +208,14 @@ function handleSSEEvent(
   }
 
   const data = (eventData && typeof eventData === 'object') ? (eventData as Record<string, unknown>) : {};
+  const eventType = (ev.event && ev.event.trim())
+    || (typeof data.eventType === 'string' ? data.eventType : '')
+    || (typeof data.type === 'string' ? data.type : '');
+
+  if (!eventType) {
+    console.warn('[Team] Missing SSE event type:', ev, data);
+    return;
+  }
 
   // 事件去重
   const eventId = data.eventId;
@@ -303,10 +314,13 @@ function handleSSEEvent(
     case 'task_completed':
       {
         const taskId = typeof data.taskId === 'number' ? data.taskId : 0;
+        const completionNote = typeof data.completionNote === 'string' ? data.completionNote : undefined;
 
         set({
           tasks: tasks.map(t =>
-            t.taskId === taskId ? { ...t, status: 'COMPLETED' as const } : t
+            t.taskId === taskId
+              ? { ...t, status: 'COMPLETED' as const, completionNote: completionNote ?? t.completionNote }
+              : t
           )
         });
       }
@@ -514,9 +528,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 
   fetchSessions: async () => {
     try {
-      const allSessions = await api.sessions.list();
-      // 只显示 GROUP 类型的 session（Team Studio 专用）
-      const teamSessions = allSessions.filter(s => s.type === 'GROUP');
+      const teamSessions = await api.sessions.listByType('TEAM');
       set({ sessions: teamSessions });
     } catch (error: unknown) {
       console.error('[Team] Failed to fetch sessions:', error);
@@ -528,7 +540,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     try {
       const session = await api.sessions.create({
         name,
-        type: 'GROUP',
+        type: 'TEAM',
         agentIds
       });
 
@@ -603,7 +615,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
               ...snapshotTask,
               status: runtimeTask.status,
               owner: runtimeTask.owner ?? snapshotTask.owner,
-              description: runtimeTask.description || snapshotTask.description
+              description: runtimeTask.description || snapshotTask.description,
+              completionNote: runtimeTask.completionNote ?? snapshotTask.completionNote
             };
           });
 
@@ -636,7 +649,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     clearEventIdSet(sessionId);
 
     // 建立 SSE 连接
-    const eventSourceUrl = `/api/v2/team/session/${sessionId}/events`;
+    const eventSourceUrl = apiUrl(`/v2/team/session/${sessionId}/events`);
     let reconnectAttempts = 0;
 
     const cleanupReconnect = () => {
@@ -788,7 +801,13 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       }));
     } catch (error: unknown) {
       console.error('[Team] Failed to send message:', error);
-      set({ error: 'Failed to send message', leadStatus: 'idle' });
+      const errMsg = error instanceof Error ? error.message : 'Failed to send message';
+      set({
+        error: errMsg,
+        leadStatus: 'idle',
+        // 首条消息失败时回滚，避免进入“已启动但实际未启动”的假状态
+        isTeamStarted: isTeamStarted ? true : false
+      });
     }
   },
 
@@ -801,7 +820,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 
     const sessionId = currentSession.id;
     console.log('[Team] Stopping team session:', sessionId);
-    set({ teamPhase: 'shutting_down', leadStatus: 'shutdown' });
+    set({ teamPhase: 'shutting_down', leadStatus: 'shutdown', isTeamStarted: false });
 
     try {
       await api.team.stopTeamSession(sessionId);
@@ -853,7 +872,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       workerMessages: { ...state.workerMessages, [instanceId]: state.workerMessages[instanceId] || [] }
     }));
 
-    const url = `/api/v2/team/session/${sessionId}/worker/${instanceId}/events`;
+    const url = apiUrl(`/v2/team/session/${sessionId}/worker/${instanceId}/events`);
 
     fetchEventSource(url, {
       signal: controller.signal,

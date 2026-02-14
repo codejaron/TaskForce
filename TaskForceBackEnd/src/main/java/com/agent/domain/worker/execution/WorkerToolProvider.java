@@ -1,12 +1,9 @@
 package com.agent.domain.worker.execution;
 
 import com.agent.domain.team.lead.tools.ListTeammatesTool;
-import com.agent.domain.worker.execution.tools.ClaimTaskTool;
 import com.agent.domain.worker.execution.tools.CompleteTaskTool;
 import com.agent.domain.worker.execution.tools.ReadInboxTool;
-import com.agent.domain.worker.execution.tools.ReadStepOutputTool;
 import com.agent.domain.worker.execution.tools.SendMessageTool;
-import com.agent.domain.worker.execution.tools.WriteStepSummaryTool;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.ToolCallback;
@@ -30,8 +27,6 @@ public class WorkerToolProvider {
     // ClaimTaskTool 已废弃：Leader 分配模式下任务在 spawn 时已分配，不需要 Worker 自主认领
     // private final ClaimTaskTool claimTaskTool;
     private final CompleteTaskTool completeTaskTool;
-    private final ReadStepOutputTool readStepOutputTool;
-    private final WriteStepSummaryTool writeStepSummaryTool;
 
     /**
      * 获取 Worker 专属工具列表
@@ -47,10 +42,6 @@ public class WorkerToolProvider {
         // 任务工具
         // tools.add(claimTaskTool); // 已废弃：Leader 分配模式下不需要
         tools.add(completeTaskTool);
-
-        // 上下文工具
-        tools.add(readStepOutputTool);
-        tools.add(writeStepSummaryTool);
 
         log.debug("[WorkerToolProvider] Registered {} worker tools", tools.size());
 

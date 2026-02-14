@@ -81,6 +81,11 @@ public class Task {
      */
     private LocalDateTime completedAt;
 
+    /**
+     * 完成说明（一句话）
+     */
+    private String completionNote;
+
     // === 状态转换方法 ===
 
     /**
@@ -104,8 +109,18 @@ public class Task {
      * 完成任务
      */
     public void complete() {
+        complete(null);
+    }
+
+    /**
+     * 完成任务并记录完成说明
+     */
+    public void complete(String completionNote) {
         this.status = TaskStatus.COMPLETED;
         this.completedAt = LocalDateTime.now();
+        if (completionNote != null && !completionNote.isBlank()) {
+            this.completionNote = completionNote;
+        }
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -145,6 +160,7 @@ public class Task {
         this.status = TaskStatus.PENDING;
         this.owner = null;
         this.completedAt = null;
+        this.completionNote = null;
         this.updatedAt = LocalDateTime.now();
     }
 }

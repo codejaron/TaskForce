@@ -25,7 +25,7 @@ public class Session {
     private String name;
     
     @TableField("type")
-    private String type;  // SINGLE/GROUP
+    private String type;  // SINGLE/GROUP/TEAM/CHAT
     
     @TableField("status")
     private String status;  // PENDING/RUNNING/PAUSED/COMPLETED

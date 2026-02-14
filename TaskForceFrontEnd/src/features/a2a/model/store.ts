@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { api } from '../../../shared/api';
 import type { Session, A2AMessage, ToolCallDTO } from '../../../shared/api';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
+import { apiUrl } from '../../../shared/api/base';
 
 interface A2AState {
   sessions: Session[];
@@ -568,7 +569,7 @@ export const useA2AStore = create<A2AState>((set, get) => ({
 
     try {
       // 🔥 关键修改：先建立 SSE 连接，再提交消息
-      const eventSourceUrl = `/api/group-chat/${sessionId}/events`;
+      const eventSourceUrl = apiUrl(`/group-chat/${sessionId}/events`);
       let reconnectAttempts = 0;
 
       const cleanupReconnect = () => {

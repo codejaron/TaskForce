@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { api } from '../../../shared/api';
 import { sseConnectionManager, type SSEEventHandlers } from '../../../shared/sse';
 import type { WorkerInstance } from '../../../shared/api/types';
+import { apiUrl } from '../../../shared/api/base';
 
 /**
  * Worker message type
@@ -143,7 +144,7 @@ export const useWorkerStore = create<WorkerStoreState>((set, get) => ({
       return;
     }
 
-    const url = `/api/v2/team/session/${sessionId}/worker/${instanceId}/events`;
+    const url = apiUrl(`/v2/team/session/${sessionId}/worker/${instanceId}/events`);
 
     const eventHandlers: SSEEventHandlers = {
       onOpen: () => {

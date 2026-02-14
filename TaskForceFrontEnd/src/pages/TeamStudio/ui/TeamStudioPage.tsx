@@ -3,6 +3,7 @@ import {
   Users,
   Activity,
   Plus,
+  FolderOpen,
   X,
   ChevronLeft,
   ChevronRight,
@@ -16,6 +17,7 @@ import { LeadChatPanel } from '../../../features/team-lead/ui';
 import { WorkerChatPanel } from '../../../features/team/ui/WorkerChatPanel';
 import { useTeamStore } from '../../../features/team/model/store';
 import { useAgentStore } from '../../../features/agents/model/store';
+import { desktopClient } from '../../../shared/desktop/client';
 
 export const TeamStudioPage: React.FC = () => {
 
@@ -43,6 +45,8 @@ export const TeamStudioPage: React.FC = () => {
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [showTaskBoard, setShowTaskBoard] = useState(false);
+  const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null);
+  const [isPickingProjectDirectory, setIsPickingProjectDirectory] = useState(false);
 
   // Filter agents - only show WORKER type agents to users
   const workerAgents = agents.filter(agent => {
@@ -60,6 +64,17 @@ export const TeamStudioPage: React.FC = () => {
 
   useEffect(() => {
     setShowTaskBoard(false);
+  }, [currentSession?.id]);
+
+  useEffect(() => {
+    if (!desktopClient.isDesktop() || !currentSession?.id) {
+      setSelectedProjectPath(null);
+      return;
+    }
+
+    void desktopClient.getSelectedProjectDirectory(currentSession.id)
+      .then(path => setSelectedProjectPath(path))
+      .catch(() => setSelectedProjectPath(null));
   }, [currentSession?.id]);
 
   const ownerNameById = useMemo(
@@ -140,6 +155,26 @@ export const TeamStudioPage: React.FC = () => {
         console.error('Failed to delete session:', error);
         alert('Failed to delete session');
       }
+    }
+  };
+
+  const handleBindProject = async () => {
+    if (!currentSession) {
+      return;
+    }
+
+    setIsPickingProjectDirectory(true);
+    try {
+      const selection = await desktopClient.pickProjectDirectory(currentSession.id);
+      if (selection.canceled || !selection.path) {
+        return;
+      }
+      setSelectedProjectPath(selection.path);
+    } catch (error) {
+      console.error('Failed to bind local project:', error);
+      alert(error instanceof Error ? error.message : 'Failed to bind local project');
+    } finally {
+      setIsPickingProjectDirectory(false);
     }
   };
 
@@ -233,17 +268,49 @@ export const TeamStudioPage: React.FC = () => {
                   <h1 className="text-xl font-bold text-gray-900">{currentSession.name}</h1>
                   <p className="text-sm text-gray-500">Team Studio</p>
                 </div>
-                <button
-                  onClick={() => setShowTaskBoard(true)}
-                  className="px-3 py-2 border border-blue-200 bg-blue-50 text-blue-700 rounded-xl text-sm font-medium hover:bg-blue-100 transition-colors cursor-pointer flex items-center gap-2"
-                >
-                  <Activity size={16} />
-                  <span>Task Board</span>
-                  <span className="text-xs px-1.5 py-0.5 rounded-md bg-blue-100 text-blue-800">
-                    {tasks.filter(t => t.status === 'COMPLETED').length}/{tasks.length}
-                  </span>
-                </button>
+                <div className="flex flex-col items-end gap-2">
+                  {desktopClient.isDesktop() && (
+                    <button
+                      onClick={handleBindProject}
+                      disabled={isPickingProjectDirectory}
+                      className={clsx(
+                        "px-3 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2 border",
+                        selectedProjectPath
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                          : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100",
+                        isPickingProjectDirectory && "opacity-70 cursor-wait"
+                      )}
+                    >
+                      {isPickingProjectDirectory
+                        ? <Loader2 size={16} className="animate-spin" />
+                        : <FolderOpen size={16} />
+                      }
+                      <span>{selectedProjectPath ? '项目目录已选择' : '选择项目目录'}</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => setShowTaskBoard(true)}
+                    className="px-3 py-2 border border-blue-200 bg-blue-50 text-blue-700 rounded-xl text-sm font-medium hover:bg-blue-100 transition-colors cursor-pointer flex items-center gap-2"
+                  >
+                    <Activity size={16} />
+                    <span>Task Board</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded-md bg-blue-100 text-blue-800">
+                      {tasks.filter(t => t.status === 'COMPLETED').length}/{tasks.length}
+                    </span>
+                  </button>
+                </div>
               </div>
+              {desktopClient.isDesktop() && (
+                <p className={clsx(
+                  "mt-2 text-xs",
+                  selectedProjectPath ? "text-emerald-700" : "text-amber-700"
+                )}>
+                  {selectedProjectPath
+                    ? `项目目录: ${selectedProjectPath}`
+                    : '尚未选择项目目录'}
+                </p>
+              )}
             </div>
 
             <div className="flex-1 flex overflow-hidden relative flex-col lg:flex-row">
@@ -375,6 +442,11 @@ export const TeamStudioPage: React.FC = () => {
                             </div>
                             {task.description && (
                               <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>
+                            )}
+                            {task.completionNote && (
+                              <p className="text-xs text-emerald-700 mt-1">
+                                completionNote: {task.completionNote}
+                              </p>
                             )}
                             <p className="text-xs text-gray-500 mt-1">负责人: {formatOwner(task.owner)}</p>
                             {blockedBy.length > 0 && (

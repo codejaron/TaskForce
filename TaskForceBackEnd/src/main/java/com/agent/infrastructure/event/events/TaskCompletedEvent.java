@@ -11,15 +11,17 @@ public class TaskCompletedEvent extends OrchestrationEvent {
 
     private int taskId;
     private String owner;
+    private String completionNote;
 
     public TaskCompletedEvent() {
         super();
     }
 
-    public TaskCompletedEvent(String sessionId, int taskId, String owner) {
+    public TaskCompletedEvent(String sessionId, int taskId, String owner, String completionNote) {
         super(sessionId);
         this.taskId = taskId;
         this.owner = owner;
+        this.completionNote = completionNote;
     }
 
     @Override

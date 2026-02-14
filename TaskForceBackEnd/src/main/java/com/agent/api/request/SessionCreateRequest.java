@@ -18,7 +18,7 @@ public class SessionCreateRequest {
     
     private String name;
     
-    private String type; // SINGLE/GROUP
+    private String type; // SINGLE/GROUP/TEAM/CHAT
     
     private List<Long> agentIds; // 参与的智能体ID列表
     

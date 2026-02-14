@@ -112,7 +112,9 @@ public class ToolRouter {
         }
 
         log.info("[ToolRouter] Loaded {} providers with {} tools (+ {} native tools)",
-                clientPoolCache.size(), toolRouteTable.size(), nativeToolScanner.listTools().size());
+                clientPoolCache.size(),
+                toolRouteTable.size(),
+                nativeToolScanner.listTools().size());
     }
 
     /**
@@ -313,6 +315,8 @@ public class ToolRouter {
      * 调用工具
      */
     public ToolCallResult callTool(String globalToolId, Map<String, Object> arguments, String sessionId) {
+        Map<String, Object> safeArguments = arguments != null ? arguments : Map.of();
+
         // 1. 先检查 Native 工具
         if (nativeToolScanner.hasTool(globalToolId)) {
             log.debug("[ToolRouter] Routing to native tool: {}", globalToolId);
@@ -320,11 +324,11 @@ public class ToolRouter {
                 if (sessionId != null) {
                     com.agent.mcpserver.context.SessionContext.setSessionId(sessionId);
                 }
-                Object stepIndexObj = arguments.get("stepIndex");
+                Object stepIndexObj = safeArguments.get("stepIndex");
                 if (stepIndexObj instanceof Integer) {
                     com.agent.mcpserver.context.SessionContext.setStepIndex((Integer) stepIndexObj);
                 }
-                return nativeToolScanner.callTool(globalToolId, arguments);
+                return nativeToolScanner.callTool(globalToolId, safeArguments);
             } finally {
                 com.agent.mcpserver.context.SessionContext.clear();
             }
@@ -362,7 +366,7 @@ public class ToolRouter {
             }
 
             // 调用 MCP Client
-            McpSchema.CallToolRequest request = new McpSchema.CallToolRequest(originalToolName, arguments);
+            McpSchema.CallToolRequest request = new McpSchema.CallToolRequest(originalToolName, safeArguments);
             McpSchema.CallToolResult result = borrowedClient.callTool(request);
 
             // 转换为 ToolCallResult
@@ -542,7 +546,8 @@ public class ToolRouter {
      * 检查工具是否存在
      */
     public boolean hasTool(String toolName) {
-        return nativeToolScanner.hasTool(toolName) || toolRouteTable.containsKey(toolName);
+        return nativeToolScanner.hasTool(toolName)
+                || toolRouteTable.containsKey(toolName);
     }
 
     /**
@@ -556,7 +561,7 @@ public class ToolRouter {
                     .findFirst();
         }
 
-        // 2. 检查 Provider
+        // 2. 检查其他 Provider
         String providerId = toolRouteTable.get(toolName);
         if (providerId == null) {
             return Optional.empty();

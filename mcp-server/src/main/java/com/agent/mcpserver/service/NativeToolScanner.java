@@ -2,17 +2,23 @@ package com.agent.mcpserver.service;
 
 import com.agent.mcpserver.dto.ToolCallResult;
 import com.agent.mcpserver.dto.ToolVO;
+import com.agent.mcpserver.tool.McpTool;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
 
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -28,6 +34,7 @@ public class NativeToolScanner {
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     private final ApplicationContext applicationContext;
+    private final ResourceLoader resourceLoader;
 
     @Value("${mcp.native.scan-packages:com.agent.mcpserver.tool}")
     private String scanPackages;
@@ -53,8 +60,9 @@ public class NativeToolScanner {
             String[] paramNames
     ) {}
 
-    public NativeToolScanner(ApplicationContext applicationContext) {
+    public NativeToolScanner(ApplicationContext applicationContext, ResourceLoader resourceLoader) {
         this.applicationContext = applicationContext;
+        this.resourceLoader = resourceLoader;
     }
 
     /**
@@ -93,26 +101,30 @@ public class NativeToolScanner {
 
             scannedBeans++;
 
-            // 扫描 @Tool 方法
+            // 扫描 @Tool / @McpTool 方法
             for (Method method : clazz.getDeclaredMethods()) {
                 Tool annotation = method.getAnnotation(Tool.class);
-                if (annotation != null) {
-                    String toolName = annotation.name();
-                    String globalId = NATIVE_PREFIX + "::" + toolName;
-                    String description = annotation.description();
+                McpTool mcpTool = method.getAnnotation(McpTool.class);
 
-                    // 获取参数名称
-                    String[] paramNames = getParameterNames(method);
-
-                    // 缓存工具元数据
-                    toolCache.put(globalId, new ToolMeta(
-                            bean, method, toolName, description, paramNames
-                    ));
-
-                    registeredTools++;
-                    log.info("[NativeToolScanner] Registered: {} from {}.{}",
-                            globalId, clazz.getSimpleName(), method.getName());
+                if (annotation == null && mcpTool == null) {
+                    continue;
                 }
+
+                String toolName = annotation != null ? annotation.name() : mcpTool.name();
+                String globalId = NATIVE_PREFIX + "::" + toolName;
+                String description = resolveDescription(annotation, mcpTool);
+
+                // 获取参数名称
+                String[] paramNames = getParameterNames(method);
+
+                // 缓存工具元数据
+                toolCache.put(globalId, new ToolMeta(
+                        bean, method, toolName, description, paramNames
+                ));
+
+                registeredTools++;
+                log.info("[NativeToolScanner] Registered: {} from {}.{}",
+                        globalId, clazz.getSimpleName(), method.getName());
             }
         }
 
@@ -311,5 +323,46 @@ public class NativeToolScanner {
             if (type == boolean.class) return false;
         }
         return null;
+    }
+
+    private String resolveDescription(Tool tool, McpTool mcpTool) {
+        if (mcpTool != null) {
+            if (mcpTool.description() != null && !mcpTool.description().isBlank()) {
+                return mcpTool.description();
+            }
+            if (mcpTool.descriptionResource() != null && !mcpTool.descriptionResource().isBlank()) {
+                String loaded = readResource(mcpTool.descriptionResource());
+                if (!loaded.isBlank()) {
+                    return loaded;
+                }
+            }
+        }
+        if (tool != null && tool.description() != null && !tool.description().isBlank()) {
+            return tool.description();
+        }
+        return "";
+    }
+
+    private String readResource(String location) {
+        try {
+            String normalizedLocation = location.startsWith("classpath:")
+                    ? location
+                    : "classpath:" + location;
+            Resource resource = resourceLoader.getResource(normalizedLocation);
+            if (!resource.exists()) {
+                log.warn("[NativeToolScanner] Description resource not found: {}", normalizedLocation);
+                return "";
+            }
+            try (InputStream inputStream = resource.getInputStream()) {
+                String text = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+                return text
+                        .replace("${today}", LocalDate.now().toString())
+                        .replace("{{date}}", LocalDate.now().toString())
+                        .trim();
+            }
+        } catch (Exception e) {
+            log.warn("[NativeToolScanner] Failed to read description resource: {}", location, e);
+            return "";
+        }
     }
 }

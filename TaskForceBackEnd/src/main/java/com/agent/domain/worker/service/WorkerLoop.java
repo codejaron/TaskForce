@@ -1,6 +1,5 @@
 package com.agent.domain.worker.service;
 
-import com.agent.domain.context.assembly.ContextAssembler;
 import com.agent.domain.execution.model.AgentExecutionStatus;
 import com.agent.domain.execution.service.AgentExecutionStateService;
 import com.agent.domain.execution.service.ExecutionWaitIntentService;
@@ -8,6 +7,7 @@ import com.agent.domain.taskboard.dto.TaskUpdateRequest;
 import com.agent.domain.taskboard.model.Task;
 import com.agent.domain.taskboard.model.TaskStatus;
 import com.agent.domain.taskboard.service.TaskBoardService;
+import com.agent.domain.team.context.TeamTaskContextService;
 import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
 import com.agent.domain.worker.model.WorkerInstance;
@@ -52,7 +52,7 @@ public class WorkerLoop implements Runnable {
     private final EventBus eventBus;
     private final SessionExecutionTracker executionTracker;
     private final InboxService inboxService;
-    private final ContextAssembler contextAssembler;
+    private final TeamTaskContextService teamTaskContextService;
     private final BaseCheckpointSaver checkpointSaver;
     private final AgentExecutionStateService executionStateService;
     private final ExecutionWaitIntentService waitIntentService;
@@ -72,7 +72,7 @@ public class WorkerLoop implements Runnable {
             EventBus eventBus,
             SessionExecutionTracker executionTracker,
             InboxService inboxService,
-            ContextAssembler contextAssembler,
+            TeamTaskContextService teamTaskContextService,
             BaseCheckpointSaver checkpointSaver,
             AgentExecutionStateService executionStateService,
             ExecutionWaitIntentService waitIntentService,
@@ -85,7 +85,7 @@ public class WorkerLoop implements Runnable {
         this.eventBus = eventBus;
         this.executionTracker = executionTracker;
         this.inboxService = inboxService;
-        this.contextAssembler = contextAssembler;
+        this.teamTaskContextService = teamTaskContextService;
         this.checkpointSaver = checkpointSaver;
         this.executionStateService = executionStateService;
         this.waitIntentService = waitIntentService;
@@ -532,28 +532,7 @@ public class WorkerLoop implements Runnable {
      * 构建任务执行指令
      */
     private String buildTaskInstruction(Task task) {
-        StringBuilder instruction = new StringBuilder();
-
-        // 只保留当前任务信息，去掉 initialPrompt 和完整任务板
-        instruction.append("## 当前任务\n\n");
-        instruction.append("**").append(task.getSubject()).append("**\n\n");
-        instruction.append(task.getDescription()).append("\n\n");
-        instruction.append("你当前执行的任务ID是 ").append(task.getTaskId()).append("。\n");
-        instruction.append("完成后请调用 complete_task 标记完成，taskId 必须使用当前任务ID。\n");
-
-        // 如果有依赖任务的输出，只附加相关上下文
-        try {
-            String taskContext = contextAssembler.assembleForTask(
-                    workerInstance.getSessionId(),
-                    task.getTaskId()
-            );
-            // 只取依赖输出部分，不要整个任务板
-            instruction.append("\n").append(taskContext);
-        } catch (Exception e) {
-            log.warn("[WorkerLoop] Context assembly failed, using basic info");
-        }
-
-        return instruction.toString();
+        return teamTaskContextService.buildTaskInstruction(workerInstance.getSessionId(), task);
     }
 
 
