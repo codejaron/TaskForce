@@ -80,7 +80,7 @@ public class TeamLeadAgent {
         String leadInstanceId = sessionId + "_lead";
 
         waitIntentService.clear(leadInstanceId);
-        executionStateService.setStatus(leadInstanceId, AgentExecutionStatus.RUNNING, "lead loop started");
+        executionStateService.setStatus(leadInstanceId, AgentExecutionStatus.EXECUTING, "lead loop started");
 
         try {
             // 1. 加载可用的 Agent
@@ -103,7 +103,8 @@ public class TeamLeadAgent {
                     systemPrompt,
                     MAX_REACT_ITERATIONS,
                     chatModel,
-                    chatOptions
+                    chatOptions,
+                    inputMessage == null || inputMessage.isBlank()
             );
 
             // 3. 配置 RunnableConfig（传递 sessionId 到 metadata）
@@ -125,39 +126,140 @@ public class TeamLeadAgent {
                     })
                     .doOnComplete(() -> {
                         boolean waitIntent = waitIntentService.consumeWaitingReply(leadInstanceId);
-                        LeadSchedulingDecision decision = leadSchedulingDecisionService.evaluate(sessionId);
-                        if (!waitIntent && decision.shouldWait()) {
-                            LeadSchedulingDecision recheck = leadSchedulingDecisionService.evaluate(sessionId);
-                            if (recheck.shouldContinueNow()) {
-                                decision = recheck;
-                            }
-                        }
-
-                        if (waitIntent || decision.shouldWait()) {
+                        List<TeamMessage> boundaryMessages = safeReadLeadInbox(leadInstanceId);
+                        if (waitIntent && boundaryMessages.isEmpty()) {
                             executionStateService.setStatus(
                                     leadInstanceId,
                                     AgentExecutionStatus.WAITING_REPLY,
-                                    waitIntent ? "waiting worker reply" : "waiting for inbox/taskboard wakeup"
+                                    "waiting worker reply"
                             );
-                        } else if (decision.shouldContinueNow()) {
-                            executionStateService.setStatus(
+                            List<TeamMessage> waitingLateMessages = safeReadLeadInbox(leadInstanceId);
+                            if (!waitingLateMessages.isEmpty()) {
+                                continueLeadLoop(
+                                        sessionId,
+                                        leadInstanceId,
+                                        agentId,
+                                        userMessage,
+                                        chatModel,
+                                        chatOptions,
+                                        formatWakeupInput(waitingLateMessages),
+                                        "lead continues due to inbox messages after entering WAITING_REPLY"
+                                );
+                                log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
+                                return;
+                            }
+                        } else if (!boundaryMessages.isEmpty()) {
+                            continueLeadLoop(
+                                    sessionId,
                                     leadInstanceId,
-                                    AgentExecutionStatus.RUNNING,
-                                    "lead continues due to pending inbox/taskboard work"
+                                    agentId,
+                                    userMessage,
+                                    chatModel,
+                                    chatOptions,
+                                    formatWakeupInput(boundaryMessages),
+                                    "lead continues due to inbox messages at round boundary"
                             );
-                            log.info("[TeamLeadAgent] Continue lead loop immediately: sessionId={}, inbox={}, runnable={}",
-                                    sessionId, decision.hasInboxMessages(), decision.hasRunnableTasks());
-                            try {
-                                startLeadLoop(sessionId, agentId, userMessage, chatModel, chatOptions, "");
-                            } catch (Exception e) {
+                            log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
+                            return;
+                        } else {
+                            LeadSchedulingDecision decision = leadSchedulingDecisionService.evaluate(sessionId);
+                            if (decision.shouldContinueNow()) {
+                                continueLeadLoop(
+                                        sessionId,
+                                        leadInstanceId,
+                                        agentId,
+                                        userMessage,
+                                        chatModel,
+                                        chatOptions,
+                                        "",
+                                        "lead continues due to pending inbox/taskboard work"
+                                );
+                                log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
+                                return;
+                            }
+                            if (decision.shouldWait()) {
                                 executionStateService.setStatus(
                                         leadInstanceId,
-                                        AgentExecutionStatus.FAILED,
-                                        "lead continue failed: " + e.getMessage()
+                                        AgentExecutionStatus.IDLE,
+                                        "idle waiting for inbox/taskboard wakeup"
                                 );
-                                log.error("[TeamLeadAgent] Failed to continue lead loop: sessionId={}", sessionId, e);
+                                List<TeamMessage> idleLateMessages = safeReadLeadInbox(leadInstanceId);
+                                if (!idleLateMessages.isEmpty()) {
+                                    continueLeadLoop(
+                                            sessionId,
+                                            leadInstanceId,
+                                            agentId,
+                                            userMessage,
+                                            chatModel,
+                                            chatOptions,
+                                            formatWakeupInput(idleLateMessages),
+                                            "lead continues due to inbox messages after entering IDLE"
+                                    );
+                                    log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
+                                    return;
+                                }
+                                log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
+                                return;
                             }
-                        } else {
+
+                            // Final shutdown guard: drain inbox once more right before completion.
+                            List<TeamMessage> finalMessages = safeReadLeadInbox(leadInstanceId);
+                            if (!finalMessages.isEmpty()) {
+                                continueLeadLoop(
+                                        sessionId,
+                                        leadInstanceId,
+                                        agentId,
+                                        userMessage,
+                                        chatModel,
+                                        chatOptions,
+                                        formatWakeupInput(finalMessages),
+                                        "lead continues due to late inbox messages before completion"
+                                );
+                                log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
+                                return;
+                            }
+
+                            LeadSchedulingDecision finalDecision = leadSchedulingDecisionService.evaluate(sessionId);
+                            if (finalDecision.shouldContinueNow()) {
+                                continueLeadLoop(
+                                        sessionId,
+                                        leadInstanceId,
+                                        agentId,
+                                        userMessage,
+                                        chatModel,
+                                        chatOptions,
+                                        "",
+                                        "lead continues due to late inbox/taskboard work"
+                                );
+                                log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
+                                return;
+                            }
+                            if (finalDecision.shouldWait()) {
+                                executionStateService.setStatus(
+                                        leadInstanceId,
+                                        AgentExecutionStatus.IDLE,
+                                        "idle waiting after final recheck"
+                                );
+                                log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
+                                return;
+                            }
+
+                            List<TeamMessage> shutdownBoundaryMessages = safeReadLeadInbox(leadInstanceId);
+                            if (!shutdownBoundaryMessages.isEmpty()) {
+                                continueLeadLoop(
+                                        sessionId,
+                                        leadInstanceId,
+                                        agentId,
+                                        userMessage,
+                                        chatModel,
+                                        chatOptions,
+                                        formatWakeupInput(shutdownBoundaryMessages),
+                                        "lead continues due to inbox messages before shutdown"
+                                );
+                                log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
+                                return;
+                            }
+
                             workerInstanceManager.shutdownAllBySession(sessionId);
                             executionStateService.setStatus(
                                     leadInstanceId,
@@ -302,5 +404,55 @@ public class TeamLeadAgent {
                     description));
         }
         return sb.toString();
+    }
+
+    private void continueLeadLoop(
+            String sessionId,
+            String leadInstanceId,
+            Long agentId,
+            String userMessage,
+            ChatModel chatModel,
+            OpenAiChatOptions chatOptions,
+            String inputMessage,
+            String detail) {
+        executionStateService.setStatus(leadInstanceId, AgentExecutionStatus.EXECUTING, detail);
+        try {
+            startLeadLoop(sessionId, agentId, userMessage, chatModel, chatOptions, inputMessage);
+        } catch (Exception e) {
+            executionStateService.setStatus(
+                    leadInstanceId,
+                    AgentExecutionStatus.FAILED,
+                    "lead continue failed: " + e.getMessage()
+            );
+            log.error("[TeamLeadAgent] Failed to continue lead loop: sessionId={}", sessionId, e);
+        }
+    }
+
+    private List<TeamMessage> safeReadLeadInbox(String leadInstanceId) {
+        try {
+            return inboxService.readInbox(leadInstanceId);
+        } catch (Exception e) {
+            log.warn("[TeamLeadAgent] Failed to read lead inbox at round boundary: instanceId={}", leadInstanceId, e);
+            return List.of();
+        }
+    }
+
+    private String formatWakeupInput(List<TeamMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder();
+        for (TeamMessage message : messages) {
+            if (message.getText() == null || message.getText().isBlank()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append("\n\n");
+            }
+            builder.append("From ").append(message.getFrom() == null ? "unknown" : message.getFrom())
+                    .append(": ").append(message.getText());
+        }
+        return builder.toString();
     }
 }

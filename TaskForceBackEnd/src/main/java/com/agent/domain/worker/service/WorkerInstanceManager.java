@@ -5,7 +5,6 @@ import com.agent.domain.execution.service.AgentExecutionStateService;
 import com.agent.domain.execution.service.ExecutionWaitIntentService;
 import com.agent.domain.taskboard.service.TaskBoardService;
 import com.agent.domain.team.context.TeamTaskContextService;
-import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
 import com.agent.domain.worker.model.WorkerInstance;
 import com.agent.domain.worker.repository.WorkerInstanceRepository;
@@ -115,13 +114,16 @@ public class WorkerInstanceManager {
             taskBoardService.assignTask(sessionId, assignedTaskId, instance.getInstanceId());
         }
 
-        // 3. 创建 WorkerLoop
-        WorkerLoop workerLoop = createWorkerLoop(instance, "");
-
-        // 4. 启动 WorkerLoop
-        runningLoops.put(instance.getInstanceId(), workerLoop);
-        workerExecutor.submit(workerLoop);
-        executionStateService.setStatus(instance.getInstanceId(), AgentExecutionStatus.RUNNING, "worker spawned");
+        // 3. 启动 WorkerLoop
+        startWorkerLoop(instance, "");
+        AgentExecutionStatus initialStatus = assignedTaskId == 0
+                ? AgentExecutionStatus.IDLE
+                : AgentExecutionStatus.EXECUTING;
+        executionStateService.setStatus(
+                instance.getInstanceId(),
+                initialStatus,
+                assignedTaskId == 0 ? "worker spawned idle" : "worker spawned with assigned task"
+        );
 
         // 5. 发布 worker_spawned 事件
         eventBus.publish(sessionId, new WorkerSpawnedEvent(sessionId, instance.getInstanceId(), name, agentId));
@@ -144,32 +146,54 @@ public class WorkerInstanceManager {
         return spawn(sessionId, name, agentId, initialPrompt, 0);
     }
 
-    public boolean resumeIfWaitingReply(String instanceId) {
+    public boolean resumeByInboxMessage(String instanceId, String messageType, String messageText) {
         Optional<WorkerInstance> instanceOpt = workerRepository.findById(instanceId);
         if (instanceOpt.isEmpty()) {
             return false;
         }
 
         WorkerInstance instance = instanceOpt.get();
-        if (instance.isShutdown() || runningLoops.containsKey(instanceId)) {
+        if (instance.isShutdown()) {
             return false;
         }
 
-        boolean transitioned = executionStateService.transitionIf(
+        boolean resumedFromWaitingReply = executionStateService.transitionIf(
                 instanceId,
                 AgentExecutionStatus.WAITING_REPLY,
-                AgentExecutionStatus.RUNNING,
+                AgentExecutionStatus.EXECUTING,
                 "wakeup by inbox message"
         );
+        boolean transitioned = resumedFromWaitingReply;
+        if (!transitioned) {
+            transitioned = executionStateService.transitionIf(
+                    instanceId,
+                    AgentExecutionStatus.IDLE,
+                    AgentExecutionStatus.EXECUTING,
+                    "wakeup by inbox message"
+            );
+        }
+        if (!transitioned) {
+            transitioned = executionStateService.transitionIf(
+                    instanceId,
+                    AgentExecutionStatus.RUNNING,
+                    AgentExecutionStatus.EXECUTING,
+                    "wakeup by inbox message (legacy running)"
+            );
+        }
         if (!transitioned) {
             return false;
         }
 
         try {
-            String resumeInput = formatResumeInput(inboxService.readInbox(instanceId));
-            WorkerLoop workerLoop = createWorkerLoop(instance, resumeInput);
-            runningLoops.put(instanceId, workerLoop);
-            workerExecutor.submit(workerLoop);
+            String resumeInput = "";
+            if (resumedFromWaitingReply
+                    && messageText != null
+                    && !messageText.isBlank()
+                    && !"ASSIGN_TASK".equalsIgnoreCase(messageType)
+                    && !"SHUTDOWN_REQUEST".equalsIgnoreCase(messageType)) {
+                resumeInput = messageText;
+            }
+            startWorkerLoop(instance, resumeInput);
             log.info("[WorkerInstanceManager] Worker resumed: instanceId={}", instanceId);
             return true;
         } catch (Exception e) {
@@ -327,8 +351,9 @@ public class WorkerInstanceManager {
         }
     }
 
-    private WorkerLoop createWorkerLoop(WorkerInstance instance, String startupResumeInput) {
-        return new WorkerLoop(
+    private void startWorkerLoop(WorkerInstance instance, String startupResumeInput) {
+        final WorkerLoop[] holder = new WorkerLoop[1];
+        WorkerLoop workerLoop = new WorkerLoop(
                 instance,
                 workerRepository,
                 taskBoardService,
@@ -341,27 +366,11 @@ public class WorkerInstanceManager {
                 executionStateService,
                 waitIntentService,
                 startupResumeInput,
-                () -> runningLoops.remove(instance.getInstanceId())
+                () -> runningLoops.remove(instance.getInstanceId(), holder[0])
         );
-    }
-
-    private String formatResumeInput(List<TeamMessage> messages) {
-        if (messages == null || messages.isEmpty()) {
-            return "";
-        }
-
-        StringBuilder builder = new StringBuilder();
-        for (TeamMessage message : messages) {
-            if (message.getText() == null || message.getText().isBlank()) {
-                continue;
-            }
-            if (builder.length() > 0) {
-                builder.append("\n\n");
-            }
-            builder.append("From ").append(message.getFrom() == null ? "unknown" : message.getFrom())
-                    .append(": ").append(message.getText());
-        }
-        return builder.toString();
+        holder[0] = workerLoop;
+        runningLoops.put(instance.getInstanceId(), workerLoop);
+        workerExecutor.submit(workerLoop);
     }
 
     private int nextWorkerId(String sessionId) {

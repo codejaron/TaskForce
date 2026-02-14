@@ -27,7 +27,11 @@ public class InboxWakeupScheduler {
         if (target.endsWith("_lead")) {
             resumed = teamOrchestrationService.resumeLeadIfWaiting(event.getSessionId());
         } else {
-            resumed = workerInstanceManager.resumeIfWaitingReply(target);
+            resumed = workerInstanceManager.resumeByInboxMessage(
+                    target,
+                    event.getMessageType(),
+                    event.getText()
+            );
         }
 
         if (resumed) {

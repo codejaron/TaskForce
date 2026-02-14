@@ -35,10 +35,10 @@ public class WorkspaceTools {
     /**
      * 写步骤输出
      */
-    @Tool(
-            name = "write_step_output",
-            description = "写入当前步骤的执行输出。如：需要传递给后续步骤的关键产物（如代码、搜索结果、草稿）"
-    )
+//    @Tool(
+//            name = "write_step_output",
+//            description = "写入当前步骤的执行输出。如：需要传递给后续步骤的关键产物（如代码、搜索结果、草稿）"
+//    )
     public Map<String, Object> writeStepOutput(
             @JsonProperty(value = "content", required = true) String content
     ) {
@@ -92,10 +92,10 @@ public class WorkspaceTools {
     /**
      * 写步骤摘要
      */
-    @Tool(
-            name = "write_step_summary",
-            description = "完成当前步骤后调用，记录核心结论。工具调用的文件会自动展示，你只需总结得出了什么结论。sessionId 和 stepIndex 会自动从上下文获取，无需传递。"
-    )
+//    @Tool(
+//            name = "write_step_summary",
+//            description = "完成当前步骤后调用，记录核心结论。工具调用的文件会自动展示，你只需总结得出了什么结论。sessionId 和 stepIndex 会自动从上下文获取，无需传递。"
+//    )
     public Map<String, Object> writeStepSummary(
             @JsonProperty(value = "stepTitle", required = true) String stepTitle,
             @JsonProperty(value = "conclusion", required = true) String conclusion,
@@ -156,10 +156,10 @@ public class WorkspaceTools {
     /**
      * 查看工作空间整体结构（树状图）
      */
-    @Tool(
-            name = "ls_workspace",
-            description = "查看当前会话工作空间的目录树结构。无需参数。"
-    )
+//    @Tool(
+//            name = "ls_workspace",
+//            description = "查看当前会话工作空间的目录树结构。无需参数。"
+//    )
     public Map<String, Object> lsWorkspace() {
         try {
             String sessionId = SessionContext.getSessionId();
@@ -194,10 +194,10 @@ public class WorkspaceTools {
     /**
      * 列出某步骤的工具文件（树状图）
      */
-    @Tool(
-            name = "ls_tools",
-            description = "列出指定步骤的工具调用结果文件（树状结构）。参数: stepIndex (int) - 步骤编号，从1开始"
-    )
+//    @Tool(
+//            name = "ls_tools",
+//            description = "列出指定步骤的工具调用结果文件（树状结构）。参数: stepIndex (int) - 步骤编号，从1开始"
+//    )
     public Map<String, Object> lsTools(
             @JsonProperty(value = "stepIndex", required = true) int stepIndex
     ) {
@@ -246,10 +246,10 @@ public class WorkspaceTools {
     /**
      * 读取某步骤的 output.md
      */
-    @Tool(
-            name = "cat_output",
-            description = "读取指定步骤的完整输出(output.md)。参数: stepIndex (int) - 步骤编号，从1开始"
-    )
+//    @Tool(
+//            name = "cat_output",
+//            description = "读取指定步骤的完整输出(output.md)。参数: stepIndex (int) - 步骤编号，从1开始"
+//    )
     public Map<String, Object> catOutput(
             @JsonProperty(value = "stepIndex", required = true) int stepIndex
     ) {
@@ -259,10 +259,10 @@ public class WorkspaceTools {
     /**
      * 读取某步骤的 summary.md
      */
-    @Tool(
-            name = "cat_summary",
-            description = "读取指定步骤的摘要(summary.md)。参数: stepIndex (int) - 步骤编号，从1开始"
-    )
+//    @Tool(
+//            name = "cat_summary",
+//            description = "读取指定步骤的摘要(summary.md)。参数: stepIndex (int) - 步骤编号，从1开始"
+//    )
     public Map<String, Object> catSummary(
             @JsonProperty(value = "stepIndex", required = true) int stepIndex
     ) {
@@ -272,10 +272,10 @@ public class WorkspaceTools {
     /**
      * 读取某步骤 tools 目录下的具体文件
      */
-    @Tool(
-            name = "cat_tool",
-            description = "读取指定步骤的工具调用结果文件。参数: stepIndex (int) - 步骤编号; fileName (string) - 文件名，如 'duckduckgo__search_xxx.json'"
-    )
+//    @Tool(
+//            name = "cat_tool",
+//            description = "读取指定步骤的工具调用结果文件。参数: stepIndex (int) - 步骤编号; fileName (string) - 文件名，如 'duckduckgo__search_xxx.json'"
+//    )
     public Map<String, Object> catTool(
             @JsonProperty(value = "stepIndex", required = true) int stepIndex,
             @JsonProperty(value = "fileName", required = true) String fileName
