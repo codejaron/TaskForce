@@ -226,6 +226,7 @@ export interface ToolCallDTO {
   toolCallId: string;
   toolName: string;
   serverName?: string;  // MCP Server 名称
+  instanceId?: string;
   toolArgs: string;
   toolResult?: string;
   status: 'RUNNING' | 'SUCCESS' | 'FAILED';
@@ -233,9 +234,42 @@ export interface ToolCallDTO {
   durationMs?: number;
   stepId?: string;
   sequence: number;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 // ============= Team API 相关类型 =============
+
+export interface TeamHistoryMessageDTO {
+  id: number;
+  role: 'user' | 'assistant' | 'system';
+  messageType: 'TEAM_USER' | 'TEAM_LEAD' | 'TEAM_WORKER' | 'TEAM_SYSTEM';
+  agentName?: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface TeamHistoryToolCallDTO {
+  toolCallId: string;
+  stepId?: string;
+  sequence?: number;
+  instanceId?: string;
+  toolName: string;
+  serverName?: string;
+  toolArgs?: string;
+  toolResult?: string;
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED';
+  errorMessage?: string;
+  durationMs?: number;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface TeamSessionHistoryDTO {
+  messages: TeamHistoryMessageDTO[];
+  toolCalls: TeamHistoryToolCallDTO[];
+  nextBefore: string | null;
+}
 
 export interface TeamStartRequest {
   sessionId: string;

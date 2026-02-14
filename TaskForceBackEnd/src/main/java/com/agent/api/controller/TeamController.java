@@ -1,13 +1,18 @@
 package com.agent.api.controller;
 
+import com.agent.api.dto.TeamSessionHistoryDTO;
 import com.agent.api.response.ApiResponse;
 import com.agent.domain.taskboard.model.Task;
 import com.agent.domain.taskboard.service.TaskBoardService;
+import com.agent.domain.team.service.TeamHistoryPersistenceService;
+import com.agent.domain.team.service.TeamHistoryQueryService;
 import com.agent.domain.worker.model.WorkerInstance;
 import com.agent.domain.worker.service.WorkerInstanceManager;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.OrchestrationEvent;
 import com.agent.infrastructure.event.RedisStreamEventBus;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.agent.service.TeamOrchestrationService;
 import jakarta.validation.Valid;
 import lombok.Data;
@@ -18,7 +23,9 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Team 编排控制器
@@ -34,7 +41,10 @@ public class TeamController {
     private final TeamOrchestrationService teamOrchestrationService;
     private final WorkerInstanceManager workerInstanceManager;
     private final TaskBoardService taskBoardService;
+    private final TeamHistoryPersistenceService teamHistoryPersistenceService;
+    private final TeamHistoryQueryService teamHistoryQueryService;
     private final EventBus eventBus;
+    private final ObjectMapper objectMapper;
 
     /**
      * 启动团队会话
@@ -46,6 +56,8 @@ public class TeamController {
                  request.getSessionId(), request.getUserGoal());
 
         try {
+            teamHistoryPersistenceService.persistUserMessage(request.getSessionId(), request.getUserGoal());
+
             // 异步启动团队会话，事件通过 EventBus 发送到 /session/{sessionId}/events
             new Thread(() -> {
                 teamOrchestrationService.startTeamSession(
@@ -75,6 +87,7 @@ public class TeamController {
 
         try {
             teamOrchestrationService.sendMessageToLead(sessionId, request.getMessage());
+            teamHistoryPersistenceService.persistUserMessage(sessionId, request.getMessage());
             return ApiResponse.success("消息已发送给 Team Lead", null);
         } catch (Exception e) {
             log.error("[TeamController] Failed to send message to Lead", e);
@@ -97,6 +110,7 @@ public class TeamController {
 
         try {
             teamOrchestrationService.sendMessageToWorker(sessionId, instanceId, request.getMessage());
+            teamHistoryPersistenceService.persistUserMessageToWorker(sessionId, instanceId, request.getMessage());
             return ApiResponse.success("消息已发送给 Worker", null);
         } catch (Exception e) {
             log.error("[TeamController] Failed to send message to Worker", e);
@@ -139,6 +153,25 @@ public class TeamController {
     }
 
     /**
+     * 查询 Team 会话历史（数据库基线数据）。
+     * GET /api/v2/team/session/{sessionId}/history?limit=200&before=2026-02-14T10:00:00
+     */
+    @GetMapping("/session/{sessionId}/history")
+    public ApiResponse<TeamSessionHistoryDTO> getHistory(
+            @PathVariable String sessionId,
+            @RequestParam(value = "limit", required = false, defaultValue = "200") Integer limit,
+            @RequestParam(value = "before", required = false) String before) {
+        log.info("[TeamController] Getting team history: sessionId={}, limit={}, before={}", sessionId, limit, before);
+        try {
+            TeamSessionHistoryDTO history = teamHistoryQueryService.getHistory(sessionId, limit, before);
+            return ApiResponse.success(history);
+        } catch (Exception e) {
+            log.error("[TeamController] Failed to get team history", e);
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /**
      * 订阅团队事件流（SSE）- 支持断点续传
      * GET /api/v2/team/session/{sessionId}/events
      */
@@ -160,7 +193,7 @@ public class TeamController {
                 .map(event -> ServerSentEvent.<String>builder()
                         .id(event.getStreamRecordId())
                         .event(event.getEventType())
-                        .data(event.toJson())
+                        .data(buildSseData(event))
                         .build())
                 .doOnSubscribe(s -> log.info("[TeamController] SSE connected: sessionId={}", sessionId))
                 .doOnCancel(() -> log.info("[TeamController] SSE disconnected: sessionId={}", sessionId))
@@ -194,7 +227,7 @@ public class TeamController {
                 .map(event -> ServerSentEvent.<String>builder()
                         .id(event.getStreamRecordId())
                         .event(event.getEventType())
-                        .data(event.toJson())
+                        .data(buildSseData(event))
                         .build())
                 .doOnSubscribe(s -> log.info("[TeamController] Worker SSE connected: sessionId={}, instanceId={}",
                         sessionId, instanceId))
@@ -239,5 +272,29 @@ public class TeamController {
     @Data
     public static class MessageRequest {
         private String message;
+    }
+
+    private String buildSseData(OrchestrationEvent event) {
+        try {
+            Map<String, Object> payload = objectMapper.readValue(
+                    event.toJson(),
+                    new TypeReference<Map<String, Object>>() {}
+            );
+            payload.put("eventType", event.getEventType());
+            if (event.getStreamRecordId() != null && !event.getStreamRecordId().isBlank()) {
+                payload.put("streamRecordId", event.getStreamRecordId());
+            }
+            return objectMapper.writeValueAsString(payload);
+        } catch (Exception e) {
+            log.warn("[TeamController] Failed to enrich SSE payload: eventType={}", event.getEventType(), e);
+            Map<String, Object> fallback = new HashMap<>();
+            fallback.put("eventType", event.getEventType());
+            fallback.put("raw", event.toJson());
+            try {
+                return objectMapper.writeValueAsString(fallback);
+            } catch (Exception ignored) {
+                return "{\"eventType\":\"" + event.getEventType() + "\"}";
+            }
+        }
     }
 }
