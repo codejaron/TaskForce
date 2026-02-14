@@ -22,6 +22,7 @@ import reactor.netty.transport.ProxyProvider;
 
 import java.net.InetSocketAddress;
 import java.net.Proxy;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -107,10 +108,7 @@ public class ChatModelFactory {
      * 创建 OpenAI 兼容模型
      */
     private ChatModel createOpenAiCompatibleModel(LLMProvider provider, String apiKey, String configuredModel) {
-        OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl(provider.getBaseUrl())
-                .apiKey(apiKey)
-                .build();
+        OpenAiApi openAiApi = buildOpenAiApi(provider.getBaseUrl(), apiKey, true);
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
             .model(configuredModel != null ? configuredModel : "deepseek-chat")
@@ -169,9 +167,7 @@ public class ChatModelFactory {
      */
     private ChatModel createOllamaModel(LLMProvider provider, String configuredModel) {
         // Ollama 通常不需要 API Key
-        OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl(provider.getBaseUrl())
-                .build();
+        OpenAiApi openAiApi = buildOpenAiApi(provider.getBaseUrl(), null, false);
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
             .model(configuredModel != null ? configuredModel : "llama2")
@@ -199,5 +195,58 @@ public class ChatModelFactory {
     public void evictAllCache() {
         log.info("Evicting all ChatModel cache");
         chatModelCache.clear();
+    }
+
+    private OpenAiApi buildOpenAiApi(String rawBaseUrl, String apiKey, boolean withApiKey) {
+        EndpointParts endpointParts = resolveEndpointParts(rawBaseUrl);
+        OpenAiApi.Builder builder = OpenAiApi.builder()
+                .baseUrl(endpointParts.baseUrl())
+                .completionsPath(endpointParts.completionsPath())
+                .embeddingsPath(endpointParts.embeddingsPath());
+        if (withApiKey) {
+            builder.apiKey(apiKey);
+        }
+        return builder.build();
+    }
+
+    private EndpointParts resolveEndpointParts(String rawBaseUrl) {
+        String input = rawBaseUrl == null ? "" : rawBaseUrl.trim();
+        try {
+            URI uri = URI.create(input);
+            if (uri.getScheme() == null || uri.getRawAuthority() == null) {
+                return new EndpointParts(input, input, deriveEmbeddingsPath(input));
+            }
+            String baseUrl = uri.getScheme() + "://" + uri.getRawAuthority();
+            String completionsPath = uri.getRawPath();
+            if (completionsPath == null || completionsPath.isEmpty()) {
+                completionsPath = "/";
+            }
+            if (uri.getRawQuery() != null && !uri.getRawQuery().isEmpty()) {
+                completionsPath = completionsPath + "?" + uri.getRawQuery();
+            }
+            return new EndpointParts(baseUrl, completionsPath, deriveEmbeddingsPath(completionsPath));
+        } catch (Exception ex) {
+            log.warn("Failed to parse provider baseUrl '{}', using raw value as endpoint path.", rawBaseUrl);
+            return new EndpointParts(input, input, deriveEmbeddingsPath(input));
+        }
+    }
+
+    private String deriveEmbeddingsPath(String completionsPath) {
+        if (completionsPath == null || completionsPath.isEmpty()) {
+            return completionsPath;
+        }
+        int queryIndex = completionsPath.indexOf('?');
+        String pathOnly = queryIndex >= 0 ? completionsPath.substring(0, queryIndex) : completionsPath;
+        String query = queryIndex >= 0 ? completionsPath.substring(queryIndex) : "";
+        if (pathOnly.endsWith("/chat/completions")) {
+            return pathOnly.substring(0, pathOnly.length() - "/chat/completions".length()) + "/embeddings" + query;
+        }
+        if (pathOnly.endsWith("/completions")) {
+            return pathOnly.substring(0, pathOnly.length() - "/completions".length()) + "/embeddings" + query;
+        }
+        return completionsPath;
+    }
+
+    private record EndpointParts(String baseUrl, String completionsPath, String embeddingsPath) {
     }
 }

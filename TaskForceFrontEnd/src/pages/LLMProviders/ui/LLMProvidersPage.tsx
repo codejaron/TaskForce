@@ -113,7 +113,7 @@ export function LLMProvidersPage() {
     e.preventDefault();
     setIsSaving(true);
     try {
-      const suppliedBase = formData.apiBaseUrl?.trim() || undefined;
+      const suppliedBase = formData.apiBaseUrl || undefined;
       const payload: LLMProviderRequest = {
         name: formData.channelName,
         type: formData.providerType as string,
@@ -209,7 +209,7 @@ export function LLMProvidersPage() {
   };
 
   const fetchRemoteModels = async () => {
-    const base = formData.apiBaseUrl?.trim();
+    const base = formData.apiBaseUrl;
     if (!base) {
       alert('Please enter the API Base URL first.');
       return;
