@@ -185,7 +185,6 @@ public class WorkerLoop implements Runnable {
                         "waiting inbox reply"
                 );
             } else if (failed.get()) {
-                releaseWorkerCheckpoint();
                 workerInstance.completeWork();
                 workerRepository.save(workerInstance);
                 reportExecutionStatus(
@@ -292,7 +291,6 @@ public class WorkerLoop implements Runnable {
                     taskId, workerInstance.getInstanceId(), task.getOwner());
             workerInstance.clearAssignedTask();
             workerRepository.save(workerInstance);
-            releaseWorkerCheckpoint();
             return;
         }
 
@@ -370,12 +368,10 @@ public class WorkerLoop implements Runnable {
             } else if (task.isCompleted()) {
                 workerInstance.completeWork();
                 workerRepository.save(workerInstance);
-                releaseWorkerCheckpoint();
                 return TaskExecutionOutcome.COMPLETED;
             } else if (task.isFailed()) {
                 workerInstance.completeWork();
                 workerRepository.save(workerInstance);
-                releaseWorkerCheckpoint();
                 return TaskExecutionOutcome.FAILED;
             } else {
                 throw new IllegalStateException(
@@ -451,7 +447,6 @@ public class WorkerLoop implements Runnable {
                 taskBoardService.updateTask(workerInstance.getSessionId(), task.getTaskId(), updateRequest);
                 workerInstance.completeWork();
                 workerRepository.save(workerInstance);
-                releaseWorkerCheckpoint();
                 return TaskExecutionOutcome.INTERRUPTED;
             } else {
                 boolean shouldWaitReply = waitIntentService.consumeWaitingReply(workerInstance.getInstanceId());
@@ -460,13 +455,11 @@ public class WorkerLoop implements Runnable {
                     log.info("[WorkerLoop] Task completed by worker: taskId={}", task.getTaskId());
                     workerInstance.completeWork();
                     workerRepository.save(workerInstance);
-                    releaseWorkerCheckpoint();
                     return TaskExecutionOutcome.COMPLETED;
                 } else if (updatedTask.isFailed()) {
                     log.info("[WorkerLoop] Task already marked as failed: taskId={}", task.getTaskId());
                     workerInstance.completeWork();
                     workerRepository.save(workerInstance);
-                    releaseWorkerCheckpoint();
                     return TaskExecutionOutcome.FAILED;
                 } else if (shouldWaitReply) {
                     log.info("[WorkerLoop] Task paused waiting for inbox reply: taskId={}", task.getTaskId());
@@ -479,7 +472,6 @@ public class WorkerLoop implements Runnable {
                     taskBoardService.failTask(workerInstance.getSessionId(), task.getTaskId());
                     workerInstance.completeWork();
                     workerRepository.save(workerInstance);
-                    releaseWorkerCheckpoint();
                     return TaskExecutionOutcome.FAILED;
                 }
             }
@@ -500,7 +492,6 @@ public class WorkerLoop implements Runnable {
 
             workerInstance.completeWork();
             workerRepository.save(workerInstance);
-            releaseWorkerCheckpoint();
             return TaskExecutionOutcome.INTERRUPTED;
         } catch (Exception e) {
             log.error("[WorkerLoop] Failed to execute task: taskId={}", task.getTaskId(), e);
@@ -515,7 +506,6 @@ public class WorkerLoop implements Runnable {
             // 恢复 Worker 状态
             workerInstance.completeWork();
             workerRepository.save(workerInstance);
-            releaseWorkerCheckpoint();
             return TaskExecutionOutcome.FAILED;
         }
     }
@@ -590,7 +580,6 @@ public class WorkerLoop implements Runnable {
             if (shutdown.get()) {
                 workerInstance.completeWork();
                 workerRepository.save(workerInstance);
-                releaseWorkerCheckpoint();
                 return TaskExecutionOutcome.INTERRUPTED;
             }
 
@@ -603,20 +592,17 @@ public class WorkerLoop implements Runnable {
 
             workerInstance.completeWork();
             workerRepository.save(workerInstance);
-            releaseWorkerCheckpoint();
             return TaskExecutionOutcome.COMPLETED;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             workerInstance.completeWork();
             workerRepository.save(workerInstance);
-            releaseWorkerCheckpoint();
             return TaskExecutionOutcome.INTERRUPTED;
         } catch (Exception e) {
             log.error("[WorkerLoop] Failed to execute direct instruction: instanceId={}",
                     workerInstance.getInstanceId(), e);
             workerInstance.completeWork();
             workerRepository.save(workerInstance);
-            releaseWorkerCheckpoint();
             return TaskExecutionOutcome.FAILED;
         }
     }
@@ -710,6 +696,7 @@ public class WorkerLoop implements Runnable {
     }
 
     private void releaseWorkerCheckpoint() {
+        // Team 模式按 worker instance 保留长期记忆，仅在 worker shutdown 时清理 checkpoint。
         String threadId = CheckpointThreadIds.workerThreadId(workerInstance.getInstanceId());
         try {
             checkpointSaver.release(RunnableConfig.builder().threadId(threadId).build());

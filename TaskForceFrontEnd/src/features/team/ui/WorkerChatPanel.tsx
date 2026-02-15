@@ -45,7 +45,7 @@ export const WorkerChatPanel: React.FC = () => {
     }
   };
 
-  if (!activeWorkerId) {
+  if (!activeWorkerId || !activeMember) {
     return (
       <div className="h-full flex items-center justify-center text-gray-500">
         <p className="text-sm">选择一个 Worker 查看对话</p>
