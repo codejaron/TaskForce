@@ -101,8 +101,9 @@ mybatis-plus:
 # ========== 日志配置 ==========
 logging:
   level:
-    com.agent: DEBUG  # 改为 DEBUG 级别，可查看 Planner/Worker/Replanner 的完整 Prompt
-    org.springframework.ai: DEBUG  # Spring AI 相关日志
+    root: INFO
+    com.agent: INFO
+    org.springframework.ai: INFO
     # ---- 关掉数据库相关日志 ----
     com.agent.infrastructure.persistence.mapper: WARN
     org.apache.ibatis: WARN
@@ -151,4 +152,3 @@ sandbox:
 chat:
   history:
     max-messages: 20  # 最多加载多少条历史消息
-

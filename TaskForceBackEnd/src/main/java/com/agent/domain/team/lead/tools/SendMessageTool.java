@@ -45,7 +45,7 @@ public class SendMessageTool implements ToolCallback {
                 },
                 "messageType": {
                   "type": "string",
-                  "description": "消息类型（可选，默认为 INSTRUCTION）"
+                  "description": "消息类型（可选，默认为 USER_MESSAGE）"
                 },
                 "expectReply": {
                   "type": "boolean",
@@ -76,7 +76,7 @@ public class SendMessageTool implements ToolCallback {
             String sessionId = extractSessionId(toolContext);
             int workerId = ((Number) args.get("workerId")).intValue();
             String content = (String) args.get("content");
-            String messageType = (String) args.getOrDefault("messageType", "INSTRUCTION");
+            String messageType = (String) args.getOrDefault("messageType", "USER_MESSAGE");
             boolean expectReply = Boolean.TRUE.equals(args.get("expectReply"));
 
             WorkerInstance worker = workerInstanceManager.findBySessionAndWorkerId(sessionId, workerId)

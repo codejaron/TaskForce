@@ -4,6 +4,7 @@ import com.agent.mcpserver.config.McpClientPoolProperties;
 import com.agent.mcpserver.dto.ToolCallResult;
 import com.agent.mcpserver.dto.ToolVO;
 import com.agent.mcpserver.entity.ToolProviderConfig;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
@@ -37,6 +38,7 @@ import java.util.concurrent.TimeUnit;
 @Service
 @RequiredArgsConstructor
 public class ToolRouter {
+    private static final ObjectMapper LOG_OBJECT_MAPPER = new ObjectMapper();
 
     private final ToolProviderConfigService configService;
     private final McpClientPoolProperties clientPoolProperties;
@@ -316,10 +318,14 @@ public class ToolRouter {
      */
     public ToolCallResult callTool(String globalToolId, Map<String, Object> arguments, String sessionId) {
         Map<String, Object> safeArguments = arguments != null ? arguments : Map.of();
+        String argsPreview = toCompactJson(safeArguments);
+        long startedAtNanos = System.nanoTime();
+
+        log.info("[ToolRouter] Tool call start: tool={}, sessionId={}, args={}",
+                globalToolId, sessionId, argsPreview);
 
         // 1. 先检查 Native 工具
         if (nativeToolScanner.hasTool(globalToolId)) {
-            log.debug("[ToolRouter] Routing to native tool: {}", globalToolId);
             try {
                 if (sessionId != null) {
                     com.agent.mcpserver.context.SessionContext.setSessionId(sessionId);
@@ -328,7 +334,9 @@ public class ToolRouter {
                 if (stepIndexObj instanceof Integer) {
                     com.agent.mcpserver.context.SessionContext.setStepIndex((Integer) stepIndexObj);
                 }
-                return nativeToolScanner.callTool(globalToolId, safeArguments);
+                ToolCallResult nativeResult = nativeToolScanner.callTool(globalToolId, safeArguments);
+                logToolCallFinish(globalToolId, "native", sessionId, startedAtNanos, nativeResult, null);
+                return nativeResult;
             } finally {
                 com.agent.mcpserver.context.SessionContext.clear();
             }
@@ -338,13 +346,17 @@ public class ToolRouter {
         String providerId = toolRouteTable.get(globalToolId);
         if (providerId == null) {
             log.warn("[ToolRouter] Tool not found: {}", globalToolId);
-            return ToolCallResult.error("Tool not found: " + globalToolId);
+            ToolCallResult errorResult = ToolCallResult.error("Tool not found: " + globalToolId);
+            logToolCallFinish(globalToolId, "provider:missing", sessionId, startedAtNanos, errorResult, null);
+            return errorResult;
         }
 
         ProviderClientPool clientPool = clientPoolCache.get(providerId);
         if (clientPool == null) {
             log.warn("[ToolRouter] Provider not available: {}", providerId);
-            return ToolCallResult.error("Provider not available: " + providerId);
+            ToolCallResult errorResult = ToolCallResult.error("Provider not available: " + providerId);
+            logToolCallFinish(globalToolId, "provider:" + providerId, sessionId, startedAtNanos, errorResult, null);
+            return errorResult;
         }
 
         // 提取原始工具名称（去掉前缀）
@@ -353,16 +365,15 @@ public class ToolRouter {
             originalToolName = globalToolId.substring(globalToolId.indexOf("::") + 2);
         }
 
-        log.debug("[ToolRouter] Routing tool call: {} -> {} (original: {})",
-                globalToolId, providerId, originalToolName);
-
         McpSyncClient borrowedClient = null;
         try {
             borrowedClient = clientPool.borrowClient(clientPoolProperties.getAcquireTimeoutSeconds());
             if (borrowedClient == null) {
                 log.warn("[ToolRouter] Provider pool exhausted: providerId={}, poolSize={}",
                         providerId, clientPool.size());
-                return ToolCallResult.error("Provider is busy, please retry: " + providerId);
+                ToolCallResult errorResult = ToolCallResult.error("Provider is busy, please retry: " + providerId);
+                logToolCallFinish(globalToolId, "provider:" + providerId, sessionId, startedAtNanos, errorResult, null);
+                return errorResult;
             }
 
             // 调用 MCP Client
@@ -370,14 +381,20 @@ public class ToolRouter {
             McpSchema.CallToolResult result = borrowedClient.callTool(request);
 
             // 转换为 ToolCallResult
-            return convertToToolCallResult(result);
+            ToolCallResult convertedResult = convertToToolCallResult(result);
+            logToolCallFinish(globalToolId, "provider:" + providerId, sessionId, startedAtNanos, convertedResult, null);
+            return convertedResult;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("[ToolRouter] Interrupted while borrowing client: {}", globalToolId, e);
-            return ToolCallResult.error("Tool call interrupted");
+            ToolCallResult errorResult = ToolCallResult.error("Tool call interrupted");
+            logToolCallFinish(globalToolId, "provider:" + providerId, sessionId, startedAtNanos, errorResult, e);
+            return errorResult;
         } catch (Exception e) {
             log.error("[ToolRouter] Tool call failed: {}", globalToolId, e);
-            return ToolCallResult.error("Tool call failed: " + e.getMessage());
+            ToolCallResult errorResult = ToolCallResult.error("Tool call failed: " + e.getMessage());
+            logToolCallFinish(globalToolId, "provider:" + providerId, sessionId, startedAtNanos, errorResult, e);
+            return errorResult;
         } finally {
             clientPool.returnClient(borrowedClient);
         }
@@ -581,6 +598,66 @@ public class ToolRouter {
         } catch (Exception e) {
             log.warn("[ToolRouter] Error closing MCP client", e);
         }
+    }
+
+    private void logToolCallFinish(String toolId,
+                                   String route,
+                                   String sessionId,
+                                   long startedAtNanos,
+                                   ToolCallResult result,
+                                   Exception exception) {
+        long durationMs = Math.max(0L, (System.nanoTime() - startedAtNanos) / 1_000_000L);
+        String resultPreview = summarizeResult(result);
+
+        if (exception == null) {
+            log.info("[ToolRouter] Tool call done: tool={}, route={}, sessionId={}, durationMs={}, result={}",
+                    toolId, route, sessionId, durationMs, resultPreview);
+            return;
+        }
+
+        log.info("[ToolRouter] Tool call done with exception: tool={}, route={}, sessionId={}, durationMs={}, exception={}, result={}",
+                toolId, route, sessionId, durationMs, exception.getClass().getSimpleName(), resultPreview);
+    }
+
+    private String summarizeResult(ToolCallResult result) {
+        if (result == null) {
+            return "null";
+        }
+        int contentCount = result.getContent() == null ? 0 : result.getContent().size();
+        String first = "";
+        if (result.getContent() != null && !result.getContent().isEmpty()) {
+            ToolCallResult.Content firstContent = result.getContent().get(0);
+            if (firstContent != null) {
+                if (firstContent.getText() != null && !firstContent.getText().isBlank()) {
+                    first = truncate(firstContent.getText().replaceAll("\\s+", " "), 512);
+                } else if (firstContent.getData() != null && !firstContent.getData().isBlank()) {
+                    first = truncate(firstContent.getData(), 120);
+                }
+            }
+        }
+        return String.format("{isError=%s, contentCount=%d, first=%s}",
+                Boolean.TRUE.equals(result.getIsError()), contentCount, first);
+    }
+
+    private String toCompactJson(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        try {
+            return truncate(LOG_OBJECT_MAPPER.writeValueAsString(value), 2048);
+        } catch (Exception e) {
+            return truncate(String.valueOf(value), 2048);
+        }
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null) {
+            return "";
+        }
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, Math.max(0, maxLength)) + "...(truncated)";
     }
 
     /**

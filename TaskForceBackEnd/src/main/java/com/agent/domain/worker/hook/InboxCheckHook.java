@@ -8,7 +8,7 @@ import com.alibaba.cloud.ai.graph.agent.hook.messages.MessagesModelHook;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.UpdatePolicy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -50,15 +50,14 @@ public class InboxCheckHook extends MessagesModelHook {
                 return new AgentCommand(List.of(), UpdatePolicy.APPEND);
             }
 
-            // 格式化为 system reminder
-            String reminder = formatMessagesAsReminder(teamMessages);
-            SystemMessage systemMessage = new SystemMessage(reminder);
+            // 把 inbox 内容作为 user 输入注入，避免被模型当成 system 指令。
+            String userInput = formatMessagesAsUserInput(teamMessages);
+            UserMessage userMessage = new UserMessage(userInput);
 
             log.info("[InboxCheckHook] Injected {} messages for worker: {}",
                     teamMessages.size(), instanceId);
 
-            // 追加 SystemMessage 到消息列表
-            return new AgentCommand(List.of(systemMessage), UpdatePolicy.APPEND);
+            return new AgentCommand(List.of(userMessage), UpdatePolicy.APPEND);
         } catch (Exception e) {
             log.error("[InboxCheckHook] Failed to check inbox for worker: {}", instanceId, e);
             // 出错时返回空命令，不影响正常流程
@@ -83,12 +82,11 @@ public class InboxCheckHook extends MessagesModelHook {
     }
 
     /**
-     * 格式化消息为 system reminder
+     * 格式化消息为 user 输入
      */
-    private String formatMessagesAsReminder(List<TeamMessage> messages) {
+    private String formatMessagesAsUserInput(List<TeamMessage> messages) {
         StringBuilder sb = new StringBuilder();
-        sb.append("<system-reminder>\n");
-        sb.append("You have new messages in your inbox:\n");
+        sb.append("New inbox messages:\n");
 
         for (TeamMessage msg : messages) {
             String timestamp = msg.getTimestamp().format(FORMATTER);
@@ -96,7 +94,6 @@ public class InboxCheckHook extends MessagesModelHook {
                     msg.getFrom(), timestamp, msg.getText()));
         }
 
-        sb.append("</system-reminder>");
         return sb.toString();
     }
 }

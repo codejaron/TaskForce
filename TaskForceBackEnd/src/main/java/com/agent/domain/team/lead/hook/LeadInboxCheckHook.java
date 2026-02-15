@@ -8,7 +8,7 @@ import com.alibaba.cloud.ai.graph.agent.hook.messages.MessagesModelHook;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.UpdatePolicy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -44,10 +44,10 @@ public class LeadInboxCheckHook extends MessagesModelHook {
                 return new AgentCommand(List.of(), UpdatePolicy.APPEND);
             }
 
-            String reminder = formatMessagesAsReminder(inboxMessages);
+            String reminder = formatMessagesAsUserInput(inboxMessages);
             log.info("[LeadInboxCheckHook] Injected {} inbox messages for lead: sessionId={}",
                     inboxMessages.size(), sessionId);
-            return new AgentCommand(List.of(new SystemMessage(reminder)), UpdatePolicy.APPEND);
+            return new AgentCommand(List.of(new UserMessage(reminder)), UpdatePolicy.APPEND);
         } catch (Exception e) {
             log.error("[LeadInboxCheckHook] Failed to read lead inbox: sessionId={}", sessionId, e);
             return new AgentCommand(List.of(), UpdatePolicy.APPEND);
@@ -69,10 +69,9 @@ public class LeadInboxCheckHook extends MessagesModelHook {
         return "LeadInboxCheckHook";
     }
 
-    private String formatMessagesAsReminder(List<TeamMessage> messages) {
+    private String formatMessagesAsUserInput(List<TeamMessage> messages) {
         StringBuilder sb = new StringBuilder();
-        sb.append("<system-reminder>\n");
-        sb.append("New inbox messages are available:\n");
+        sb.append("New inbox messages:\n");
         for (TeamMessage message : messages) {
             String from = message.getFrom() == null || message.getFrom().isBlank()
                     ? "unknown"
@@ -84,7 +83,6 @@ public class LeadInboxCheckHook extends MessagesModelHook {
             sb.append("- From ").append(from).append(" (").append(timestamp).append("): \"")
                     .append(text).append("\"\n");
         }
-        sb.append("</system-reminder>");
         return sb.toString();
     }
 }

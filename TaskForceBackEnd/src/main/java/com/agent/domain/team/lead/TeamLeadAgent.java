@@ -11,6 +11,7 @@ import com.agent.domain.worker.service.WorkerInstanceManager;
 import com.agent.infrastructure.agent.CheckpointThreadIds;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
+import com.agent.infrastructure.event.events.ErrorEvent;
 import com.agent.infrastructure.event.events.LeadOutputEvent;
 import com.agent.infrastructure.event.events.SessionCompleteEvent;
 import com.agent.infrastructure.persistence.entity.Agent;
@@ -23,12 +24,18 @@ import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Component;
 import reactor.core.Disposable;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Team Lead Agent
@@ -56,6 +63,10 @@ public class TeamLeadAgent {
     private final EventBus eventBus;
 
     private static final int MAX_REACT_ITERATIONS = 50; // Lead 需要更多迭代次数
+    @Value("${team.lead.stream-timeout-seconds:180}")
+    private long leadStreamTimeoutSeconds;
+    private final ConcurrentHashMap<String, Disposable> runningLeadLoops = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> runningLeadLoopTokens = new ConcurrentHashMap<>();
 
 
     /**
@@ -105,7 +116,7 @@ public class TeamLeadAgent {
                     MAX_REACT_ITERATIONS,
                     chatModel,
                     chatOptions,
-                    inputMessage == null || inputMessage.isBlank()
+                    false
             );
 
             // 3. 配置 RunnableConfig（传递 sessionId 到 metadata）
@@ -115,8 +126,18 @@ public class TeamLeadAgent {
                     .build();
 
             // 4. 启动流式执行
-            String runInput = inputMessage == null ? "" : inputMessage;
+            String runInput = resolveLeadRunInput(inputMessage);
+            long streamStartTimeMs = System.currentTimeMillis();
+            AtomicBoolean firstChunkObserved = new AtomicBoolean(false);
+            AtomicInteger streamedChunkCount = new AtomicInteger(0);
+            long[] firstChunkLatencyMs = new long[]{-1L};
+            String loopToken = sessionId + ":" + System.nanoTime();
+            runningLeadLoopTokens.put(sessionId, loopToken);
+            log.info("[TeamLeadAgent] LLM stream started: sessionId={}, inputChars={}",
+                    sessionId, runInput.length());
+
             Disposable disposable = reactAgent.stream(runInput, config)
+                    .timeout(Duration.ofSeconds(Math.max(30L, leadStreamTimeoutSeconds)))
                     .doOnNext(nodeOutput -> {
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
@@ -124,6 +145,12 @@ public class TeamLeadAgent {
                                 log.debug("[TeamLeadAgent] Received chunk: {}", chunk);
                                 String sanitized = sanitizeLeadChunk(chunk);
                                 if (!sanitized.isEmpty()) {
+                                    if (firstChunkObserved.compareAndSet(false, true)) {
+                                        firstChunkLatencyMs[0] = System.currentTimeMillis() - streamStartTimeMs;
+                                        log.info("[TeamLeadAgent] LLM first token: sessionId={}, latencyMs={}",
+                                                sessionId, firstChunkLatencyMs[0]);
+                                    }
+                                    streamedChunkCount.incrementAndGet();
                                     try {
                                         eventBus.publish(sessionId, new LeadOutputEvent(sessionId, sanitized));
                                     } catch (Exception e) {
@@ -134,6 +161,13 @@ public class TeamLeadAgent {
                         }
                     })
                     .doOnComplete(() -> {
+                        long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
+                        log.info("[TeamLeadAgent] LLM stream completed: sessionId={}, totalMs={}, firstTokenMs={}, chunkCount={}",
+                                sessionId, totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get());
+                        if (streamedChunkCount.get() == 0) {
+                            log.warn("[TeamLeadAgent] LLM round completed without textual output: sessionId={}, inputChars={}",
+                                    sessionId, runInput.length());
+                        }
                         boolean waitIntent = waitIntentService.consumeWaitingReply(leadInstanceId);
                         List<TeamMessage> boundaryMessages = safeReadLeadInbox(leadInstanceId);
                         if (waitIntent && boundaryMessages.isEmpty()) {
@@ -289,9 +323,27 @@ public class TeamLeadAgent {
                                 AgentExecutionStatus.FAILED,
                                 "lead loop error: " + e.getMessage()
                         );
-                        log.error("[TeamLeadAgent] Lead loop error: sessionId={}", sessionId, e);
+                        long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
+                        if (e instanceof TimeoutException) {
+                            log.error("[TeamLeadAgent] Lead loop timeout: sessionId={}, timeoutSeconds={}, elapsedMs={}, firstTokenMs={}, chunkCount={}",
+                                    sessionId, leadStreamTimeoutSeconds, totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get(), e);
+                        }
+                        log.error("[TeamLeadAgent] Lead loop error: sessionId={}, elapsedMs={}, firstTokenMs={}, chunkCount={}",
+                                sessionId, totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get(), e);
+                        try {
+                            eventBus.publish(sessionId, new ErrorEvent(sessionId, "Lead loop error: " + e.getMessage()));
+                        } catch (Exception publishError) {
+                            log.warn("[TeamLeadAgent] Failed to publish lead loop error event: sessionId={}", sessionId, publishError);
+                        }
                     })
+                    .doFinally(signalType -> clearLeadLoopIfCurrent(sessionId, loopToken))
                     .subscribe();
+
+            runningLeadLoops.put(sessionId, disposable);
+            String activeToken = runningLeadLoopTokens.get(sessionId);
+            if (!loopToken.equals(activeToken) || disposable.isDisposed()) {
+                runningLeadLoops.remove(sessionId, disposable);
+            }
 
             // 5. 注册 Disposable
             executionTracker.registerDisposable(sessionId, disposable);
@@ -300,6 +352,8 @@ public class TeamLeadAgent {
             return disposable;
 
         } catch (Exception e) {
+            runningLeadLoopTokens.remove(sessionId);
+            runningLeadLoops.remove(sessionId);
             log.error("[TeamLeadAgent] Failed to start Lead loop: sessionId={}", sessionId, e);
             throw new RuntimeException("Failed to start Team Lead Agent", e);
         }
@@ -343,7 +397,24 @@ public class TeamLeadAgent {
      */
     public void stopLeadLoop(String sessionId) {
         log.info("[TeamLeadAgent] Stopping Lead loop: sessionId={}", sessionId);
+        runningLeadLoopTokens.remove(sessionId);
+        Disposable disposable = runningLeadLoops.remove(sessionId);
+        if (disposable != null && !disposable.isDisposed()) {
+            disposable.dispose();
+        }
         executionTracker.cancelExecution(sessionId);
+    }
+
+    public boolean isLeadLoopRunning(String sessionId) {
+        Disposable disposable = runningLeadLoops.get(sessionId);
+        if (disposable == null) {
+            return false;
+        }
+        if (disposable.isDisposed()) {
+            runningLeadLoops.remove(sessionId, disposable);
+            return false;
+        }
+        return true;
     }
 
     public void clearLeadCheckpoint(String sessionId) {
@@ -471,5 +542,22 @@ public class TeamLeadAgent {
         }
         // 过滤函数调用控制标记，避免前端展示内部 token。
         return chunk.replaceAll("<\\|[^|]+\\|>", "");
+    }
+
+    private String resolveLeadRunInput(String inputMessage) {
+        if (inputMessage == null || inputMessage.isBlank()) {
+            return "Continue coordinating the team using the current inbox, teammates, and task board state.";
+        }
+        return inputMessage;
+    }
+
+    private void clearLeadLoopIfCurrent(String sessionId, String loopToken) {
+        runningLeadLoopTokens.compute(sessionId, (key, currentToken) -> {
+            if (!loopToken.equals(currentToken)) {
+                return currentToken;
+            }
+            runningLeadLoops.remove(sessionId);
+            return null;
+        });
     }
 }

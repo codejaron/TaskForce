@@ -2,8 +2,11 @@ package com.agent.api.controller;
 
 import com.agent.api.dto.TeamSessionHistoryDTO;
 import com.agent.api.response.ApiResponse;
+import com.agent.domain.execution.model.AgentExecutionStatus;
+import com.agent.domain.execution.service.AgentExecutionStateService;
 import com.agent.domain.taskboard.model.Task;
 import com.agent.domain.taskboard.service.TaskBoardService;
+import com.agent.domain.team.lead.TeamLeadAgent;
 import com.agent.domain.team.service.TeamHistoryPersistenceService;
 import com.agent.domain.team.service.TeamHistoryQueryService;
 import com.agent.domain.worker.model.WorkerInstance;
@@ -43,6 +46,8 @@ public class TeamController {
     private final TaskBoardService taskBoardService;
     private final TeamHistoryPersistenceService teamHistoryPersistenceService;
     private final TeamHistoryQueryService teamHistoryQueryService;
+    private final TeamLeadAgent teamLeadAgent;
+    private final AgentExecutionStateService executionStateService;
     private final EventBus eventBus;
     private final ObjectMapper objectMapper;
 
@@ -123,14 +128,45 @@ public class TeamController {
      * GET /api/v2/team/session/{sessionId}/workers
      */
     @GetMapping("/session/{sessionId}/workers")
-    public ApiResponse<List<WorkerInstance>> listWorkers(@PathVariable String sessionId) {
+    public ApiResponse<List<WorkerRuntimeDTO>> listWorkers(@PathVariable String sessionId) {
         log.info("[TeamController] Listing workers: sessionId={}", sessionId);
 
         try {
-            List<WorkerInstance> workers = workerInstanceManager.getRunningWorkers(sessionId);
+            List<WorkerRuntimeDTO> workers = workerInstanceManager.getAllWorkers(sessionId).stream()
+                    .map(this::buildWorkerRuntimeDto)
+                    .toList();
             return ApiResponse.success(workers);
         } catch (Exception e) {
             log.error("[TeamController] Failed to list workers", e);
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 获取 Lead + Worker 运行时状态（运行/停止/销毁）
+     * GET /api/v2/team/session/{sessionId}/runtime-status
+     */
+    @GetMapping("/session/{sessionId}/runtime-status")
+    public ApiResponse<TeamRuntimeStatusDTO> getRuntimeStatus(@PathVariable String sessionId) {
+        try {
+            String leadInstanceId = sessionId + "_lead";
+            AgentExecutionStatus leadExecutionStatus = executionStateService.getStatus(leadInstanceId);
+            boolean leadLoopRunning = teamLeadAgent.isLeadLoopRunning(sessionId);
+
+            List<WorkerRuntimeDTO> workers = workerInstanceManager.getAllWorkers(sessionId).stream()
+                    .map(this::buildWorkerRuntimeDto)
+                    .toList();
+
+            TeamRuntimeStatusDTO runtimeStatus = TeamRuntimeStatusDTO.builder()
+                    .leadLifecycleStatus(mapLeadLifecycleStatus(leadExecutionStatus, leadLoopRunning))
+                    .leadLoopRunning(leadLoopRunning)
+                    .leadExecutionStatus(leadExecutionStatus == null ? null : leadExecutionStatus.name())
+                    .workers(workers)
+                    .build();
+
+            return ApiResponse.success(runtimeStatus);
+        } catch (Exception e) {
+            log.error("[TeamController] Failed to get runtime status: sessionId={}", sessionId, e);
             return ApiResponse.error(e.getMessage());
         }
     }
@@ -274,6 +310,29 @@ public class TeamController {
         private String message;
     }
 
+    @Data
+    @lombok.Builder
+    public static class WorkerRuntimeDTO {
+        private String instanceId;
+        private Integer workerId;
+        private String agentName;
+        private String status;
+        private Integer currentTaskId;
+        private Boolean loopRunning;
+        private String lifecycleStatus;
+        private String startedAt;
+        private String updatedAt;
+    }
+
+    @Data
+    @lombok.Builder
+    public static class TeamRuntimeStatusDTO {
+        private String leadLifecycleStatus;
+        private Boolean leadLoopRunning;
+        private String leadExecutionStatus;
+        private List<WorkerRuntimeDTO> workers;
+    }
+
     private String buildSseData(OrchestrationEvent event) {
         try {
             Map<String, Object> payload = objectMapper.readValue(
@@ -296,5 +355,39 @@ public class TeamController {
                 return "{\"eventType\":\"" + event.getEventType() + "\"}";
             }
         }
+    }
+
+    private WorkerRuntimeDTO buildWorkerRuntimeDto(WorkerInstance worker) {
+        boolean loopRunning = workerInstanceManager.isRunning(worker.getInstanceId());
+        String lifecycleStatus;
+        if (worker.isShutdown()) {
+            lifecycleStatus = "DESTROYED";
+        } else if (loopRunning) {
+            lifecycleStatus = "RUNNING";
+        } else {
+            lifecycleStatus = "STOPPED";
+        }
+
+        return WorkerRuntimeDTO.builder()
+                .instanceId(worker.getInstanceId())
+                .workerId(worker.getWorkerId())
+                .agentName(worker.getName())
+                .status(worker.getStatus() == null ? null : worker.getStatus().name())
+                .currentTaskId(worker.getCurrentTaskId())
+                .loopRunning(loopRunning)
+                .lifecycleStatus(lifecycleStatus)
+                .startedAt(worker.getStartedAt() == null ? null : worker.getStartedAt().toString())
+                .updatedAt(worker.getUpdatedAt() == null ? null : worker.getUpdatedAt().toString())
+                .build();
+    }
+
+    private String mapLeadLifecycleStatus(AgentExecutionStatus leadExecutionStatus, boolean leadLoopRunning) {
+        if (leadExecutionStatus == AgentExecutionStatus.COMPLETED || leadExecutionStatus == AgentExecutionStatus.FAILED) {
+            return "DESTROYED";
+        }
+        if (leadLoopRunning || leadExecutionStatus == AgentExecutionStatus.EXECUTING || leadExecutionStatus == AgentExecutionStatus.RUNNING) {
+            return "RUNNING";
+        }
+        return "STOPPED";
     }
 }
