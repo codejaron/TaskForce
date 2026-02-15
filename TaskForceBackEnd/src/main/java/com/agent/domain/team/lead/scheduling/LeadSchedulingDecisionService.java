@@ -27,10 +27,10 @@ public class LeadSchedulingDecisionService {
         String leadInstanceId = sessionId + "_lead";
         boolean hasInboxMessages = safeHasInbox(leadInstanceId);
 
-        boolean hasRunnableTasks;
+        boolean hasDispatchableTasks;
         boolean hasUnfinishedTasks;
         try {
-            hasRunnableTasks = !taskBoardService.getAvailableTasks(sessionId).isEmpty();
+            hasDispatchableTasks = !taskBoardService.getAvailableTasks(sessionId).isEmpty();
             hasUnfinishedTasks = taskBoardService.listTasks(sessionId).stream()
                     .anyMatch(task -> !task.isCompleted() && !task.isFailed());
             if (!hasUnfinishedTasks && hasWorkersInFlight(sessionId)) {
@@ -39,11 +39,11 @@ public class LeadSchedulingDecisionService {
         } catch (Exception e) {
             log.warn("[LeadSchedulingDecisionService] Failed to evaluate task board, keep lead running: sessionId={}",
                     sessionId, e);
-            hasRunnableTasks = true;
+            hasDispatchableTasks = true;
             hasUnfinishedTasks = true;
         }
 
-        return new LeadSchedulingDecision(hasInboxMessages, hasRunnableTasks, hasUnfinishedTasks);
+        return new LeadSchedulingDecision(hasInboxMessages, hasDispatchableTasks, hasUnfinishedTasks);
     }
 
     private boolean safeHasInbox(String leadInstanceId) {

@@ -1,6 +1,9 @@
 package com.agent.domain.team.lead.tools;
 
 import com.agent.domain.execution.service.ExecutionWaitIntentService;
+import com.agent.domain.taskboard.model.Task;
+import com.agent.domain.taskboard.model.TaskStatus;
+import com.agent.domain.taskboard.service.TaskBoardService;
 import com.agent.domain.team.model.TeamMessage;
 import com.agent.domain.team.service.InboxService;
 import com.agent.domain.worker.model.WorkerInstance;
@@ -26,6 +29,7 @@ public class SendMessageTool implements ToolCallback {
 
     private final InboxService inboxService;
     private final WorkerInstanceManager workerInstanceManager;
+    private final TaskBoardService taskBoardService;
     private final ExecutionWaitIntentService waitIntentService;
     private final ObjectMapper objectMapper;
 
@@ -46,6 +50,14 @@ public class SendMessageTool implements ToolCallback {
                 "messageType": {
                   "type": "string",
                   "description": "消息类型（可选，默认为 USER_MESSAGE）"
+                },
+                "assignTask": {
+                  "type": "boolean",
+                  "description": "是否将该消息作为派工动作。为 true 时会先更新任务板分配状态，再通知 Worker。"
+                },
+                "taskId": {
+                  "type": "integer",
+                  "description": "任务 ID。仅当 assignTask=true 时必填。"
                 },
                 "expectReply": {
                   "type": "boolean",
@@ -77,12 +89,63 @@ public class SendMessageTool implements ToolCallback {
             int workerId = ((Number) args.get("workerId")).intValue();
             String content = (String) args.get("content");
             String messageType = (String) args.getOrDefault("messageType", "USER_MESSAGE");
+            boolean assignTask = Boolean.TRUE.equals(args.get("assignTask"));
+            Integer taskId = parseOptionalTaskId(args.get("taskId"));
             boolean expectReply = Boolean.TRUE.equals(args.get("expectReply"));
 
             WorkerInstance worker = workerInstanceManager.findBySessionAndWorkerId(sessionId, workerId)
                     .orElse(null);
             if (worker == null || worker.isShutdown()) {
                 return String.format("Worker #%d not found in current session", workerId);
+            }
+
+            if (assignTask) {
+                if (taskId == null || taskId <= 0) {
+                    return "Error sending message: taskId is required and must be positive when assignTask=true";
+                }
+                String assignmentResult = ensureTaskAssigned(sessionId, taskId, worker);
+
+                TeamMessage assignmentMessage = TeamMessage.builder()
+                        .from("team-lead")
+                        .fromInstanceId(sessionId + "_lead")
+                        .to(worker.getInstanceId())
+                        .text(String.valueOf(taskId))
+                        .type("ASSIGN_TASK")
+                        .build();
+                inboxService.send(assignmentMessage);
+
+                if (content != null && !content.isBlank()) {
+                    String instructionType = messageType == null || messageType.isBlank()
+                            || "ASSIGN_TASK".equalsIgnoreCase(messageType)
+                            ? "INSTRUCTION"
+                            : messageType;
+                    TeamMessage instructionMessage = TeamMessage.builder()
+                            .from("team-lead")
+                            .fromInstanceId(sessionId + "_lead")
+                            .to(worker.getInstanceId())
+                            .text(content)
+                            .type(instructionType)
+                            .build();
+                    inboxService.send(instructionMessage);
+                }
+
+                if (expectReply) {
+                    waitIntentService.markWaitingReply(sessionId + "_lead", "lead send_message expectReply=true");
+                }
+
+                log.info("[SendMessageTool] Assigned task and sent message: sessionId={}, workerId={}, instanceId={}, taskId={}, assignmentResult={}",
+                        sessionId, workerId, worker.getInstanceId(), taskId, assignmentResult);
+
+                if (expectReply) {
+                    return String.format("Task #%d assigned to worker #%d (%s), instruction sent, waiting for reply",
+                            taskId,
+                            workerId,
+                            assignmentResult);
+                }
+                return String.format("Task #%d assigned to worker #%d (%s), instruction sent",
+                        taskId,
+                        workerId,
+                        assignmentResult);
             }
 
             TeamMessage message = TeamMessage.builder()
@@ -92,13 +155,11 @@ public class SendMessageTool implements ToolCallback {
                     .text(content)
                     .type(messageType)
                     .build();
-
             inboxService.send(message);
 
             if (expectReply) {
                 waitIntentService.markWaitingReply(sessionId + "_lead", "lead send_message expectReply=true");
             }
-
             log.info("[SendMessageTool] Sent message: sessionId={}, workerId={}, instanceId={}",
                     sessionId, workerId, worker.getInstanceId());
 
@@ -121,5 +182,39 @@ public class SendMessageTool implements ToolCallback {
             }
         }
         throw new IllegalArgumentException("sessionId not found in tool context");
+    }
+
+    private Integer parseOptionalTaskId(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            return Integer.parseInt(text);
+        }
+        throw new IllegalArgumentException("taskId must be a number");
+    }
+
+    private String ensureTaskAssigned(String sessionId, int taskId, WorkerInstance worker) {
+        Task task = taskBoardService.getTask(sessionId, taskId);
+        String workerInstanceId = worker.getInstanceId();
+
+        if (task.getStatus() == TaskStatus.PENDING) {
+            taskBoardService.assignTask(sessionId, taskId, workerInstanceId);
+            return "newly-assigned";
+        }
+
+        if (task.getStatus() == TaskStatus.ASSIGNED && workerInstanceId.equals(task.getOwner())) {
+            return "already-assigned";
+        }
+
+        throw new IllegalStateException(String.format(
+                "Task #%d is not dispatchable (status=%s, owner=%s)",
+                taskId,
+                task.getStatus(),
+                task.getOwner()
+        ));
     }
 }

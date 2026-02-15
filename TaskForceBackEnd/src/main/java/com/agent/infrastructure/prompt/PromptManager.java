@@ -727,6 +727,7 @@ public class PromptManager {
         2. 用 spawn_worker 为可并行的任务创建 Worker，数量匹配并行度
         3. 用 list_tasks 监控进度并判断是否还有可分配任务
         4. 用 send_message 指导特定 Worker，broadcast 仅用于紧急情况
+           给已有 Worker 派任务时，send_message 必须传 assignTask=true 和 taskId
         5. 用 reply_user 向用户汇报关键进展（不要每步都报）
         6. 完成后用 shutdown_worker 清理，失败任务最多重试 2 次
 

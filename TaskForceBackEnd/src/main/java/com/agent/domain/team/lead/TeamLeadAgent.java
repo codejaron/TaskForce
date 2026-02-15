@@ -29,6 +29,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Component;
 import reactor.core.Disposable;
+import reactor.core.Disposables;
 
 import java.time.Duration;
 import java.util.List;
@@ -106,6 +107,7 @@ public class TeamLeadAgent {
             String systemPrompt = userMessage + "\n\n## 可用 Agent\n" + agentRoster
                     + "\n重要： spawn_worker 的 agentId 必须使用上面的数字 ID，不要编造。"
                     + "\n重要：后续 send_message/shutdown_worker 统一使用 workerId（数字），而不是 agentId。"
+                    + "\n重要：给已有 Worker 派任务时，必须使用 send_message 的 assignTask=true 且传 taskId。"
                     + "\n如果不确定当前有哪些 workerId，先调用 list_teammates。\n";
 
             // 2. 通过工厂收敛 Lead Agent 组装逻辑
@@ -116,7 +118,7 @@ public class TeamLeadAgent {
                     MAX_REACT_ITERATIONS,
                     chatModel,
                     chatOptions,
-                    false
+                    true
             );
 
             // 3. 配置 RunnableConfig（传递 sessionId 到 metadata）
@@ -127,6 +129,10 @@ public class TeamLeadAgent {
 
             // 4. 启动流式执行
             String runInput = normalizeRunInput(sessionId, leadInstanceId, inputMessage);
+            if (runInput == null || runInput.isBlank()) {
+                log.info("[TeamLeadAgent] Skip lead loop run due to waiting decision: sessionId={}", sessionId);
+                return Disposables.disposed();
+            }
             long streamStartTimeMs = System.currentTimeMillis();
             AtomicBoolean firstChunkObserved = new AtomicBoolean(false);
             AtomicInteger streamedChunkCount = new AtomicInteger(0);
@@ -209,7 +215,6 @@ public class TeamLeadAgent {
                             if (decision.shouldContinueNow()) {
                                 String schedulerWakeupInput = buildSchedulerWakeupInput(
                                         sessionId,
-                                        leadInstanceId,
                                         decision,
                                         "pending inbox/taskboard work"
                                 );
@@ -272,7 +277,6 @@ public class TeamLeadAgent {
                             if (finalDecision.shouldContinueNow()) {
                                 String schedulerWakeupInput = buildSchedulerWakeupInput(
                                         sessionId,
-                                        leadInstanceId,
                                         finalDecision,
                                         "late inbox/taskboard work"
                                 );
@@ -554,32 +558,22 @@ public class TeamLeadAgent {
             return normalized;
         }
         LeadSchedulingDecision decision = leadSchedulingDecisionService.evaluate(sessionId);
-        return buildSchedulerWakeupInput(sessionId, leadInstanceId, decision, "empty lead round input");
+        if (decision.shouldWait()) {
+            executionStateService.setStatus(
+                    leadInstanceId,
+                    AgentExecutionStatus.IDLE,
+                    "idle waiting for inbox/taskboard wakeup"
+            );
+            return null;
+        }
+        return buildSchedulerWakeupInput(sessionId, decision, "empty lead round input");
     }
 
     private String buildSchedulerWakeupInput(String sessionId,
-                                             String leadInstanceId,
                                              LeadSchedulingDecision decision,
                                              String reason) {
         String schedulerEvent = buildSchedulerWakeupMessage(decision, reason);
-        try {
-            TeamMessage schedulerMessage = TeamMessage.builder()
-                    .from("scheduler")
-                    .to(leadInstanceId)
-                    .type("TASK_EVENT")
-                    .text(schedulerEvent)
-                    .build();
-            inboxService.send(schedulerMessage);
-        } catch (Exception e) {
-            log.warn("[TeamLeadAgent] Failed to enqueue scheduler wakeup event: sessionId={}", sessionId, e);
-            return "From scheduler: " + schedulerEvent;
-        }
-
-        String wakeupInput = formatWakeupInput(safeReadLeadInbox(leadInstanceId));
-        if (wakeupInput == null || wakeupInput.isBlank()) {
-            return "From scheduler: " + schedulerEvent;
-        }
-        return wakeupInput;
+        return "From scheduler: " + schedulerEvent;
     }
 
     private String buildSchedulerWakeupMessage(LeadSchedulingDecision decision, String reason) {
@@ -587,10 +581,10 @@ public class TeamLeadAgent {
             return "Scheduler wakeup: decision unavailable, continue coordination.";
         }
         return String.format(
-                "Scheduler wakeup (%s): hasInboxMessages=%s, hasRunnableTasks=%s, hasUnfinishedTasks=%s. Continue coordination.",
+                "Scheduler wakeup (%s): hasInboxMessages=%s, hasDispatchableTasks=%s, hasUnfinishedTasks=%s. Continue coordination.",
                 reason,
                 decision.hasInboxMessages(),
-                decision.hasRunnableTasks(),
+                decision.hasDispatchableTasks(),
                 decision.hasUnfinishedTasks()
         );
     }

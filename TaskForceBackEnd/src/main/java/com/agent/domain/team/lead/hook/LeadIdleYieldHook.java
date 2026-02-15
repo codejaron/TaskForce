@@ -26,6 +26,11 @@ public class LeadIdleYieldHook extends ModelHook {
     @Override
     public CompletableFuture<Map<String, Object>> beforeModel(OverAllState state, RunnableConfig config) {
         LeadSchedulingDecision decision = decisionService.evaluate(sessionId);
+        // If inbox has new messages, end this round quickly so next round can consume them at boundary.
+        if (decision.hasInboxMessages()) {
+            log.debug("[LeadIdleYieldHook] Yield lead due to pending inbox messages: sessionId={}", sessionId);
+            return CompletableFuture.completedFuture(Map.of("jump_to", JumpTo.end));
+        }
         if (decision.shouldWait()) {
             log.debug("[LeadIdleYieldHook] Yield lead by jump_to=end: sessionId={}", sessionId);
             return CompletableFuture.completedFuture(Map.of("jump_to", JumpTo.end));
