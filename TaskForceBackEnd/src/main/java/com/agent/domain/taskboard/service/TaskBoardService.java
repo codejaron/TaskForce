@@ -7,7 +7,9 @@ import com.agent.domain.taskboard.repository.TaskBoardRepository;
 import com.agent.domain.taskboard.validator.TaskValidator;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.TaskClaimedEvent;
+import com.agent.infrastructure.event.events.TaskCompletedEvent;
 import com.agent.infrastructure.event.events.TaskCreatedEvent;
+import com.agent.infrastructure.event.events.TaskFailedEvent;
 import com.agent.infrastructure.event.events.TaskUnblockedEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -195,6 +197,10 @@ public class TaskBoardService {
     public void completeTask(String sessionId, int taskId, String completionNote) {
         Task task = taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
+        if (task.isCompleted()) {
+            log.info("Task already completed, skip duplicate completeTask: sessionId={}, taskId={}", sessionId, taskId);
+            return;
+        }
 
         String normalizedCompletionNote = normalizeCompletionNote(completionNote);
 
@@ -249,6 +255,19 @@ public class TaskBoardService {
 
             // 解析结果并发布事件
             if (result != null && result.contains("success")) {
+                Task completedTask = null;
+                try {
+                    completedTask = taskBoardRepository.findById(sessionId, taskId).orElse(task);
+                    eventBus.publish(sessionId, new TaskCompletedEvent(
+                            sessionId,
+                            taskId,
+                            completedTask.getOwner(),
+                            completedTask.getCompletionNote()
+                    ));
+                } catch (Exception e) {
+                    log.warn("Failed to publish TaskCompletedEvent: sessionId={}, taskId={}", sessionId, taskId, e);
+                }
+
                 // 解析被解锁的任务列表
                 if (result.contains("unblocked")) {
                     try {
@@ -295,9 +314,14 @@ public class TaskBoardService {
     public void failTask(String sessionId, int taskId) {
         Task task = taskBoardRepository.findById(sessionId, taskId)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found: " + taskId));
+        if (task.isFailed()) {
+            log.info("Task already failed, skip duplicate failTask: sessionId={}, taskId={}", sessionId, taskId);
+            return;
+        }
 
         task.fail();
         taskBoardRepository.save(task);
+        eventBus.publish(sessionId, new TaskFailedEvent(sessionId, taskId, task.getOwner()));
         log.info("Task failed: sessionId={}, taskId={}", sessionId, taskId);
     }
 

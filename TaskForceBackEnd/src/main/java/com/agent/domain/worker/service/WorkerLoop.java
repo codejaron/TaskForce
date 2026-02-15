@@ -16,8 +16,6 @@ import com.agent.domain.worker.repository.WorkerInstanceRepository;
 import com.agent.infrastructure.agent.CheckpointThreadIds;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
-import com.agent.infrastructure.event.events.TaskCompletedEvent;
-import com.agent.infrastructure.event.events.TaskFailedEvent;
 import com.agent.infrastructure.event.events.WorkerOutputEvent;
 import com.agent.service.SessionExecutionTracker;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
@@ -335,7 +333,6 @@ public class WorkerLoop implements Runnable {
             return;
         }
         if (outcome.isTerminal()) {
-            publishTaskTerminalEvent(taskId, outcome);
             workerInstance.clearAssignedTask();
             workerRepository.save(workerInstance);
         }
@@ -778,42 +775,6 @@ public class WorkerLoop implements Runnable {
             return first;
         }
         return first + "\n\n" + second;
-    }
-
-    private void publishTaskTerminalEvent(int taskId, TaskExecutionOutcome outcome) {
-        if (taskId <= 0 || outcome == null) {
-            return;
-        }
-
-        String sessionId = workerInstance.getSessionId();
-        if (sessionId == null || sessionId.isBlank()) {
-            return;
-        }
-
-        try {
-            Task latestTask = taskBoardService.getTask(sessionId, taskId);
-            if (outcome == TaskExecutionOutcome.COMPLETED && latestTask.isCompleted()) {
-                eventBus.publish(sessionId, new TaskCompletedEvent(
-                        sessionId,
-                        taskId,
-                        latestTask.getOwner(),
-                        latestTask.getCompletionNote()
-                ));
-                log.info("[WorkerLoop] Published task-completed event at worker terminal: taskId={}", taskId);
-                return;
-            }
-
-            if (outcome == TaskExecutionOutcome.FAILED && latestTask.isFailed()) {
-                eventBus.publish(sessionId, new TaskFailedEvent(
-                        sessionId,
-                        taskId,
-                        latestTask.getOwner()
-                ));
-                log.info("[WorkerLoop] Published task-failed event at worker terminal: taskId={}", taskId);
-            }
-        } catch (Exception e) {
-            log.warn("[WorkerLoop] Failed to publish task terminal event: taskId={}, outcome={}", taskId, outcome, e);
-        }
     }
 
     private void releaseWorkerCheckpoint() {

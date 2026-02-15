@@ -5,12 +5,12 @@ package com.agent.domain.team.lead.scheduling;
  */
 public record LeadSchedulingDecision(
         boolean hasInboxMessages,
-        boolean hasRunnableTasks,
+        boolean hasDispatchableTasks,
         boolean hasUnfinishedTasks
 ) {
 
     public boolean shouldContinueNow() {
-        return hasInboxMessages || hasRunnableTasks;
+        return hasDispatchableTasks;
     }
 
     public boolean shouldWait() {
