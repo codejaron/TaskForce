@@ -166,17 +166,21 @@ public class ReactAgentFactory {
         );
 
         // 7. 构建 ReactAgent
-        ReactAgent reactAgent = ReactAgent.builder()
+        Builder builder = ReactAgent.builder()
                 .name(agent.getName())
                 .model(chatModel)
                 .chatOptions(chatOptions)
-                .instruction(instruction)
                 .systemPrompt(agent.getSystemPrompt())
                 .tools(tools)
                 .hooks(hooks)
                 .interceptors(toolInterceptor)  // 注册 interceptor
-                .saver(checkpointSaver)
-                .build();
+                .saver(checkpointSaver);
+
+        if (instruction != null && !instruction.isBlank()) {
+            builder.instruction(instruction);
+        }
+
+        ReactAgent reactAgent = builder.build();
 
         log.info("[ReactAgentFactory] ReactAgent built successfully: {}", agent.getName());
         return reactAgent;
