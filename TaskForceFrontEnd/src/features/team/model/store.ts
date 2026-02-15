@@ -1110,7 +1110,12 @@ function handleSSEEvent(
         const from = typeof data.from === 'string' ? data.from : '';
         const to = typeof data.to === 'string' ? data.to : '';
         const text = typeof data.text === 'string' ? data.text : '';
+        const messageType = typeof data.messageType === 'string' ? data.messageType.trim().toUpperCase() : '';
         const fromInstanceId = typeof data.fromInstanceId === 'string' ? data.fromInstanceId : undefined;
+        if (messageType === 'ASSIGN_TASK') {
+          // Internal dispatch control message; do not render in chat panels.
+          break;
+        }
         if (!text.trim()) {
           break;
         }

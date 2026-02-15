@@ -38,6 +38,10 @@ public class TeamHistoryEventListener {
             return;
         }
 
+        if (isControlInboxMessage(event.getMessageType())) {
+            return;
+        }
+
         String text = event.getText();
         if (text == null || text.isBlank()) {
             return;
@@ -103,5 +107,10 @@ public class TeamHistoryEventListener {
             return null;
         }
         return value.trim().toLowerCase();
+    }
+
+    private boolean isControlInboxMessage(String messageType) {
+        String normalized = safeLower(messageType);
+        return "assign_task".equals(normalized);
     }
 }

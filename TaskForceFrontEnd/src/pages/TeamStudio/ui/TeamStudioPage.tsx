@@ -3,7 +3,6 @@ import {
   Users,
   Activity,
   Plus,
-  FolderOpen,
   X,
   ChevronLeft,
   ChevronRight,
@@ -17,7 +16,6 @@ import { LeadChatPanel } from '../../../features/team-lead/ui';
 import { WorkerChatPanel } from '../../../features/team/ui/WorkerChatPanel';
 import { useTeamStore } from '../../../features/team/model/store';
 import { useAgentStore } from '../../../features/agents/model/store';
-import { desktopClient } from '../../../shared/desktop/client';
 
 export const TeamStudioPage: React.FC = () => {
 
@@ -45,8 +43,6 @@ export const TeamStudioPage: React.FC = () => {
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [showTaskBoard, setShowTaskBoard] = useState(false);
-  const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null);
-  const [isPickingProjectDirectory, setIsPickingProjectDirectory] = useState(false);
 
   // Filter agents - only show WORKER type agents to users
   const workerAgents = agents.filter(agent => {
@@ -64,17 +60,6 @@ export const TeamStudioPage: React.FC = () => {
 
   useEffect(() => {
     setShowTaskBoard(false);
-  }, [currentSession?.id]);
-
-  useEffect(() => {
-    if (!desktopClient.isDesktop() || !currentSession?.id) {
-      setSelectedProjectPath(null);
-      return;
-    }
-
-    void desktopClient.getSelectedProjectDirectory(currentSession.id)
-      .then(path => setSelectedProjectPath(path))
-      .catch(() => setSelectedProjectPath(null));
   }, [currentSession?.id]);
 
   const ownerNameById = useMemo(
@@ -155,26 +140,6 @@ export const TeamStudioPage: React.FC = () => {
         console.error('Failed to delete session:', error);
         alert('Failed to delete session');
       }
-    }
-  };
-
-  const handleBindProject = async () => {
-    if (!currentSession) {
-      return;
-    }
-
-    setIsPickingProjectDirectory(true);
-    try {
-      const selection = await desktopClient.pickProjectDirectory(currentSession.id);
-      if (selection.canceled || !selection.path) {
-        return;
-      }
-      setSelectedProjectPath(selection.path);
-    } catch (error) {
-      console.error('Failed to bind local project:', error);
-      alert(error instanceof Error ? error.message : 'Failed to bind local project');
-    } finally {
-      setIsPickingProjectDirectory(false);
     }
   };
 
@@ -280,27 +245,7 @@ export const TeamStudioPage: React.FC = () => {
                   <h1 className="text-xl font-bold text-gray-900">{currentSession.name}</h1>
                   <p className="text-sm text-gray-500">Team Studio</p>
                 </div>
-                <div className="flex flex-col items-end gap-2">
-                  {desktopClient.isDesktop() && (
-                    <button
-                      onClick={handleBindProject}
-                      disabled={isPickingProjectDirectory}
-                      className={clsx(
-                        "px-3 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2 border",
-                        selectedProjectPath
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                          : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100",
-                        isPickingProjectDirectory && "opacity-70 cursor-wait"
-                      )}
-                    >
-                      {isPickingProjectDirectory
-                        ? <Loader2 size={16} className="animate-spin" />
-                        : <FolderOpen size={16} />
-                      }
-                      <span>{selectedProjectPath ? '项目目录已选择' : '选择项目目录'}</span>
-                    </button>
-                  )}
-
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => setShowTaskBoard(true)}
                     className="px-3 py-2 border border-blue-200 bg-blue-50 text-blue-700 rounded-xl text-sm font-medium hover:bg-blue-100 transition-colors cursor-pointer flex items-center gap-2"
@@ -313,16 +258,6 @@ export const TeamStudioPage: React.FC = () => {
                   </button>
                 </div>
               </div>
-              {desktopClient.isDesktop() && (
-                <p className={clsx(
-                  "mt-2 text-xs",
-                  selectedProjectPath ? "text-emerald-700" : "text-amber-700"
-                )}>
-                  {selectedProjectPath
-                    ? `项目目录: ${selectedProjectPath}`
-                    : '尚未选择项目目录'}
-                </p>
-              )}
             </div>
 
             <div className="flex-1 flex overflow-hidden relative flex-col lg:flex-row">
@@ -335,7 +270,7 @@ export const TeamStudioPage: React.FC = () => {
               <div className="h-1/2 lg:h-full lg:w-1/2 flex flex-col bg-gray-50">
                 {/* Worker Tab 头 */}
                 <div className="flex-shrink-0 px-2 py-2 border-b border-gray-200 bg-white overflow-x-auto">
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-start gap-2">
                     <Users size={16} className="text-green-600 shrink-0 mr-1" />
                     {members.length === 0 ? (
                       <span className="text-xs text-gray-400">暂无 Worker</span>
@@ -347,19 +282,24 @@ export const TeamStudioPage: React.FC = () => {
                             activeWorkerId === m.instanceId ? null : m.instanceId
                           )}
                           className={clsx(
-                            "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer border",
+                            "min-w-[180px] max-w-[220px] px-3 py-2 rounded-xl border transition-colors cursor-pointer text-left shrink-0",
                             activeWorkerId === m.instanceId
                               ? "bg-green-100 text-green-800 border-green-300"
-                              : "bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200"
+                              : "bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200"
                           )}
                         >
+                          <span className="block w-full truncate text-sm font-semibold leading-5">
+                            {m.agentName}
+                          </span>
                           <span className={clsx(
-                            "inline-block w-1.5 h-1.5 rounded-full mr-1.5",
-                            lifecycleDotClass(m.lifecycleStatus)
-                          )} />
-                          {m.agentName}
-                          <span className="ml-1 opacity-70">
-                            {lifecycleLabel(m.lifecycleStatus)}
+                            "mt-1 inline-flex items-center gap-1 text-[11px] leading-4",
+                            activeWorkerId === m.instanceId ? "text-green-700/80" : "text-gray-500"
+                          )}>
+                            <span className={clsx(
+                              "inline-block w-1.5 h-1.5 rounded-full",
+                              lifecycleDotClass(m.lifecycleStatus)
+                            )} />
+                            <span>{lifecycleLabel(m.lifecycleStatus)}</span>
                           </span>
                         </button>
                       ))
