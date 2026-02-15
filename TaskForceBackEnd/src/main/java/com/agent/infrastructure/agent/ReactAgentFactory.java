@@ -2,10 +2,8 @@ package com.agent.infrastructure.agent;
 
 import com.agent.domain.team.lead.TeamLeadToolProvider;
 import com.agent.domain.team.lead.hook.LeadIdleYieldHook;
-import com.agent.domain.team.lead.hook.LeadInboxCheckHook;
 import com.agent.domain.team.lead.scheduling.LeadSchedulingDecisionService;
 import com.agent.domain.worker.execution.WorkerToolProvider;
-import com.agent.domain.worker.hook.InboxCheckHook;
 import com.agent.infrastructure.agent.hook.ModelCallLimitHook;
 import com.agent.infrastructure.agent.interceptor.ContextEnrichingToolInterceptor;
 import com.agent.infrastructure.agent.interceptor.EventPublishingToolInterceptor;
@@ -15,7 +13,6 @@ import com.agent.infrastructure.mcp.RemoteMcpClient;
 import com.agent.infrastructure.memory.DbChatMemory;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.persistence.mapper.AgentMapper;
-import com.agent.infrastructure.persistence.redis.RedisInboxRepository;
 import com.agent.service.AgentToolService;
 import com.agent.service.SessionService;
 import com.agent.service.ToolCallService;
@@ -26,7 +23,6 @@ import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.agent.hook.Hook;
 import com.alibaba.cloud.ai.graph.agent.hook.summarization.SummarizationHook;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
@@ -58,7 +54,6 @@ public class ReactAgentFactory {
     private final ToolCallService toolCallService;
     private final DbChatMemory dbChatMemory;
     private final SessionService sessionService;
-    private final RedisInboxRepository redisInboxRepository;
     private final TeamLeadToolProvider teamLeadToolProvider;
     private final WorkerToolProvider workerToolProvider;
     private final LeadSchedulingDecisionService leadSchedulingDecisionService;
@@ -73,7 +68,6 @@ public class ReactAgentFactory {
             @Lazy ToolCallService toolCallService,
             DbChatMemory dbChatMemory,
             @Lazy SessionService sessionService,
-            RedisInboxRepository redisInboxRepository,
             @Lazy TeamLeadToolProvider teamLeadToolProvider,
             @Lazy WorkerToolProvider workerToolProvider,
             @Lazy LeadSchedulingDecisionService leadSchedulingDecisionService,
@@ -89,7 +83,6 @@ public class ReactAgentFactory {
         this.toolCallService = toolCallService;
         this.dbChatMemory = dbChatMemory;
         this.sessionService = sessionService;
-        this.redisInboxRepository = redisInboxRepository;
         this.teamLeadToolProvider = teamLeadToolProvider;
         this.workerToolProvider = workerToolProvider;
         this.leadSchedulingDecisionService = leadSchedulingDecisionService;
@@ -104,7 +97,7 @@ public class ReactAgentFactory {
      * @param sessionId   会话 ID
      * @param stepId      步骤 ID
      * @param stepIndex   步骤索引
-     * @param instanceId  Worker 实例 ID（可选，用于 InboxCheckHook）
+     * @param instanceId  Worker 实例 ID（可选，用于 ToolContext）
      * @return ReactAgent 实例
      */
     public ReactAgent buildWorkerReactAgent(Long agentId, String instruction, int maxModelCalls,
@@ -151,14 +144,7 @@ public class ReactAgentFactory {
         ModelCallLimitHook limitHook = new ModelCallLimitHook(maxModelCalls);
         hooks.add(limitHook);
 
-        // 5.2 添加 InboxCheckHook（检查 Worker 收件箱）
-        if (instanceId != null) {
-            InboxCheckHook inboxHook = new InboxCheckHook(redisInboxRepository, sessionId, instanceId);
-            hooks.add(inboxHook);
-            log.info("  Added InboxCheckHook for worker instance: {}", instanceId);
-        }
-
-        // 5.3 添加 SummarizationHook（控制长链路上下文）
+        // 5.2 添加 SummarizationHook（控制长链路上下文）
         SummarizationHook summarizationHook = SummarizationHook.builder()
                 .model(chatModel)
                 .maxTokensBeforeSummary(6000)
@@ -167,7 +153,7 @@ public class ReactAgentFactory {
         hooks.add(summarizationHook);
         log.info("  Added SummarizationHook for worker (maxTokens: 6000, keepMessages: 10)");
 
-        // 5.4 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
+        // 5.3 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
         if (skillsAgentHook != null) {
             hooks.add(skillsAgentHook);
             log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());
@@ -385,7 +371,6 @@ public class ReactAgentFactory {
         hooks.add(limitHook);
 
         // 5.2 添加 Lead 空转让出 Hook（系统状态机判定）
-        // 放在 InboxCheck 之前，避免读走 inbox 后误判 shouldWait 并提前跳过本轮。
         if (enableIdleYield) {
             LeadIdleYieldHook leadIdleYieldHook = new LeadIdleYieldHook(sessionId, leadSchedulingDecisionService);
             hooks.add(leadIdleYieldHook);
@@ -393,11 +378,7 @@ public class ReactAgentFactory {
             log.info("[ReactAgentFactory] Lead idle-yield hook disabled for this round: sessionId={}", sessionId);
         }
 
-        // 5.3 添加 Lead Inbox 自动收件 Hook
-        LeadInboxCheckHook leadInboxCheckHook = new LeadInboxCheckHook(redisInboxRepository, sessionId);
-        hooks.add(leadInboxCheckHook);
-
-        // 5.4 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
+        // 5.3 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
         if (skillsAgentHook != null) {
             hooks.add(skillsAgentHook);
             log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());

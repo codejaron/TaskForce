@@ -11,6 +11,7 @@ import com.agent.domain.worker.service.WorkerInstanceManager;
 import com.agent.infrastructure.agent.CheckpointThreadIds;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
+import com.agent.infrastructure.event.events.LeadOutputEvent;
 import com.agent.infrastructure.event.events.SessionCompleteEvent;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.service.AgentService;
@@ -121,6 +122,14 @@ public class TeamLeadAgent {
                             String chunk = streamingOutput.chunk();
                             if (chunk != null && !chunk.isEmpty()) {
                                 log.debug("[TeamLeadAgent] Received chunk: {}", chunk);
+                                String sanitized = sanitizeLeadChunk(chunk);
+                                if (!sanitized.isEmpty()) {
+                                    try {
+                                        eventBus.publish(sessionId, new LeadOutputEvent(sessionId, sanitized));
+                                    } catch (Exception e) {
+                                        log.warn("[TeamLeadAgent] Failed to publish lead_output chunk: sessionId={}", sessionId, e);
+                                    }
+                                }
                             }
                         }
                     })
@@ -454,5 +463,13 @@ public class TeamLeadAgent {
                     .append(": ").append(message.getText());
         }
         return builder.toString();
+    }
+
+    private String sanitizeLeadChunk(String chunk) {
+        if (chunk == null || chunk.isEmpty()) {
+            return "";
+        }
+        // 过滤函数调用控制标记，避免前端展示内部 token。
+        return chunk.replaceAll("<\\|[^|]+\\|>", "");
     }
 }

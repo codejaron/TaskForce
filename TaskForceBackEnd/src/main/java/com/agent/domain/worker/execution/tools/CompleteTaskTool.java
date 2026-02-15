@@ -1,6 +1,7 @@
 package com.agent.domain.worker.execution.tools;
 
 import com.agent.domain.taskboard.service.TaskBoardService;
+import com.agent.domain.worker.service.WorkerRoundControlService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +22,7 @@ import java.util.Map;
 public class CompleteTaskTool implements ToolCallback {
 
     private final TaskBoardService taskBoardService;
+    private final WorkerRoundControlService workerRoundControlService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -78,6 +80,10 @@ public class CompleteTaskTool implements ToolCallback {
             String summary = (String) args.get("summary");
 
             taskBoardService.completeTask(sessionId, taskId, summary);
+            String instanceId = extractInstanceId(toolContext);
+            if (instanceId != null) {
+                workerRoundControlService.stopCurrentRound(instanceId, "complete_task called");
+            }
 
             log.info("[CompleteTaskTool] Task completed: taskId={}", taskId);
 
@@ -130,5 +136,17 @@ public class CompleteTaskTool implements ToolCallback {
             return null;
         }
         return parseTaskId(currentTaskId);
+    }
+
+    private String extractInstanceId(ToolContext toolContext) {
+        if (toolContext == null || toolContext.getContext() == null) {
+            return null;
+        }
+        Object instanceId = toolContext.getContext().get("instanceId");
+        if (instanceId == null) {
+            return null;
+        }
+        String text = instanceId.toString();
+        return text.isBlank() ? null : text;
     }
 }

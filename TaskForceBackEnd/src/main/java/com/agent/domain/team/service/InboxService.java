@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -46,6 +47,7 @@ public class InboxService {
         eventBus.publish(sessionId, new InboxMessageEvent(
                 sessionId,
                 message.getFrom(),
+                message.getFromInstanceId(),
                 instanceId,
                 message.getType(),
                 message.getText()
@@ -101,6 +103,21 @@ public class InboxService {
         log.debug("[InboxService] Reading inbox: sessionId={}, instanceId={}", sessionId, instanceId);
 
         return inboxRepository.readInbox(sessionId, instanceId);
+    }
+
+    /**
+     * 阻塞读取收件箱（最多阻塞 blockTimeout）
+     */
+    public List<TeamMessage> readInboxBlocking(String instanceId, Duration blockTimeout, int limit) {
+        if (instanceId == null) {
+            throw new IllegalArgumentException("InstanceId cannot be null");
+        }
+
+        String sessionId = extractSessionId(instanceId);
+        log.debug("[InboxService] Blocking read inbox: sessionId={}, instanceId={}, timeout={}, limit={}",
+                sessionId, instanceId, blockTimeout, limit);
+
+        return inboxRepository.readInboxBlocking(sessionId, instanceId, blockTimeout, limit);
     }
 
     /**

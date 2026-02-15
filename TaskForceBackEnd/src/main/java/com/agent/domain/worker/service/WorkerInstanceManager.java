@@ -44,6 +44,7 @@ public class WorkerInstanceManager {
     private final BaseCheckpointSaver checkpointSaver;
     private final AgentExecutionStateService executionStateService;
     private final ExecutionWaitIntentService waitIntentService;
+    private final WorkerRoundControlService workerRoundControlService;
 
     public WorkerInstanceManager(
             WorkerInstanceRepository workerRepository,
@@ -55,7 +56,8 @@ public class WorkerInstanceManager {
             TeamTaskContextService teamTaskContextService,
             BaseCheckpointSaver checkpointSaver,
             AgentExecutionStateService executionStateService,
-            ExecutionWaitIntentService waitIntentService) {
+            ExecutionWaitIntentService waitIntentService,
+            WorkerRoundControlService workerRoundControlService) {
         this.workerRepository = workerRepository;
         this.taskBoardService = taskBoardService;
         this.reactAgentFactory = reactAgentFactory;
@@ -66,6 +68,7 @@ public class WorkerInstanceManager {
         this.checkpointSaver = checkpointSaver;
         this.executionStateService = executionStateService;
         this.waitIntentService = waitIntentService;
+        this.workerRoundControlService = workerRoundControlService;
     }
 
     // 线程池：用于运行 WorkerLoop
@@ -365,6 +368,7 @@ public class WorkerInstanceManager {
                 checkpointSaver,
                 executionStateService,
                 waitIntentService,
+                workerRoundControlService,
                 startupResumeInput,
                 () -> runningLoops.remove(instance.getInstanceId(), holder[0])
         );
