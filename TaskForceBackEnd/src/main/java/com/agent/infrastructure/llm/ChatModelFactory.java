@@ -112,7 +112,9 @@ public class ChatModelFactory {
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
             .model(configuredModel != null ? configuredModel : "deepseek-chat")
-            .streamUsage(true)
+            // Some OpenAI-compatible providers emit usage-only terminal chunks.
+            // In ReactAgent graph streaming path this may surface as empty message flux.
+            .streamUsage(false)
             .build();
 
         return OpenAiChatModel.builder()
@@ -171,7 +173,7 @@ public class ChatModelFactory {
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
             .model(configuredModel != null ? configuredModel : "llama2")
-            .streamUsage(true)
+            .streamUsage(false)
             .build();
 
         return OpenAiChatModel.builder()

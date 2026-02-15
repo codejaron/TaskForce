@@ -36,20 +36,20 @@ public class AiObservationPersistHandler implements ObservationHandler<ChatModel
         }
 
         // 直接用接口获取 tools，不用反射
-        if (options instanceof org.springframework.ai.model.tool.ToolCallingChatOptions toolOptions) {
-            var callbacks = toolOptions.getToolCallbacks();
-            if (callbacks != null && !callbacks.isEmpty()) {
-                sb.append("\n[TOOLS] (").append(callbacks.size()).append(")\n");
-                for (var cb : callbacks) {
-                    var def = cb.getToolDefinition();
-                    sb.append("  - ").append(def.name()).append(": ").append(def.description()).append("\n");
-                }
-            }
-            var toolNames = toolOptions.getToolNames();
-            if (toolNames != null && !toolNames.isEmpty()) {
-                sb.append("[TOOL_NAMES] ").append(toolNames).append("\n");
-            }
-        }
+//        if (options instanceof org.springframework.ai.model.tool.ToolCallingChatOptions toolOptions) {
+//            var callbacks = toolOptions.getToolCallbacks();
+//            if (callbacks != null && !callbacks.isEmpty()) {
+//                sb.append("\n[TOOLS] (").append(callbacks.size()).append(")\n");
+//                for (var cb : callbacks) {
+//                    var def = cb.getToolDefinition();
+//                    sb.append("  - ").append(def.name()).append(": ").append(def.description()).append("\n");
+//                }
+//            }
+//            var toolNames = toolOptions.getToolNames();
+//            if (toolNames != null && !toolNames.isEmpty()) {
+//                sb.append("[TOOL_NAMES] ").append(toolNames).append("\n");
+//            }
+//        }
 
         sb.append("\n===============================");
         log.info(sb.toString());

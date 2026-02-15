@@ -126,7 +126,7 @@ public class TeamLeadAgent {
                     .build();
 
             // 4. 启动流式执行
-            String runInput = resolveLeadRunInput(inputMessage);
+            String runInput = normalizeRunInput(sessionId, leadInstanceId, inputMessage);
             long streamStartTimeMs = System.currentTimeMillis();
             AtomicBoolean firstChunkObserved = new AtomicBoolean(false);
             AtomicInteger streamedChunkCount = new AtomicInteger(0);
@@ -207,6 +207,12 @@ public class TeamLeadAgent {
                         } else {
                             LeadSchedulingDecision decision = leadSchedulingDecisionService.evaluate(sessionId);
                             if (decision.shouldContinueNow()) {
+                                String schedulerWakeupInput = buildSchedulerWakeupInput(
+                                        sessionId,
+                                        leadInstanceId,
+                                        decision,
+                                        "pending inbox/taskboard work"
+                                );
                                 continueLeadLoop(
                                         sessionId,
                                         leadInstanceId,
@@ -214,7 +220,7 @@ public class TeamLeadAgent {
                                         userMessage,
                                         chatModel,
                                         chatOptions,
-                                        "",
+                                        schedulerWakeupInput,
                                         "lead continues due to pending inbox/taskboard work"
                                 );
                                 log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
@@ -264,6 +270,12 @@ public class TeamLeadAgent {
 
                             LeadSchedulingDecision finalDecision = leadSchedulingDecisionService.evaluate(sessionId);
                             if (finalDecision.shouldContinueNow()) {
+                                String schedulerWakeupInput = buildSchedulerWakeupInput(
+                                        sessionId,
+                                        leadInstanceId,
+                                        finalDecision,
+                                        "late inbox/taskboard work"
+                                );
                                 continueLeadLoop(
                                         sessionId,
                                         leadInstanceId,
@@ -271,7 +283,7 @@ public class TeamLeadAgent {
                                         userMessage,
                                         chatModel,
                                         chatOptions,
-                                        "",
+                                        schedulerWakeupInput,
                                         "lead continues due to late inbox/taskboard work"
                                 );
                                 log.info("[TeamLeadAgent] Lead loop completed: sessionId={}", sessionId);
@@ -536,19 +548,59 @@ public class TeamLeadAgent {
         return builder.toString();
     }
 
+    private String normalizeRunInput(String sessionId, String leadInstanceId, String inputMessage) {
+        String normalized = inputMessage == null ? "" : inputMessage.trim();
+        if (!normalized.isBlank()) {
+            return normalized;
+        }
+        LeadSchedulingDecision decision = leadSchedulingDecisionService.evaluate(sessionId);
+        return buildSchedulerWakeupInput(sessionId, leadInstanceId, decision, "empty lead round input");
+    }
+
+    private String buildSchedulerWakeupInput(String sessionId,
+                                             String leadInstanceId,
+                                             LeadSchedulingDecision decision,
+                                             String reason) {
+        String schedulerEvent = buildSchedulerWakeupMessage(decision, reason);
+        try {
+            TeamMessage schedulerMessage = TeamMessage.builder()
+                    .from("scheduler")
+                    .to(leadInstanceId)
+                    .type("TASK_EVENT")
+                    .text(schedulerEvent)
+                    .build();
+            inboxService.send(schedulerMessage);
+        } catch (Exception e) {
+            log.warn("[TeamLeadAgent] Failed to enqueue scheduler wakeup event: sessionId={}", sessionId, e);
+            return "From scheduler: " + schedulerEvent;
+        }
+
+        String wakeupInput = formatWakeupInput(safeReadLeadInbox(leadInstanceId));
+        if (wakeupInput == null || wakeupInput.isBlank()) {
+            return "From scheduler: " + schedulerEvent;
+        }
+        return wakeupInput;
+    }
+
+    private String buildSchedulerWakeupMessage(LeadSchedulingDecision decision, String reason) {
+        if (decision == null) {
+            return "Scheduler wakeup: decision unavailable, continue coordination.";
+        }
+        return String.format(
+                "Scheduler wakeup (%s): hasInboxMessages=%s, hasRunnableTasks=%s, hasUnfinishedTasks=%s. Continue coordination.",
+                reason,
+                decision.hasInboxMessages(),
+                decision.hasRunnableTasks(),
+                decision.hasUnfinishedTasks()
+        );
+    }
+
     private String sanitizeLeadChunk(String chunk) {
         if (chunk == null || chunk.isEmpty()) {
             return "";
         }
         // 过滤函数调用控制标记，避免前端展示内部 token。
         return chunk.replaceAll("<\\|[^|]+\\|>", "");
-    }
-
-    private String resolveLeadRunInput(String inputMessage) {
-        if (inputMessage == null || inputMessage.isBlank()) {
-            return "Continue coordinating the team using the current inbox, teammates, and task board state.";
-        }
-        return inputMessage;
     }
 
     private void clearLeadLoopIfCurrent(String sessionId, String loopToken) {

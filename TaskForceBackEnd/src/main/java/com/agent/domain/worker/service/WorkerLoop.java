@@ -50,6 +50,12 @@ public class WorkerLoop implements Runnable {
     private static final int MAX_REACT_ITERATIONS = 20;
     private static final int BLOCKED_CHECK_INTERVAL_MS = 3000; // 等待阻塞解除的检查间隔
     private static final int INBOX_BATCH_LIMIT = 200;
+    private static final String TASK_EXECUTION_INSTRUCTION = """
+            你是团队模式下的 Worker，正在执行 Task Board 指派的任务。
+            严格按照本轮用户输入中的任务说明执行，并使用可用工具完成目标。
+            必须在任务完成时调用 complete_task，summary 必须是一句 completionNote。
+            除非任务要求，否则不要回复与任务无关的内容。
+            """;
 
     private final WorkerInstance workerInstance;
     private final WorkerInstanceRepository workerRepository;
@@ -271,6 +277,7 @@ public class WorkerLoop implements Runnable {
             case "USER_MESSAGE":
             case "INSTRUCTION":
             case "MESSAGE":
+            case "TASK_EVENT":
                 log.info("[WorkerLoop] Received instruction: {}", message.getText());
                 if (message.getText() != null && !message.getText().isBlank()) {
                     pendingTextInputs.addLast(formatInboundUserInput(message));
@@ -278,7 +285,13 @@ public class WorkerLoop implements Runnable {
                 break;
 
             default:
-                log.debug("[WorkerLoop] Unhandled message type: {}", message.getType());
+                if (message.getText() != null && !message.getText().isBlank()) {
+                    log.info("[WorkerLoop] Treating message as user input: type={}, from={}",
+                            message.getType(), message.getFrom());
+                    pendingTextInputs.addLast(formatInboundUserInput(message));
+                } else {
+                    log.debug("[WorkerLoop] Unhandled message type: {}", message.getType());
+                }
                 break;
         }
     }
@@ -394,13 +407,13 @@ public class WorkerLoop implements Runnable {
                         "Unsupported task status for execution: " + task.getStatus() + ", taskId=" + task.getTaskId());
             }
 
-            // 3. 构建执行指令
-            String instruction = buildTaskInstruction(task);
+            // 3. 构建任务说明（作为本轮 user 输入主体）
+            String taskInstruction = buildTaskInstruction(task);
 
             // 4. 构建 ReactAgent
             ReactAgent reactAgent = reactAgentFactory.buildWorkerReactAgent(
                     Long.valueOf(workerInstance.getAgentId()),
-                    instruction,
+                    TASK_EXECUTION_INSTRUCTION,
                     MAX_REACT_ITERATIONS,
                     workerInstance.getSessionId(),
                     String.valueOf(task.getTaskId()),
@@ -410,7 +423,7 @@ public class WorkerLoop implements Runnable {
 
             // 5. 配置 RunnableConfig（传递 sessionId 和 instanceId 到 metadata）
             RunnableConfig config = buildWorkerConfig(task.getTaskId());
-            String agentInput = buildAgentInput(resumeMessage);
+            String agentInput = buildTaskRunInput(taskInstruction, resumeMessage);
             long streamStartTimeMs = System.currentTimeMillis();
             long[] firstChunkLatencyMs = new long[]{-1L};
             AtomicBoolean firstChunkObserved = new AtomicBoolean(false);
@@ -687,11 +700,23 @@ public class WorkerLoop implements Runnable {
                 .build();
     }
 
-    private String buildAgentInput(String resumeMessage) {
-        if (resumeMessage == null || resumeMessage.isBlank()) {
-            return "";
+    private String buildTaskRunInput(String taskInstruction, String resumeMessage) {
+        String normalizedTask = taskInstruction == null ? "" : taskInstruction.trim();
+        String normalizedResume = resumeMessage == null ? "" : resumeMessage.trim();
+
+        if (normalizedTask.isBlank() && normalizedResume.isBlank()) {
+            throw new IllegalStateException("Task run input is empty");
         }
-        return resumeMessage;
+        if (normalizedTask.isBlank()) {
+            return normalizedResume;
+        }
+        if (normalizedResume.isBlank()) {
+            return normalizedTask;
+        }
+        if (normalizedTask.equals(normalizedResume)) {
+            return normalizedTask;
+        }
+        return normalizedTask + "\n\n" + normalizedResume;
     }
 
     private boolean isTaskTerminal(int taskId) {

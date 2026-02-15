@@ -109,7 +109,7 @@ public class TeamOrchestrationService {
                     .build();
 
             // 6. 构建 Lead Prompt
-            String leadPrompt = promptManager.buildTeamLeadSystemPrompt();
+            String leadPrompt = promptManager.buildTeamLeadPrompt(userGoal);
             LeadRuntimeContext runtimeContext = new LeadRuntimeContext(
                     leadAgent.getId(),
                     leadPrompt,
