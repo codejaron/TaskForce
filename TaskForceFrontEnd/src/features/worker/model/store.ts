@@ -55,11 +55,12 @@ interface WorkerStoreState {
 function mapWorkerStatus(backendStatus: string): 'idle' | 'working' | 'shutdown' {
   switch (backendStatus) {
     case 'IDLE':
+    case 'WAITING':
+    case 'WAITING_REPLY':
       return 'idle';
-    case 'BUSY':
+    case 'WORKING':
       return 'working';
-    case 'STOPPED':
-    case 'ERROR':
+    case 'SHUTDOWN':
       return 'shutdown';
     default:
       return 'idle';
@@ -88,7 +89,9 @@ export const useWorkerStore = create<WorkerStoreState>((set, get) => ({
           instanceId: instance.instanceId,
           name: instance.agentName,
           status: mapWorkerStatus(instance.status),
-          currentTaskId: instance.currentTask || null,
+          currentTaskId: typeof instance.currentTaskId === 'number'
+            ? String(instance.currentTaskId)
+            : null,
           messages: existingWorker?.messages || [],
           isConnected: existingWorker?.isConnected || false,
           sseConnectionId: existingWorker?.sseConnectionId

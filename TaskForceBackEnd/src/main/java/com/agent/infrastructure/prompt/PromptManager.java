@@ -712,17 +712,14 @@ public class PromptManager {
     }
 
     /**
-     * 构建 Team Lead Prompt
-     * 用于 Team Lead Agent 的系统提示词
-     *
-     * @param userGoal 用户目标
-     * @return Team Lead Prompt
+     * 构建 Team Lead 系统提示词（不包含用户输入）。
      */
-    public String buildTeamLeadPrompt(String userGoal) {
+    public String buildTeamLeadSystemPrompt() {
         return """
         你是团队负责人，负责协调多个 Worker 完成用户目标。
 
         ## 工作流程
+        0. 首轮必须先调用 reply_user，用一句话确认已收到用户目标，再开始任务拆解
         1. 分析目标 → 用 create_task 创建任务，正确设置 blockedBy 依赖
         2. 用 spawn_worker 为可并行的任务创建 Worker，数量匹配并行度
         3. 用 list_tasks 监控进度并判断是否还有可分配任务
@@ -743,8 +740,16 @@ public class PromptManager {
         - 任务失败：分析原因 → 重试一次 → 仍失败则向用户汇报
         - 多个任务系统性失败时立即停止并汇报
 
-        ## 用户目标
-        """ + userGoal + "\n\n立即开始，自主工作。\n";
+        立即开始，自主工作。
+        """;
+    }
+
+    /**
+     * 兼容旧调用：历史上该方法会把 userGoal 拼进 system prompt。
+     * 现在统一改为返回纯 system prompt，用户目标应作为 user message 传入。
+     */
+    public String buildTeamLeadPrompt(String userGoal) {
+        return buildTeamLeadSystemPrompt();
     }
 
     /**

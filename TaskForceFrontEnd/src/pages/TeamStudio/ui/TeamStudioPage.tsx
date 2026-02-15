@@ -178,6 +178,18 @@ export const TeamStudioPage: React.FC = () => {
     }
   };
 
+  const lifecycleLabel = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
+    if (status === 'RUNNING') return '运行';
+    if (status === 'DESTROYED') return '销毁';
+    return '停止';
+  };
+
+  const lifecycleDotClass = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
+    if (status === 'RUNNING') return 'bg-emerald-500';
+    if (status === 'DESTROYED') return 'bg-gray-500';
+    return 'bg-amber-500';
+  };
+
   return (
     <div className="h-full flex bg-white relative">
       {/* Sidebar - Sessions */}
@@ -335,20 +347,20 @@ export const TeamStudioPage: React.FC = () => {
                             activeWorkerId === m.instanceId ? null : m.instanceId
                           )}
                           className={clsx(
-                            "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer",
+                            "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer border",
                             activeWorkerId === m.instanceId
-                              ? "bg-green-100 text-green-800 border border-green-300"
-                              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                              ? "bg-green-100 text-green-800 border-green-300"
+                              : "bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200"
                           )}
                         >
                           <span className={clsx(
                             "inline-block w-1.5 h-1.5 rounded-full mr-1.5",
-                            m.status === 'BUSY' ? "bg-blue-500" :
-                            m.status === 'ERROR' ? "bg-red-500" :
-                            m.status === 'STOPPED' ? "bg-gray-400" :
-                            "bg-green-500"
+                            lifecycleDotClass(m.lifecycleStatus)
                           )} />
                           {m.agentName}
+                          <span className="ml-1 opacity-70">
+                            {lifecycleLabel(m.lifecycleStatus)}
+                          </span>
                         </button>
                       ))
                     )}

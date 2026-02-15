@@ -109,7 +109,7 @@ public class TeamOrchestrationService {
                     .build();
 
             // 6. 构建 Lead Prompt
-            String leadPrompt = promptManager.buildTeamLeadPrompt(userGoal);
+            String leadPrompt = promptManager.buildTeamLeadSystemPrompt();
             LeadRuntimeContext runtimeContext = new LeadRuntimeContext(
                     leadAgent.getId(),
                     leadPrompt,
@@ -125,7 +125,7 @@ public class TeamOrchestrationService {
                     leadPrompt,
                     chatModel,
                     chatOptions,
-                    ""
+                    userGoal
             );
 
             log.info("[TeamOrchestrationService] Team Lead started: sessionId={}", sessionId);

@@ -1,4 +1,4 @@
-import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO, ToolCallDTO, TaskBoard, WorkerInstance, TeamSessionHistoryDTO } from './types';
+import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO, ToolCallDTO, TaskBoard, WorkerInstance, TeamRuntimeStatus, TeamSessionHistoryDTO } from './types';
 import { API_BASE } from './base';
 
 // Backend ApiResponse format: { code: number, message: string, data?: T }
@@ -187,6 +187,8 @@ export const api = {
       fetchJson<TaskBoard>(`/v2/team/session/${sessionId}/taskboard`),
     getWorkers: (sessionId: string) =>
       fetchJson<WorkerInstance[]>(`/v2/team/session/${sessionId}/workers`),
+    getRuntimeStatus: (sessionId: string) =>
+      fetchJson<TeamRuntimeStatus>(`/v2/team/session/${sessionId}/runtime-status`),
     getHistory: (sessionId: string, limit: number = 200, before?: string) =>
       fetchJson<TeamSessionHistoryDTO>(`/v2/team/session/${sessionId}/history?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
     stopTeamSession: (sessionId: string) =>

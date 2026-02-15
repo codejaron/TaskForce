@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Send, Loader2, Wrench, CheckCircle2, AlertCircle, ChevronDown } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useTeamStore } from '../model/store';
@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { parseThinkContent } from './thinkParser';
 
 export const WorkerChatPanel: React.FC = () => {
   const { activeWorkerId, workerMessages, members, sendToWorker } = useTeamStore();
@@ -19,6 +20,18 @@ export const WorkerChatPanel: React.FC = () => {
     [activeWorkerId, workerMessages]
   );
   const activeMember = members.find(m => m.instanceId === activeWorkerId);
+
+  const lifecycleLabel = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
+    if (status === 'RUNNING') return '运行';
+    if (status === 'DESTROYED') return '销毁';
+    return '停止';
+  };
+
+  const lifecycleDotClass = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
+    if (status === 'RUNNING') return 'bg-emerald-500';
+    if (status === 'DESTROYED') return 'bg-gray-500';
+    return 'bg-amber-500';
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -60,13 +73,10 @@ export const WorkerChatPanel: React.FC = () => {
         <div className="flex items-center gap-2">
           <span className={clsx(
             "w-2 h-2 rounded-full",
-            activeMember?.status === 'BUSY' ? "bg-blue-500" :
-            activeMember?.status === 'ERROR' ? "bg-red-500" :
-            activeMember?.status === 'STOPPED' ? "bg-gray-400" :
-            "bg-green-500"
+            lifecycleDotClass(activeMember?.lifecycleStatus || 'STOPPED')
           )} />
           <h3 className="font-semibold text-gray-900">{activeMember?.agentName || 'Worker'}</h3>
-          <span className="text-xs text-gray-400 ml-auto">{activeMember?.status || 'UNKNOWN'}</span>
+          <span className="text-xs text-gray-500 ml-auto">{lifecycleLabel(activeMember?.lifecycleStatus || 'STOPPED')}</span>
         </div>
       </div>
 
@@ -150,13 +160,10 @@ const MessageBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
         )}
 
         {/* Content */}
-        {message.type === 'output' ? (
-          <MarkdownContent content={message.content} />
-        ) : (
-          <pre className="whitespace-pre-wrap break-words font-sans">
-            {message.content}
-          </pre>
-        )}
+        <ThinkAwareWorkerContent
+          content={message.content}
+          markdown={message.type === 'output'}
+        />
 
         {/* Timestamp for user messages */}
         {isUser && (
@@ -246,6 +253,61 @@ const ToolCallBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
           </div>
         )}
       </div>
+    </div>
+  );
+};
+
+const ThinkAwareWorkerContent: React.FC<{ content: string; markdown: boolean }> = ({ content, markdown }) => {
+  const parsed = useMemo(() => parseThinkContent(content), [content]);
+  const hasThinking = parsed.thoughts.length > 0 || parsed.hasUnclosedThink;
+
+  return (
+    <div className="space-y-2">
+      {hasThinking && (
+        <ThinkBlock thoughts={parsed.thoughts} isRunning={parsed.hasUnclosedThink} />
+      )}
+      {parsed.visibleContent ? (
+        markdown ? (
+          <MarkdownContent content={parsed.visibleContent} />
+        ) : (
+          <pre className="whitespace-pre-wrap break-words font-sans">
+            {parsed.visibleContent}
+          </pre>
+        )
+      ) : (
+        hasThinking && (
+          <div className="text-xs text-slate-500">仅包含思考内容，正文已折叠</div>
+        )
+      )}
+    </div>
+  );
+};
+
+const ThinkBlock: React.FC<{ thoughts: string[]; isRunning: boolean }> = ({ thoughts, isRunning }) => {
+  const [expanded, setExpanded] = useState(false);
+  const content = thoughts.join('\n\n').trim();
+  const title = isRunning ? '思考中' : '思考过程';
+
+  return (
+    <div className="rounded-xl border border-sky-200 bg-sky-50/80">
+      <button
+        type="button"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left cursor-pointer"
+        onClick={() => setExpanded(value => !value)}
+      >
+        <span className="text-xs font-semibold text-sky-700">{title}</span>
+        {isRunning && <Loader2 size={12} className="animate-spin text-sky-600" />}
+        <span className="text-[11px] text-sky-600 ml-auto">
+          {expanded ? '收起' : '展开'}
+        </span>
+        <ChevronDown size={14} className={clsx("text-sky-500 transition-transform", expanded && "rotate-180")} />
+      </button>
+
+      {expanded && (
+        <pre className="border-t border-sky-200/80 px-3 py-2 text-xs text-sky-900 whitespace-pre-wrap break-words max-h-52 overflow-auto">
+          {content || '...'}
+        </pre>
+      )}
     </div>
   );
 };

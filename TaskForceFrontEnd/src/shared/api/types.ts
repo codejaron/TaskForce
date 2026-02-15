@@ -297,12 +297,24 @@ export interface TaskBoard {
   tasks: Task[];
 }
 
-export type WorkerStatus = 'IDLE' | 'BUSY' | 'ERROR' | 'STOPPED';
+export type WorkerStatus = 'IDLE' | 'WORKING' | 'WAITING' | 'WAITING_REPLY' | 'SHUTDOWN';
+export type RuntimeLifecycleStatus = 'RUNNING' | 'STOPPED' | 'DESTROYED';
 
 export interface WorkerInstance {
   instanceId: string;
+  workerId?: number;
   agentName: string;
   status: WorkerStatus;
-  currentTask?: string;
-  createdAt: string;
+  currentTaskId?: number;
+  loopRunning?: boolean;
+  lifecycleStatus?: RuntimeLifecycleStatus;
+  startedAt?: string;
+  updatedAt?: string;
+}
+
+export interface TeamRuntimeStatus {
+  leadLifecycleStatus: RuntimeLifecycleStatus;
+  leadLoopRunning: boolean;
+  leadExecutionStatus?: string | null;
+  workers: WorkerInstance[];
 }

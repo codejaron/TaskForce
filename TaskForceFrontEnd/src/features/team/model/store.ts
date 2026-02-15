@@ -7,7 +7,9 @@ import type {
   TeamHistoryMessageDTO,
   TeamHistoryToolCallDTO,
   Message as ApiMessage,
-  ToolCallDTO
+  ToolCallDTO,
+  RuntimeLifecycleStatus,
+  WorkerInstance
 } from '../../../shared/api/types';
 import { apiUrl } from '../../../shared/api/base';
 
@@ -16,9 +18,12 @@ import { apiUrl } from '../../../shared/api/base';
 export interface TeamMember {
   instanceId: string;
   agentName: string;
-  status: 'IDLE' | 'BUSY' | 'ERROR' | 'STOPPED';
+  status: 'IDLE' | 'WORKING' | 'WAITING' | 'WAITING_REPLY' | 'SHUTDOWN';
+  lifecycleStatus: RuntimeLifecycleStatus;
+  loopRunning: boolean;
   currentTask?: string;
-  createdAt: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface TaskItem {
@@ -76,6 +81,7 @@ interface TeamState {
   // Team 状态
   teamId: string | null;
   leadStatus: LeadStatus;
+  leadLifecycleStatus: RuntimeLifecycleStatus;
   members: TeamMember[];
   teamPhase: TeamPhase;
   messages: LeadMessage[];
@@ -104,6 +110,7 @@ interface TeamState {
   disconnectWorkerStream: (instanceId: string) => void;
   disconnectAllWorkerStreams: () => void;
   sendToWorker: (instanceId: string, message: string) => Promise<void>;
+  syncRuntimeStatus: () => Promise<void>;
 }
 
 // ========== SSE 连接管理 ==========
@@ -111,6 +118,7 @@ interface TeamState {
 let currentAbortController: AbortController | null = null;
 let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
 let selectSessionEpoch = 0;
+let runtimeStatusPollTimer: ReturnType<typeof setInterval> | null = null;
 
 const RECONNECT_CONFIG = {
   maxRetries: 5,
@@ -190,6 +198,102 @@ function parseTaskItem(input: unknown): TaskItem | null {
 
 function sortTasksById(tasks: TaskItem[]): TaskItem[] {
   return [...tasks].sort((a, b) => a.taskId - b.taskId);
+}
+
+function normalizeWorkerStatus(raw: unknown): TeamMember['status'] {
+  if (raw === 'IDLE' || raw === 'WORKING' || raw === 'WAITING' || raw === 'WAITING_REPLY' || raw === 'SHUTDOWN') {
+    return raw;
+  }
+  return 'IDLE';
+}
+
+function normalizeLifecycleStatus(raw: unknown): RuntimeLifecycleStatus | null {
+  if (raw === 'RUNNING' || raw === 'STOPPED' || raw === 'DESTROYED') {
+    return raw;
+  }
+  return null;
+}
+
+function mapWorkerLifecycleStatus(status: TeamMember['status'], loopRunning: boolean, explicitLifecycle?: unknown): RuntimeLifecycleStatus {
+  const explicit = normalizeLifecycleStatus(explicitLifecycle);
+  if (explicit) {
+    return explicit;
+  }
+  if (status === 'SHUTDOWN') {
+    return 'DESTROYED';
+  }
+  return loopRunning ? 'RUNNING' : 'STOPPED';
+}
+
+function toLeadStatus(lifecycleStatus: RuntimeLifecycleStatus): LeadStatus {
+  if (lifecycleStatus === 'RUNNING') {
+    return 'active';
+  }
+  if (lifecycleStatus === 'DESTROYED') {
+    return 'shutdown';
+  }
+  return 'idle';
+}
+
+function parseInboxSenders(toolResult: string): string[] {
+  if (!toolResult || !toolResult.trim()) {
+    return [];
+  }
+  const matches = [...toolResult.matchAll(/From:\s*([^\n,]+)/gi)];
+  const senders = matches
+    .map(match => match[1]?.trim())
+    .filter((sender): sender is string => Boolean(sender));
+  return [...new Set(senders)];
+}
+
+function buildInboxReadHint(readBy: 'Lead' | 'Worker', senders: string[]): string {
+  if (senders.length === 0) {
+    return `${readBy} 读取了收件箱，但没有新消息`;
+  }
+  return `${readBy} 读取到来自 ${senders.join('、')} 的消息`;
+}
+
+function isLikelyToolInvocationContent(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const compact = trimmed.replace(/\s+/g, '');
+  if (/^(\[\{"name":"[^"]+"\}\])+$/.test(compact)) {
+    return true;
+  }
+  if (/^(\{"name":"[^"]+"\})+$/.test(compact)) {
+    return true;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.every(item => {
+        if (!item || typeof item !== 'object') {
+          return false;
+        }
+        const record = item as Record<string, unknown>;
+        return typeof record.name === 'string';
+      });
+    }
+    if (parsed && typeof parsed === 'object') {
+      const record = parsed as Record<string, unknown>;
+      return typeof record.name === 'string';
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+function clearRuntimeStatusPolling() {
+  if (runtimeStatusPollTimer) {
+    clearInterval(runtimeStatusPollTimer);
+    runtimeStatusPollTimer = null;
+  }
 }
 
 // ========== 事件去重 ==========
@@ -333,6 +437,9 @@ function toLeadMessageFromHistory(item: TeamHistoryMessageDTO): LeadMessage | nu
     };
   }
   if (item.messageType === 'TEAM_LEAD') {
+    if (isLikelyToolInvocationContent(item.content || '')) {
+      return null;
+    }
     return {
       id: `history_msg_${item.id}`,
       type: 'lead',
@@ -342,15 +449,8 @@ function toLeadMessageFromHistory(item: TeamHistoryMessageDTO): LeadMessage | nu
     };
   }
   if (item.messageType === 'TEAM_WORKER') {
-    const instanceId = extractWorkerInstanceIdFromAgentName(item.agentName);
-    return {
-      id: `history_msg_${item.id}`,
-      type: 'worker',
-      content: item.content || '',
-      timestamp,
-      agentName: deriveWorkerDisplayName(instanceId) || item.agentName || 'Worker',
-      instanceId: instanceId || undefined
-    };
+    // Worker 输出仅在 Worker 面板展示，避免在 Lead 面板重复造成“误发送给 Lead”的歧义。
+    return null;
   }
   if (item.messageType === 'TEAM_SYSTEM') {
     return {
@@ -636,6 +736,18 @@ function parseWorkerIndexFromLabel(label?: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+function parseWorkerIndexFromInstanceId(instanceId?: string): number | null {
+  if (!instanceId) {
+    return null;
+  }
+  const match = instanceId.match(/_w(\d+)$/i);
+  if (!match) {
+    return null;
+  }
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) ? value : null;
+}
+
 function resolveWorkerInstanceIdFromInbox(
   sessionId: string,
   from: string,
@@ -714,9 +826,11 @@ function handleSSEEvent(
         set({
           teamId,
           teamPhase: 'active',
+          leadLifecycleStatus: 'RUNNING',
           leadStatus: 'active',
           messages: [...messages, newMessage]
         });
+        void get().syncRuntimeStatus();
       }
       break;
 
@@ -832,6 +946,8 @@ function handleSSEEvent(
           instanceId,
           agentName,
           status: 'IDLE',
+          lifecycleStatus: 'RUNNING',
+          loopRunning: true,
           createdAt: new Date().toISOString()
         };
 
@@ -850,6 +966,7 @@ function handleSSEEvent(
 
         // 自动为新 Worker 建立独立 SSE 连接
         setTimeout(() => get().connectWorkerStream(instanceId), 100);
+        void get().syncRuntimeStatus();
       }
       break;
 
@@ -858,7 +975,7 @@ function handleSSEEvent(
         const workerId = typeof data.workerId === 'string' ? data.workerId : '';
         const agentName = typeof data.agentName === 'string' ? data.agentName : 'Worker';
         const content = typeof data.content === 'string' ? data.content : '';
-        const status = typeof data.status === 'string' ? data.status as TeamMember['status'] : undefined;
+        const status = normalizeWorkerStatus(data.status);
 
         const newMessage: LeadMessage = {
           id: `${Date.now()}_worker_report`,
@@ -870,14 +987,21 @@ function handleSSEEvent(
         };
 
         // 更新 worker 状态
-        const updatedMembers = status && workerId
-          ? members.map(m => m.instanceId === workerId ? { ...m, status } : m)
+        const updatedMembers = workerId
+          ? members.map(m => m.instanceId === workerId
+            ? {
+                ...m,
+                status,
+                lifecycleStatus: mapWorkerLifecycleStatus(status, m.loopRunning, m.lifecycleStatus)
+              }
+            : m)
           : members;
 
         set({
           members: updatedMembers,
           messages: [...messages, newMessage]
         });
+        void get().syncRuntimeStatus();
       }
       break;
 
@@ -919,6 +1043,9 @@ function handleSSEEvent(
     case 'lead_message':
       {
         const content = typeof data.content === 'string' ? data.content : '';
+        if (!content.trim() || isLikelyToolInvocationContent(content)) {
+          break;
+        }
 
         const newMessage: LeadMessage = {
           id: `${Date.now()}_lead_message`,
@@ -939,7 +1066,7 @@ function handleSSEEvent(
         const output = typeof data.output === 'string'
           ? data.output
           : (typeof data.chunk === 'string' ? data.chunk : '');
-        if (!output) {
+        if (!output || isLikelyToolInvocationContent(output)) {
           break;
         }
 
@@ -996,22 +1123,9 @@ function handleSSEEvent(
 
         if (normalizedFrom.startsWith('worker-')) {
           const workerInstanceId = resolveWorkerInstanceIdFromInbox(sessionId, from, fromInstanceId, to);
-          const workerName = deriveWorkerDisplayName(workerInstanceId);
-          const leadMessage: LeadMessage = {
-            id: `${Date.now()}_inbox_worker_${from}`,
-            type: 'worker',
-            content: text,
-            timestamp: new Date().toISOString(),
-            agentName: workerName,
-            workerId: from,
-            instanceId: workerInstanceId || undefined
-          };
-
           set(state => {
             if (!workerInstanceId) {
-              return {
-                messages: [...state.messages, leadMessage]
-              };
+              return {};
             }
             const workerMessage: WorkerMessage = {
               id: `${Date.now()}_inbox_worker_echo_${from}`,
@@ -1020,7 +1134,6 @@ function handleSSEEvent(
               timestamp: new Date().toISOString()
             };
             return {
-              messages: [...state.messages, leadMessage],
               workerMessages: {
                 ...state.workerMessages,
                 [workerInstanceId]: [...(state.workerMessages[workerInstanceId] || []), workerMessage]
@@ -1142,6 +1255,10 @@ function handleSSEEvent(
         const errorMessage = typeof data.errorMessage === 'string' ? data.errorMessage : '';
         const statusRaw = typeof data.status === 'string' ? data.status : 'SUCCESS';
         const toolStatus: LeadMessage['toolStatus'] = statusRaw === 'FAILED' ? 'FAILED' : 'SUCCESS';
+        const isReadInboxCall = toolName === 'read_inbox' || toolName.endsWith('read_inbox');
+        const shouldShowInboxHint = isReadInboxCall && toolStatus !== 'FAILED';
+        const inboxSenders = shouldShowInboxHint ? parseInboxSenders(toolResult) : [];
+        const inboxHintId = `lead_read_inbox_hint_${toolCallId || Date.now()}`;
 
         const newMessage: LeadMessage = {
           id: `${Date.now()}_lead_tool_result_${toolCallId || toolName}`,
@@ -1160,27 +1277,43 @@ function handleSSEEvent(
         };
 
         set(state => {
+          let nextMessages = state.messages;
           if (toolCallId) {
-            const existingIndex = state.messages.findIndex(
+            const existingIndex = nextMessages.findIndex(
               msg => msg.toolCallId === toolCallId && (msg.type === 'tool_call' || msg.type === 'tool_result')
             );
             if (existingIndex >= 0) {
-              const existing = state.messages[existingIndex];
+              const existing = nextMessages[existingIndex];
               const merged: LeadMessage = {
                 ...existing,
                 ...newMessage,
                 toolArgs: newMessage.toolArgs ?? existing.toolArgs
               };
-              return {
-                messages: [
-                  ...state.messages.slice(0, existingIndex),
-                  merged,
-                  ...state.messages.slice(existingIndex + 1)
-                ]
-              };
+              nextMessages = [
+                ...nextMessages.slice(0, existingIndex),
+                merged,
+                ...nextMessages.slice(existingIndex + 1)
+              ];
+            } else {
+              nextMessages = [...nextMessages, newMessage];
             }
+          } else {
+            nextMessages = [...nextMessages, newMessage];
           }
-          return { messages: [...state.messages, newMessage] };
+
+          if (shouldShowInboxHint && !nextMessages.some(msg => msg.id === inboxHintId)) {
+            nextMessages = [
+              ...nextMessages,
+              {
+                id: inboxHintId,
+                type: 'system',
+                content: buildInboxReadHint('Lead', inboxSenders),
+                timestamp: new Date().toISOString()
+              }
+            ];
+          }
+
+          return { messages: nextMessages };
         });
       }
       break;
@@ -1196,10 +1329,12 @@ function handleSSEEvent(
 
         set({
           teamPhase: 'closed',
+          leadLifecycleStatus: 'DESTROYED',
           leadStatus: 'shutdown',
           isTeamStarted: false,
           messages: [...messages, newMessage]
         });
+        void get().syncRuntimeStatus();
       }
       break;
 
@@ -1207,10 +1342,17 @@ function handleSSEEvent(
       {
         set({
           teamPhase: 'closed',
-          leadStatus: 'idle',
+          leadLifecycleStatus: 'DESTROYED',
+          leadStatus: 'shutdown',
           isTeamStarted: false,
-          members: members.map(member => ({ ...member, status: 'STOPPED' }))
+          members: members.map(member => ({
+            ...member,
+            status: 'SHUTDOWN',
+            lifecycleStatus: 'DESTROYED',
+            loopRunning: false
+          }))
         });
+        void get().syncRuntimeStatus();
       }
       break;
 
@@ -1219,6 +1361,7 @@ function handleSSEEvent(
         const errorMsg = typeof data.error === 'string' ? data.error : 'Unknown error';
         set({
           error: errorMsg,
+          leadLifecycleStatus: 'STOPPED',
           leadStatus: 'idle'
         });
       }
@@ -1239,6 +1382,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   // Team 状态
   teamId: null,
   leadStatus: 'idle',
+  leadLifecycleStatus: 'STOPPED',
   members: [],
   teamPhase: 'not_started',
   messages: [],
@@ -1305,6 +1449,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       currentSession: session,
       teamPhase: 'not_started',
       leadStatus: 'idle',
+      leadLifecycleStatus: 'STOPPED',
       messages: [],
       members: [],
       tasks: [],
@@ -1409,13 +1554,23 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         }
 
         if (workersResult.status === 'fulfilled') {
-          nextState.members = workersResult.value.map(worker => ({
-            instanceId: worker.instanceId,
-            agentName: worker.agentName,
-            status: worker.status,
-            currentTask: worker.currentTask,
-            createdAt: worker.createdAt
-          }));
+          nextState.members = workersResult.value.map(worker => {
+            const status = normalizeWorkerStatus(worker.status);
+            const loopRunning = Boolean(worker.loopRunning);
+            const lifecycleStatus = mapWorkerLifecycleStatus(status, loopRunning, worker.lifecycleStatus);
+            return {
+              instanceId: worker.instanceId,
+              agentName: worker.agentName || deriveWorkerDisplayName(worker.instanceId),
+              status,
+              lifecycleStatus,
+              loopRunning,
+              currentTask: typeof worker.currentTaskId === 'number' && worker.currentTaskId > 0
+                ? String(worker.currentTaskId)
+                : undefined,
+              createdAt: worker.startedAt,
+              updatedAt: worker.updatedAt
+            };
+          });
         }
 
         if (historyWorkerInstanceIds.length > 0) {
@@ -1426,7 +1581,9 @@ export const useTeamStore = create<TeamState>((set, get) => ({
               memberMap.set(instanceId, {
                 instanceId,
                 agentName: deriveWorkerDisplayName(instanceId),
-                status: 'STOPPED',
+                status: 'IDLE',
+                lifecycleStatus: 'STOPPED',
+                loopRunning: false,
                 createdAt: new Date().toISOString()
               });
             }
@@ -1539,6 +1696,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             console.error('[Team SSE] Max reconnection attempts reached');
             set({
               error: 'Connection lost. Please refresh the page.',
+              leadLifecycleStatus: 'STOPPED',
               leadStatus: 'idle',
               isConnected: false
             });
@@ -1569,13 +1727,18 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       }).catch(err => {
         if (err.name !== 'AbortError') {
           console.error('[Team SSE] Fatal error:', err);
-          set({ error: err.message, leadStatus: 'idle', isConnected: false });
+          set({ error: err.message, leadLifecycleStatus: 'STOPPED', leadStatus: 'idle', isConnected: false });
         }
       });
     };
 
     // 启动 SSE 连接
     connectSSE();
+    void get().syncRuntimeStatus();
+    clearRuntimeStatusPolling();
+    runtimeStatusPollTimer = setInterval(() => {
+      void get().syncRuntimeStatus();
+    }, 1500);
   },
 
   deleteSession: async (sessionId: string) => {
@@ -1632,9 +1795,10 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       // 如果是第一条消息，先启动团队
       if (!isTeamStarted) {
         console.log('[Team] Starting team session with first message:', message);
-        set({ leadStatus: 'active', isTeamStarted: true });
 
         await api.team.startTeamSession(sessionId, message);
+        set({ isTeamStarted: true });
+        void get().syncRuntimeStatus();
         console.log('[Team] Team session started successfully');
       } else {
         // 后续消息直接发送
@@ -1646,6 +1810,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       const errMsg = error instanceof Error ? error.message : 'Failed to send message';
       set({
         error: errMsg,
+        leadLifecycleStatus: 'STOPPED',
         leadStatus: 'idle',
         // 首条消息失败时回滚，避免进入“已启动但实际未启动”的假状态
         isTeamStarted: isTeamStarted ? true : false
@@ -1674,10 +1839,11 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 
     const sessionId = currentSession.id;
     console.log('[Team] Stopping team session:', sessionId);
-    set({ teamPhase: 'shutting_down', leadStatus: 'shutdown', isTeamStarted: false });
+    set({ teamPhase: 'shutting_down', isTeamStarted: false });
 
     try {
       await api.team.stopTeamSession(sessionId);
+      await get().syncRuntimeStatus();
       console.log('[Team] Team session stopped successfully');
     } catch (error: unknown) {
       console.error('[Team] Failed to stop team:', error);
@@ -1688,6 +1854,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   },
 
   disconnectStream: () => {
+    clearRuntimeStatusPolling();
+
     if (reconnectTimeoutId) {
       clearTimeout(reconnectTimeoutId);
       reconnectTimeoutId = null;
@@ -1742,6 +1910,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         } catch { return; }
 
         let msg: WorkerMessage | null = null;
+        let readInboxHint: WorkerMessage | null = null;
 
         switch (eventType) {
           // ===== 工具调用开始 =====
@@ -1772,6 +1941,18 @@ export const useTeamStore = create<TeamState>((set, get) => ({
               const status = typeof data.status === 'string' ? data.status : 'SUCCESS';
               const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
               const errorMessage = typeof data.errorMessage === 'string' ? data.errorMessage : '';
+
+              const isReadInboxCall = toolName === 'read_inbox' || toolName.endsWith('read_inbox');
+              if (isReadInboxCall && status !== 'FAILED') {
+                const senders = parseInboxSenders(toolResult);
+                readInboxHint = {
+                  id: `worker_read_inbox_hint_${toolCallId || Date.now()}`,
+                  type: 'system',
+                  content: buildInboxReadHint('Worker', senders),
+                  timestamp: new Date().toISOString()
+                };
+              }
+
               msg = {
                 id: `${Date.now()}_tool_result_${toolCallId}`,
                 type: 'tool_result',
@@ -1850,6 +2031,12 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           set(state => ({
             workerMessages: (() => {
               const existingMessages = state.workerMessages[instanceId] || [];
+              const appendReadInboxHint = (list: WorkerMessage[]): WorkerMessage[] => {
+                if (!readInboxHint || list.some(item => item.id === readInboxHint.id)) {
+                  return list;
+                }
+                return [...list, readInboxHint];
+              };
 
               if (eventType === 'worker_output' && msg.type === 'output') {
                 const lastMessage = existingMessages[existingMessages.length - 1];
@@ -1867,10 +2054,10 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 
                   return {
                     ...state.workerMessages,
-                    [instanceId]: [
+                    [instanceId]: appendReadInboxHint([
                       ...existingMessages.slice(0, -1),
                       updatedLastMessage
-                    ]
+                    ])
                   };
                 }
               }
@@ -1893,18 +2080,18 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 
                   return {
                     ...state.workerMessages,
-                    [instanceId]: [
+                    [instanceId]: appendReadInboxHint([
                       ...existingMessages.slice(0, existingToolIndex),
                       mergedToolMessage,
                       ...existingMessages.slice(existingToolIndex + 1)
-                    ]
+                    ])
                   };
                 }
               }
 
               return {
                 ...state.workerMessages,
-                [instanceId]: [...existingMessages, msg]
+                [instanceId]: appendReadInboxHint([...existingMessages, msg])
               };
             })()
           }));
@@ -1983,6 +2170,95 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           [instanceId]: [...(state.workerMessages[instanceId] || []), errorMsg]
         }
       }));
+    }
+  },
+
+  syncRuntimeStatus: async () => {
+    const sessionId = get().currentSession?.id;
+    if (!sessionId) {
+      return;
+    }
+
+    try {
+      const runtimeStatus = await api.team.getRuntimeStatus(sessionId);
+      if (get().currentSession?.id !== sessionId) {
+        return;
+      }
+
+      const runtimeMembers: TeamMember[] = (runtimeStatus.workers || []).map((worker: WorkerInstance) => {
+        const status = normalizeWorkerStatus(worker.status);
+        const loopRunning = Boolean(worker.loopRunning);
+        const lifecycleStatus = mapWorkerLifecycleStatus(status, loopRunning, worker.lifecycleStatus);
+
+        return {
+          instanceId: worker.instanceId,
+          agentName: worker.agentName || deriveWorkerDisplayName(worker.instanceId),
+          status,
+          lifecycleStatus,
+          loopRunning,
+          currentTask: typeof worker.currentTaskId === 'number' && worker.currentTaskId > 0
+            ? String(worker.currentTaskId)
+            : undefined,
+          createdAt: worker.startedAt,
+          updatedAt: worker.updatedAt
+        };
+      });
+
+      set(state => {
+        if (state.currentSession?.id !== sessionId) {
+          return {};
+        }
+
+        const byId = new Map<string, TeamMember>();
+        state.members.forEach(member => byId.set(member.instanceId, member));
+
+        runtimeMembers.forEach(member => {
+          const previous = byId.get(member.instanceId);
+          byId.set(member.instanceId, {
+            ...previous,
+            ...member,
+            agentName: member.agentName || previous?.agentName || deriveWorkerDisplayName(member.instanceId),
+            createdAt: member.createdAt || previous?.createdAt,
+            updatedAt: member.updatedAt || previous?.updatedAt,
+            currentTask: member.currentTask ?? previous?.currentTask
+          });
+        });
+
+        state.members.forEach(member => {
+          const stillExists = runtimeMembers.some(runtimeMember => runtimeMember.instanceId === member.instanceId);
+          if (stillExists) {
+            return;
+          }
+          byId.set(member.instanceId, {
+            ...member,
+            status: 'SHUTDOWN',
+            lifecycleStatus: 'DESTROYED',
+            loopRunning: false,
+            updatedAt: new Date().toISOString()
+          });
+        });
+
+        const mergedMembers = [...byId.values()].sort((a, b) => {
+          const aIndex = parseWorkerIndexFromInstanceId(a.instanceId) ?? Number.MAX_SAFE_INTEGER;
+          const bIndex = parseWorkerIndexFromInstanceId(b.instanceId) ?? Number.MAX_SAFE_INTEGER;
+          if (aIndex !== bIndex) {
+            return aIndex - bIndex;
+          }
+          return a.instanceId.localeCompare(b.instanceId);
+        });
+
+        const leadLifecycleStatus = normalizeLifecycleStatus(runtimeStatus.leadLifecycleStatus)
+          || state.leadLifecycleStatus
+          || 'STOPPED';
+
+        return {
+          leadLifecycleStatus,
+          leadStatus: toLeadStatus(leadLifecycleStatus),
+          members: mergedMembers
+        };
+      });
+    } catch (error) {
+      console.warn('[Team] Failed to sync runtime status:', error);
     }
   },
 

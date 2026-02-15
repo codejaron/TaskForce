@@ -32,6 +32,7 @@ import java.time.Duration;
 import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Worker 自主循环（模式一：Leader 指派）
@@ -272,7 +273,7 @@ public class WorkerLoop implements Runnable {
             case "MESSAGE":
                 log.info("[WorkerLoop] Received instruction: {}", message.getText());
                 if (message.getText() != null && !message.getText().isBlank()) {
-                    pendingTextInputs.addLast(message.getText().trim());
+                    pendingTextInputs.addLast(formatInboundUserInput(message));
                 }
                 break;
 
@@ -410,6 +411,12 @@ public class WorkerLoop implements Runnable {
             // 5. 配置 RunnableConfig（传递 sessionId 和 instanceId 到 metadata）
             RunnableConfig config = buildWorkerConfig(task.getTaskId());
             String agentInput = buildAgentInput(resumeMessage);
+            long streamStartTimeMs = System.currentTimeMillis();
+            long[] firstChunkLatencyMs = new long[]{-1L};
+            AtomicBoolean firstChunkObserved = new AtomicBoolean(false);
+            AtomicInteger streamedChunkCount = new AtomicInteger(0);
+            log.info("[WorkerLoop] LLM stream started: instanceId={}, taskId={}, inputChars={}",
+                    workerInstance.getInstanceId(), task.getTaskId(), agentInput.length());
 
             // 6. 执行任务（流式）
             Disposable disposable = reactAgent.stream(agentInput, config)
@@ -417,6 +424,12 @@ public class WorkerLoop implements Runnable {
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
                             if (chunk != null && !chunk.isEmpty()) {
+                                if (firstChunkObserved.compareAndSet(false, true)) {
+                                    firstChunkLatencyMs[0] = System.currentTimeMillis() - streamStartTimeMs;
+                                    log.info("[WorkerLoop] LLM first token: instanceId={}, taskId={}, latencyMs={}",
+                                            workerInstance.getInstanceId(), task.getTaskId(), firstChunkLatencyMs[0]);
+                                }
+                                streamedChunkCount.incrementAndGet();
                                 // 发布实时事件给前端
                                 try {
                                     WorkerOutputEvent event = new WorkerOutputEvent(
@@ -437,10 +450,14 @@ public class WorkerLoop implements Runnable {
                         }
                     })
                     .doOnComplete(() -> {
-                        log.info("[WorkerLoop] Task execution completed: taskId={}", task.getTaskId());
+                        long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
+                        log.info("[WorkerLoop] Task execution completed: taskId={}, totalMs={}, firstTokenMs={}, chunkCount={}",
+                                task.getTaskId(), totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get());
                     })
                     .doOnError(e -> {
-                        log.error("[WorkerLoop] Task execution error: taskId={}", task.getTaskId(), e);
+                        long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
+                        log.error("[WorkerLoop] Task execution error: taskId={}, elapsedMs={}, firstTokenMs={}, chunkCount={}",
+                                task.getTaskId(), totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get(), e);
                     })
                     .subscribe();
 
@@ -569,11 +586,24 @@ public class WorkerLoop implements Runnable {
             );
 
             RunnableConfig config = buildWorkerConfig(0);
+            long streamStartTimeMs = System.currentTimeMillis();
+            long[] firstChunkLatencyMs = new long[]{-1L};
+            AtomicBoolean firstChunkObserved = new AtomicBoolean(false);
+            AtomicInteger streamedChunkCount = new AtomicInteger(0);
+            int inputChars = instructionMessage == null ? 0 : instructionMessage.length();
+            log.info("[WorkerLoop] LLM direct stream started: instanceId={}, inputChars={}",
+                    workerInstance.getInstanceId(), inputChars);
             Disposable disposable = reactAgent.stream(instructionMessage, config)
                     .doOnNext(nodeOutput -> {
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
                             if (chunk != null && !chunk.isEmpty()) {
+                                if (firstChunkObserved.compareAndSet(false, true)) {
+                                    firstChunkLatencyMs[0] = System.currentTimeMillis() - streamStartTimeMs;
+                                    log.info("[WorkerLoop] LLM direct first token: instanceId={}, latencyMs={}",
+                                            workerInstance.getInstanceId(), firstChunkLatencyMs[0]);
+                                }
+                                streamedChunkCount.incrementAndGet();
                                 try {
                                     WorkerOutputEvent event = new WorkerOutputEvent(
                                             workerInstance.getSessionId(),
@@ -592,13 +622,18 @@ public class WorkerLoop implements Runnable {
                             }
                         }
                     })
-                    .doOnComplete(() -> log.info(
-                            "[WorkerLoop] Direct instruction execution completed: instanceId={}",
-                            workerInstance.getInstanceId()
-                    ))
+                    .doOnComplete(() -> {
+                        long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
+                        log.info("[WorkerLoop] Direct instruction execution completed: instanceId={}, totalMs={}, firstTokenMs={}, chunkCount={}",
+                                workerInstance.getInstanceId(), totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get());
+                    })
                     .doOnError(e -> log.error(
-                            "[WorkerLoop] Direct instruction execution error: instanceId={}",
-                            workerInstance.getInstanceId(), e
+                            "[WorkerLoop] Direct instruction execution error: instanceId={}, elapsedMs={}, firstTokenMs={}, chunkCount={}",
+                            workerInstance.getInstanceId(),
+                            System.currentTimeMillis() - streamStartTimeMs,
+                            firstChunkLatencyMs[0],
+                            streamedChunkCount.get(),
+                            e
                     ))
                     .subscribe();
 
@@ -685,6 +720,21 @@ public class WorkerLoop implements Runnable {
             builder.append(text);
         }
         return builder.toString();
+    }
+
+    private String formatInboundUserInput(TeamMessage message) {
+        if (message == null || message.getText() == null) {
+            return "";
+        }
+        String text = message.getText().trim();
+        if (text.isBlank()) {
+            return "";
+        }
+        String from = message.getFrom();
+        if (from == null || from.isBlank()) {
+            return text;
+        }
+        return "From " + from + ": " + text;
     }
 
     private String mergeInputs(String first, String second) {
