@@ -18,6 +18,7 @@ public class TeamHistoryPersistenceService {
 
     private static final String TYPE_TEAM_USER = "TEAM_USER";
     private static final String TYPE_TEAM_LEAD = "TEAM_LEAD";
+    private static final String TYPE_TEAM_WORKER = "TEAM_WORKER";
     private static final String TYPE_TEAM_SYSTEM = "TEAM_SYSTEM";
 
     private final MessageService messageService;
@@ -33,6 +34,13 @@ public class TeamHistoryPersistenceService {
 
     public void persistLeadMessage(String sessionId, String content) {
         persist(sessionId, "assistant", TYPE_TEAM_LEAD, "Lead", content);
+    }
+
+    public void persistWorkerMessage(String sessionId, String workerInstanceId, String content) {
+        String workerAgentName = (workerInstanceId == null || workerInstanceId.isBlank())
+                ? "worker"
+                : "worker:" + workerInstanceId;
+        persist(sessionId, "assistant", TYPE_TEAM_WORKER, workerAgentName, content);
     }
 
     public void persistSystemMessage(String sessionId, String content) {

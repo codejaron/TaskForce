@@ -87,6 +87,7 @@ public class SendMessageTool implements ToolCallback {
 
             TeamMessage message = TeamMessage.builder()
                     .from("team-lead")
+                    .fromInstanceId(sessionId + "_lead")
                     .to(worker.getInstanceId())
                     .text(content)
                     .type(messageType)

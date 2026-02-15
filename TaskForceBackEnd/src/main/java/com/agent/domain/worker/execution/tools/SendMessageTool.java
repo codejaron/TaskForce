@@ -101,6 +101,7 @@ public class SendMessageTool implements ToolCallback {
 
             TeamMessage message = TeamMessage.builder()
                     .from(sender)
+                    .fromInstanceId(instanceId)
                     .to(targetInstanceId)
                     .text(text)
                     .type(messageType)

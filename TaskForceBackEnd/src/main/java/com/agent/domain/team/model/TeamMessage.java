@@ -22,6 +22,11 @@ public class TeamMessage {
     private String from;
 
     /**
+     * 发送者实例 ID（可选）
+     */
+    private String fromInstanceId;
+
+    /**
      * 接收者
      */
     private String to;

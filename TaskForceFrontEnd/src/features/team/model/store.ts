@@ -1,7 +1,14 @@
 import { create } from 'zustand';
 import { api } from '../../../shared/api';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
-import type { Session, TeamSessionHistoryDTO, TeamHistoryMessageDTO, TeamHistoryToolCallDTO } from '../../../shared/api/types';
+import type {
+  Session,
+  TeamSessionHistoryDTO,
+  TeamHistoryMessageDTO,
+  TeamHistoryToolCallDTO,
+  Message as ApiMessage,
+  ToolCallDTO
+} from '../../../shared/api/types';
 import { apiUrl } from '../../../shared/api/base';
 
 // ========== 类型定义 ==========
@@ -287,6 +294,31 @@ function toUserFriendlySystemContent(content: string): string {
   return content;
 }
 
+function extractWorkerInstanceIdFromAgentName(agentName?: string): string | null {
+  if (!agentName) {
+    return null;
+  }
+  if (agentName.startsWith('worker:')) {
+    const instanceId = agentName.slice('worker:'.length).trim();
+    return instanceId || null;
+  }
+  return null;
+}
+
+function deriveWorkerDisplayName(instanceId?: string | null): string {
+  if (!instanceId) {
+    return 'Worker';
+  }
+  const suffix = instanceId.match(/_w(\d+)$/i);
+  if (suffix) {
+    return `Worker #${suffix[1]}`;
+  }
+  if (instanceId.length > 18) {
+    return `Worker ${instanceId.slice(-6)}`;
+  }
+  return `Worker ${instanceId}`;
+}
+
 function toLeadMessageFromHistory(item: TeamHistoryMessageDTO): LeadMessage | null {
   const timestamp = toTimestampIso(item.createdAt);
   if (item.messageType === 'TEAM_USER' && item.agentName?.startsWith('worker:')) {
@@ -310,12 +342,14 @@ function toLeadMessageFromHistory(item: TeamHistoryMessageDTO): LeadMessage | nu
     };
   }
   if (item.messageType === 'TEAM_WORKER') {
+    const instanceId = extractWorkerInstanceIdFromAgentName(item.agentName);
     return {
       id: `history_msg_${item.id}`,
       type: 'worker',
       content: item.content || '',
       timestamp,
-      agentName: item.agentName || 'Worker'
+      agentName: deriveWorkerDisplayName(instanceId) || item.agentName || 'Worker',
+      instanceId: instanceId || undefined
     };
   }
   if (item.messageType === 'TEAM_SYSTEM') {
@@ -327,6 +361,25 @@ function toLeadMessageFromHistory(item: TeamHistoryMessageDTO): LeadMessage | nu
     };
   }
   return null;
+}
+
+function toWorkerOutputMessageFromHistory(item: TeamHistoryMessageDTO): { instanceId: string; message: WorkerMessage } | null {
+  if (item.messageType !== 'TEAM_WORKER') {
+    return null;
+  }
+  const instanceId = extractWorkerInstanceIdFromAgentName(item.agentName);
+  if (!instanceId) {
+    return null;
+  }
+  return {
+    instanceId,
+    message: {
+      id: `history_msg_${item.id}`,
+      type: 'output',
+      content: item.content || '',
+      timestamp: toTimestampIso(item.createdAt)
+    }
+  };
 }
 
 function toWorkerUserMessageFromHistory(item: TeamHistoryMessageDTO): { instanceId: string; message: WorkerMessage } | null {
@@ -398,19 +451,26 @@ function toWorkerToolMessageFromHistory(item: TeamHistoryToolCallDTO): WorkerMes
   };
 }
 
-function buildHistoryState(history: TeamSessionHistoryDTO): {
+function buildHistoryState(history: TeamSessionHistoryDTO | null | undefined): {
   leadMessages: LeadMessage[];
   workerMessages: Record<string, WorkerMessage[]>;
 } {
   const leadMessages: LeadMessage[] = [];
   const workerMessages: Record<string, WorkerMessage[]> = {};
+  const historyMessages = Array.isArray(history?.messages) ? history.messages : [];
+  const historyToolCalls = Array.isArray(history?.toolCalls) ? history.toolCalls : [];
 
-  history.messages.forEach(item => {
+  historyMessages.forEach(item => {
     const workerUserMessage = toWorkerUserMessageFromHistory(item);
     if (workerUserMessage) {
       const existing = workerMessages[workerUserMessage.instanceId] || [];
       workerMessages[workerUserMessage.instanceId] = [...existing, workerUserMessage.message];
       return;
+    }
+    const workerOutputMessage = toWorkerOutputMessageFromHistory(item);
+    if (workerOutputMessage) {
+      const existing = workerMessages[workerOutputMessage.instanceId] || [];
+      workerMessages[workerOutputMessage.instanceId] = [...existing, workerOutputMessage.message];
     }
     const leadMessage = toLeadMessageFromHistory(item);
     if (leadMessage) {
@@ -418,13 +478,85 @@ function buildHistoryState(history: TeamSessionHistoryDTO): {
     }
   });
 
-  history.toolCalls.forEach(item => {
+  historyToolCalls.forEach(item => {
     if (item.instanceId && item.instanceId.trim()) {
       const existing = workerMessages[item.instanceId] || [];
       workerMessages[item.instanceId] = [...existing, toWorkerToolMessageFromHistory(item)];
       return;
     }
     leadMessages.push(toLeadToolMessageFromHistory(item));
+  });
+
+  leadMessages.sort((a, b) => toTimeValue(a.timestamp) - toTimeValue(b.timestamp));
+  Object.keys(workerMessages).forEach(instanceId => {
+    workerMessages[instanceId] = [...workerMessages[instanceId]]
+      .sort((a, b) => toTimeValue(a.timestamp) - toTimeValue(b.timestamp));
+  });
+
+  return { leadMessages, workerMessages };
+}
+
+function buildLegacyHistoryState(messages: ApiMessage[] | null | undefined, toolCalls: ToolCallDTO[] | null | undefined): {
+  leadMessages: LeadMessage[];
+  workerMessages: Record<string, WorkerMessage[]>;
+} {
+  const leadMessages: LeadMessage[] = [];
+  const workerMessages: Record<string, WorkerMessage[]> = {};
+  const historyMessages = Array.isArray(messages) ? messages : [];
+  const historyToolCalls = Array.isArray(toolCalls) ? toolCalls : [];
+
+  historyMessages.forEach(item => {
+    const historyLike: TeamHistoryMessageDTO = {
+      id: item.id,
+      role: (item.role as 'user' | 'assistant' | 'system') || 'assistant',
+      messageType: (item.messageType as TeamHistoryMessageDTO['messageType']) || 'TEAM_SYSTEM',
+      agentName: item.agentName,
+      content: item.content || '',
+      createdAt: item.createdAt
+    };
+
+    const workerUserMessage = toWorkerUserMessageFromHistory(historyLike);
+    if (workerUserMessage) {
+      const existing = workerMessages[workerUserMessage.instanceId] || [];
+      workerMessages[workerUserMessage.instanceId] = [...existing, workerUserMessage.message];
+      return;
+    }
+
+    const workerOutputMessage = toWorkerOutputMessageFromHistory(historyLike);
+    if (workerOutputMessage) {
+      const existing = workerMessages[workerOutputMessage.instanceId] || [];
+      workerMessages[workerOutputMessage.instanceId] = [...existing, workerOutputMessage.message];
+    }
+
+    const leadMessage = toLeadMessageFromHistory(historyLike);
+    if (leadMessage) {
+      leadMessages.push(leadMessage);
+    }
+  });
+
+  historyToolCalls.forEach(item => {
+    const historyLike: TeamHistoryToolCallDTO = {
+      toolCallId: item.toolCallId,
+      stepId: item.stepId,
+      sequence: item.sequence,
+      instanceId: item.instanceId,
+      toolName: item.toolName,
+      serverName: item.serverName,
+      toolArgs: item.toolArgs,
+      toolResult: item.toolResult,
+      status: item.status,
+      errorMessage: item.errorMessage,
+      durationMs: item.durationMs,
+      startedAt: item.startedAt,
+      completedAt: item.completedAt
+    };
+
+    if (historyLike.instanceId && historyLike.instanceId.trim()) {
+      const existing = workerMessages[historyLike.instanceId] || [];
+      workerMessages[historyLike.instanceId] = [...existing, toWorkerToolMessageFromHistory(historyLike)];
+      return;
+    }
+    leadMessages.push(toLeadToolMessageFromHistory(historyLike));
   });
 
   leadMessages.sort((a, b) => toTimeValue(a.timestamp) - toTimeValue(b.timestamp));
@@ -490,6 +622,37 @@ function mergeWorkerMessageMaps(
     merged[instanceId] = mergeWorkerMessageList(baseList, liveList);
   });
   return merged;
+}
+
+function parseWorkerIndexFromLabel(label?: string): number | null {
+  if (!label) {
+    return null;
+  }
+  const match = label.trim().match(/^worker-(\d+)$/i);
+  if (!match) {
+    return null;
+  }
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) ? value : null;
+}
+
+function resolveWorkerInstanceIdFromInbox(
+  sessionId: string,
+  from: string,
+  fromInstanceId?: string,
+  to?: string
+): string | null {
+  if (fromInstanceId && fromInstanceId.trim()) {
+    return fromInstanceId.trim();
+  }
+  if (to && to.trim() && !to.endsWith('_lead')) {
+    return to.trim();
+  }
+  const workerIndex = parseWorkerIndexFromLabel(from);
+  if (workerIndex === null) {
+    return null;
+  }
+  return `${sessionId}_w${workerIndex}`;
 }
 
 // ========== SSE 事件处理 ==========
@@ -771,6 +934,140 @@ function handleSSEEvent(
       }
       break;
 
+    case 'lead_output':
+      {
+        const output = typeof data.output === 'string'
+          ? data.output
+          : (typeof data.chunk === 'string' ? data.chunk : '');
+        if (!output) {
+          break;
+        }
+
+        set(state => {
+          const lastMessage = state.messages[state.messages.length - 1];
+          if (
+            lastMessage &&
+            lastMessage.type === 'lead' &&
+            lastMessage.id.endsWith('_lead_output_stream')
+          ) {
+            const mergedMessage: LeadMessage = {
+              ...lastMessage,
+              content: lastMessage.content + output,
+              timestamp: new Date().toISOString()
+            };
+            return {
+              messages: [
+                ...state.messages.slice(0, -1),
+                mergedMessage
+              ]
+            };
+          }
+
+          const newMessage: LeadMessage = {
+            id: `${Date.now()}_lead_output_stream`,
+            type: 'lead',
+            content: output,
+            timestamp: new Date().toISOString(),
+            agentName: 'Lead'
+          };
+
+          return {
+            messages: [...state.messages, newMessage]
+          };
+        });
+      }
+      break;
+
+    case 'inbox_message':
+      {
+        const from = typeof data.from === 'string' ? data.from : '';
+        const to = typeof data.to === 'string' ? data.to : '';
+        const text = typeof data.text === 'string' ? data.text : '';
+        const fromInstanceId = typeof data.fromInstanceId === 'string' ? data.fromInstanceId : undefined;
+        if (!text.trim()) {
+          break;
+        }
+
+        const normalizedFrom = from.trim().toLowerCase();
+        if (normalizedFrom === 'user') {
+          // 用户消息已由输入框乐观渲染 + controller 持久化回填，避免重复。
+          break;
+        }
+
+        if (normalizedFrom.startsWith('worker-')) {
+          const workerInstanceId = resolveWorkerInstanceIdFromInbox(sessionId, from, fromInstanceId, to);
+          const workerName = deriveWorkerDisplayName(workerInstanceId);
+          const leadMessage: LeadMessage = {
+            id: `${Date.now()}_inbox_worker_${from}`,
+            type: 'worker',
+            content: text,
+            timestamp: new Date().toISOString(),
+            agentName: workerName,
+            workerId: from,
+            instanceId: workerInstanceId || undefined
+          };
+
+          set(state => {
+            if (!workerInstanceId) {
+              return {
+                messages: [...state.messages, leadMessage]
+              };
+            }
+            const workerMessage: WorkerMessage = {
+              id: `${Date.now()}_inbox_worker_echo_${from}`,
+              type: 'output',
+              content: text,
+              timestamp: new Date().toISOString()
+            };
+            return {
+              messages: [...state.messages, leadMessage],
+              workerMessages: {
+                ...state.workerMessages,
+                [workerInstanceId]: [...(state.workerMessages[workerInstanceId] || []), workerMessage]
+              }
+            };
+          });
+          break;
+        }
+
+        if (normalizedFrom === 'lead' || normalizedFrom === 'team-lead') {
+          const targetWorkerId = to && !to.endsWith('_lead') ? to : null;
+          set(state => {
+            const nextMessages = targetWorkerId
+              ? [
+                  ...state.messages,
+                  {
+                    id: `${Date.now()}_inbox_lead_to_worker`,
+                    type: 'lead' as const,
+                    content: `发给 ${deriveWorkerDisplayName(targetWorkerId)}: ${text}`,
+                    timestamp: new Date().toISOString(),
+                    agentName: 'Lead'
+                  }
+                ]
+              : state.messages;
+
+            if (!targetWorkerId) {
+              return { messages: nextMessages };
+            }
+
+            const workerMessage: WorkerMessage = {
+              id: `${Date.now()}_inbox_lead_instruction`,
+              type: 'system',
+              content: text,
+              timestamp: new Date().toISOString()
+            };
+            return {
+              messages: nextMessages,
+              workerMessages: {
+                ...state.workerMessages,
+                [targetWorkerId]: [...(state.workerMessages[targetWorkerId] || []), workerMessage]
+              }
+            };
+          });
+        }
+      }
+      break;
+
     case 'tool_call_start':
       {
         const instanceId = typeof data.instanceId === 'string' && data.instanceId.trim()
@@ -1037,12 +1334,42 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         const nextState: Partial<TeamState> = {};
         let historyMessages: LeadMessage[] | undefined;
         let historyWorkerMessages: Record<string, WorkerMessage[]> | undefined;
+        let historyWorkerInstanceIds: string[] = [];
 
         if (historyResult.status === 'fulfilled') {
           const history = historyResult.value;
-          const { leadMessages, workerMessages } = buildHistoryState(history);
+          let { leadMessages, workerMessages } = buildHistoryState(history);
+
+          if (leadMessages.length === 0 && Object.keys(workerMessages).length === 0) {
+            const [legacyMessagesResult, legacyToolCallsResult] = await Promise.allSettled([
+              api.messages.getBySession(sessionId),
+              api.toolCalls.getBySession(sessionId)
+            ]);
+            if (legacyMessagesResult.status === 'fulfilled' || legacyToolCallsResult.status === 'fulfilled') {
+              const legacy = buildLegacyHistoryState(
+                legacyMessagesResult.status === 'fulfilled' ? legacyMessagesResult.value : [],
+                legacyToolCallsResult.status === 'fulfilled' ? legacyToolCallsResult.value : []
+              );
+              leadMessages = legacy.leadMessages;
+              workerMessages = legacy.workerMessages;
+              console.debug('[Team] History fallback (legacy APIs) applied:', {
+                sessionId,
+                leadMessages: leadMessages.length,
+                workerBuckets: Object.keys(workerMessages).length
+              });
+            }
+          }
+
           historyMessages = leadMessages;
           historyWorkerMessages = workerMessages;
+          historyWorkerInstanceIds = Object.keys(workerMessages);
+          console.debug('[Team] History hydrated:', {
+            sessionId,
+            messageCount: leadMessages.length,
+            workerCount: historyWorkerInstanceIds.length
+          });
+        } else {
+          console.warn('[Team] History API rejected:', historyResult.reason);
         }
 
         if (taskBoardResult.status === 'fulfilled') {
@@ -1089,6 +1416,22 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             currentTask: worker.currentTask,
             createdAt: worker.createdAt
           }));
+        }
+
+        if (historyWorkerInstanceIds.length > 0) {
+          const existingMembers = nextState.members || [];
+          const memberMap = new Map(existingMembers.map(member => [member.instanceId, member]));
+          historyWorkerInstanceIds.forEach(instanceId => {
+            if (!memberMap.has(instanceId)) {
+              memberMap.set(instanceId, {
+                instanceId,
+                agentName: deriveWorkerDisplayName(instanceId),
+                status: 'STOPPED',
+                createdAt: new Date().toISOString()
+              });
+            }
+          });
+          nextState.members = Array.from(memberMap.values());
         }
 
         set(current => {

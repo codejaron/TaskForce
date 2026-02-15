@@ -28,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import reactor.core.Disposable;
 
 import java.util.ArrayDeque;
+import java.time.Duration;
 import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -47,6 +48,7 @@ public class WorkerLoop implements Runnable {
 
     private static final int MAX_REACT_ITERATIONS = 20;
     private static final int BLOCKED_CHECK_INTERVAL_MS = 3000; // 等待阻塞解除的检查间隔
+    private static final int INBOX_BATCH_LIMIT = 200;
 
     private final WorkerInstance workerInstance;
     private final WorkerInstanceRepository workerRepository;
@@ -59,6 +61,7 @@ public class WorkerLoop implements Runnable {
     private final BaseCheckpointSaver checkpointSaver;
     private final AgentExecutionStateService executionStateService;
     private final ExecutionWaitIntentService waitIntentService;
+    private final WorkerRoundControlService workerRoundControlService;
     private final String startupResumeInput;
     private final Runnable onStopped;
 
@@ -81,6 +84,7 @@ public class WorkerLoop implements Runnable {
             BaseCheckpointSaver checkpointSaver,
             AgentExecutionStateService executionStateService,
             ExecutionWaitIntentService waitIntentService,
+            WorkerRoundControlService workerRoundControlService,
             String startupResumeInput,
             Runnable onStopped) {
         this.workerInstance = workerInstance;
@@ -94,6 +98,7 @@ public class WorkerLoop implements Runnable {
         this.checkpointSaver = checkpointSaver;
         this.executionStateService = executionStateService;
         this.waitIntentService = waitIntentService;
+        this.workerRoundControlService = workerRoundControlService;
         this.startupResumeInput = startupResumeInput;
         this.onStopped = onStopped == null ? () -> {} : onStopped;
     }
@@ -203,9 +208,21 @@ public class WorkerLoop implements Runnable {
      * 检查 Inbox 并处理消息
      */
     private void checkInbox() {
+        checkInbox(Duration.ZERO);
+    }
+
+    private void checkInbox(Duration blockTimeout) {
         try {
-            // 读取收件箱消息
-            List<TeamMessage> messages = inboxService.readInbox(workerInstance.getInstanceId());
+            List<TeamMessage> messages;
+            if (blockTimeout != null && !blockTimeout.isZero() && !blockTimeout.isNegative()) {
+                messages = inboxService.readInboxBlocking(
+                        workerInstance.getInstanceId(),
+                        blockTimeout,
+                        INBOX_BATCH_LIMIT
+                );
+            } else {
+                messages = inboxService.readInbox(workerInstance.getInstanceId());
+            }
 
             if (messages.isEmpty()) {
                 return;
@@ -334,9 +351,7 @@ public class WorkerLoop implements Runnable {
                 }
 
                 // 等待期间也检查 Inbox（可能收到 shutdown）
-                checkInbox();
-
-                Thread.sleep(BLOCKED_CHECK_INTERVAL_MS);
+                checkInbox(Duration.ofMillis(BLOCKED_CHECK_INTERVAL_MS));
 
             } catch (IllegalArgumentException e) {
                 // 任务不存在
@@ -389,7 +404,7 @@ public class WorkerLoop implements Runnable {
                     workerInstance.getSessionId(),
                     String.valueOf(task.getTaskId()),
                     null, // stepIndex 在 Team 模式下不适用
-                    workerInstance.getInstanceId() // Worker 实例 ID，用于 InboxCheckHook
+                    workerInstance.getInstanceId() // Worker 实例 ID，用于 ToolContext
             );
 
             // 5. 配置 RunnableConfig（传递 sessionId 和 instanceId 到 metadata）
@@ -431,10 +446,25 @@ public class WorkerLoop implements Runnable {
 
             // 注册 Disposable
             executionTracker.registerDisposable(workerInstance.getSessionId(), disposable);
+            workerRoundControlService.register(workerInstance.getInstanceId(), disposable);
 
-            // 等待执行完成
-            while (!disposable.isDisposed() && !shutdown.get()) {
-                Thread.sleep(100);
+            try {
+                // 等待执行完成
+                while (!disposable.isDisposed() && !shutdown.get()) {
+                    Thread.sleep(100);
+                    // complete_task 会在工具执行期间把任务状态改为 COMPLETED。
+                    // 一旦任务进入终态，立即结束本轮流，避免继续产生重复 send_message。
+                    if (isTaskTerminal(task.getTaskId())) {
+                        if (!disposable.isDisposed()) {
+                            disposable.dispose();
+                            log.info("[WorkerLoop] Disposed running stream after task became terminal: taskId={}",
+                                    task.getTaskId());
+                        }
+                        break;
+                    }
+                }
+            } finally {
+                workerRoundControlService.clear(workerInstance.getInstanceId(), disposable);
             }
 
             // 7. 更新任务状态
@@ -526,6 +556,7 @@ public class WorkerLoop implements Runnable {
                     你是团队模式下的 Worker，正在处理 Team Lead 的直接指令（非任务板任务）。
                     必须按输入内容执行，并在完成后通过 send_message 向 Lead 回复结果。
                     send_message 的目标为 Lead（workerId=0），回复内容应可直接用于 Lead 决策。
+                    完成回复后结束本轮，不要重复调用 send_message。
                     """;
             ReactAgent reactAgent = reactAgentFactory.buildWorkerReactAgent(
                     Long.valueOf(workerInstance.getAgentId()),
@@ -572,9 +603,14 @@ public class WorkerLoop implements Runnable {
                     .subscribe();
 
             executionTracker.registerDisposable(workerInstance.getSessionId(), disposable);
+            workerRoundControlService.register(workerInstance.getInstanceId(), disposable);
 
-            while (!disposable.isDisposed() && !shutdown.get()) {
-                Thread.sleep(100);
+            try {
+                while (!disposable.isDisposed() && !shutdown.get()) {
+                    Thread.sleep(100);
+                }
+            } finally {
+                workerRoundControlService.clear(workerInstance.getInstanceId(), disposable);
             }
 
             if (shutdown.get()) {
@@ -621,6 +657,16 @@ public class WorkerLoop implements Runnable {
             return "";
         }
         return resumeMessage;
+    }
+
+    private boolean isTaskTerminal(int taskId) {
+        try {
+            Task latestTask = taskBoardService.getTask(workerInstance.getSessionId(), taskId);
+            return latestTask.isCompleted() || latestTask.isFailed();
+        } catch (Exception e) {
+            log.debug("[WorkerLoop] Failed to check task terminal state: taskId={}", taskId, e);
+            return false;
+        }
     }
 
     private String drainPendingTextInputs() {

@@ -7,6 +7,7 @@ import lombok.Getter;
 public class InboxMessageEvent extends OrchestrationEvent {
 
     private String from;
+    private String fromInstanceId;
     private String to;
     private String messageType;
     private String text;
@@ -15,9 +16,15 @@ public class InboxMessageEvent extends OrchestrationEvent {
         super();
     }
 
-    public InboxMessageEvent(String sessionId, String from, String to, String messageType, String text) {
+    public InboxMessageEvent(String sessionId,
+                             String from,
+                             String fromInstanceId,
+                             String to,
+                             String messageType,
+                             String text) {
         super(sessionId);
         this.from = from;
+        this.fromInstanceId = fromInstanceId;
         this.to = to;
         this.messageType = messageType;
         this.text = text;
