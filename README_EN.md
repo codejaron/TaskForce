@@ -4,10 +4,11 @@
 
 ## 🚧 Disclaimer
 
-This project is in the early stages of development and is intended primarily for personal study and technical exploration. The code may have bugs, welcome to learn and communicate.
+This project is in an early stage and is mainly for learning and technical exploration. Bugs are expected.
 
 ## Introduction
-TaskForce is a **team-only multi-agent platform** centered on two runtime modes: `Team` (Lead + Workers) and `Single Chat`.
+
+TaskForce is a **multi-agent collaboration platform** centered on two runtime modes: `Team` (Lead + Workers) and `Single Chat`.
 
 Core runtime model:
 
@@ -16,43 +17,67 @@ Core runtime model:
 - **Single Chat**: direct conversation mode with one agent
 
 ## Core Features
+
 - **Team-first orchestration**: legacy planner-worker graph orchestration removed
 - **Real-time observability**: Team and Worker SSE streams for live status
 - **Checkpoint persistence**: Redis-backed saver retained for Lead/Worker continuity
 - **Single Chat retained**: lightweight chat path remains available
-- **MCP Tool Integration**: Standardized tool integration approach
+- **MCP Tool Integration**: standardized tool integration approach
 
-📖 Detailed Introduction: [blog.jarontech.top](https://blog.jarontech.top)
+📖 Detailed introduction: [blog.jarontech.top](https://blog.jarontech.top)
 
 ---
 
-## 🚀 Quick Start (Docker one-command)
+## 🚀 Quick Start (Local Run)
 
-### Start
+> This repository now supports local run only.
+
+### 1. Start dependencies
+
+Prepare and run these services first (default ports):
+
+- MySQL 8.0 (`3306`)
+- Redis 7 (`6379`)
+- RocketMQ NameServer (`9876`)
+- Nacos (`8848`, if service discovery is enabled)
+
+### 2. Start MCP Server
 
 ```bash
-./start.sh
+cd mcp-server
+mvn spring-boot:run
 ```
 
-After startup:
+### 3. Start backend
 
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8080
+```bash
+cd TaskForceBackEnd
+mvn spring-boot:run
+```
 
-**Initial Configuration**:
-1. Visit frontend interface
-2. Go to "Provider Management", add LLM Provider (OpenAI/Azure/Ollama, etc.)
-3. Go to "Agent Management", create:
-   - At least 1 **PLANNER** type Agent (used as Team Lead)
-   - At least 1 **WORKER** type Agent (for executing tasks)
-4. Configure MCP tools for Workers (optional, enhances capabilities)
+### 4. Start frontend
+
+```bash
+cd TaskForceFrontEnd
+npm install
+npm run dev
+```
+
+Default local URLs:
+
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:8080`
+- MCP Server: `http://localhost:8082`
+
+### Initial setup
+
+1. Open `http://localhost:5173`
+2. In "Provider Management", add an LLM provider (OpenAI/Azure/Ollama, etc.)
+3. In "Agent Management", create:
+   - at least 1 **PLANNER** agent (used as Team Lead)
+   - at least 1 **WORKER** agent
+4. Configure MCP tools for workers (optional)
 5. Create a `TEAM` or `CHAT` session and start conversation
-
-### Stop
-
-```bash
-./stop.sh
-```
 
 ## 📱 Page Screenshots
 
@@ -70,7 +95,7 @@ After startup:
 
 ## 📘 Docs
 
-- Quick start / env vars / FAQ: [QUICKSTART_EN.md](./QUICKSTART_EN.md) (English)
+- Quick start / env vars / FAQ: [QUICKSTART_EN.md](./QUICKSTART_EN.md)
 
 ## 🏗️ Project Structure
 
@@ -78,12 +103,11 @@ After startup:
 TaskForce/
 ├── TaskForceFrontEnd/         # React frontend
 ├── TaskForceBackEnd/          # Spring Boot backend
-├── docker-compose.yml         # Docker Compose config
-├── start.sh                   # One-command startup (auto-generates .env)
-├── stop.sh                    # Stop services
-├── mcp-config.json            # MCP config (mounted into backend container)
-├── mcp-tools/                 # MCP tools directory (mounted into backend container)
-└── .env.example               # Environment variables template
+├── mcp-server/                # MCP server
+├── mcp-config.json            # MCP config (optional)
+├── mcp-tools/                 # MCP tools directory (optional)
+├── .env.example               # Local environment variable example
+└── QUICKSTART_EN.md           # English quick start
 ```
 
 ## 🧑‍💻 Development
@@ -103,6 +127,13 @@ npm install
 npm run dev
 ```
 
+### MCP Server
+
+```bash
+cd mcp-server
+mvn spring-boot:run
+```
+
 ## Tech Stack
 
 ### Backend
@@ -110,6 +141,7 @@ npm run dev
 - Spring Boot
 - Java
 - MySQL
+- Redis
 
 ### Frontend
 

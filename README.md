@@ -54,36 +54,6 @@ TaskForce 是一个 **多智能体协作平台**，核心运行模式为 `Team`�
 
 独立的 MCP 工具服务，统一管理和路由 MCP 工具调用。
 
-### 架构设计
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   MCP Server 微服务                          │
-│                (Spring Boot 3.3.4 + Java 21)                │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │                对外统一接口                           │   │
-│  │  GET  /mcp/sse     → SSE 长连接                      │   │
-│  │  POST /mcp/message → JSON-RPC 消息处理               │   │
-│  │  GET  /api/tools   → 工具列表                        │   │
-│  │  POST /api/tools/call → 工具调用                     │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                           │                                 │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │                  ToolRouter                          │   │
-│  │           根据 tool_name 路由到对应 Provider          │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                    │                 │                      │
-│         ┌───────────────┐     ┌─────────────┐              │
-│         │StdioProvider  │     │RemoteSse    │              │
-│         │               │     │Provider     │              │
-│         │ - npx 子进程  │     │ - 远程转发  │              │
-│         │ - weather     │     │ - n8n 集成  │              │
-│         │ - filesystem  │     │             │              │
-│         └───────────────┘     └─────────────┘              │
-└─────────────────────────────────────────────────────────────┘
-```
-
 ### 支持的工具类型
 
 1. **STDIO 工具**：通过 `npx` 启动的 MCP Server（如 `@modelcontextprotocol/server-filesystem`）
@@ -95,53 +65,58 @@ TaskForce 是一个 **多智能体协作平台**，核心运行模式为 `Team`�
 - **JSON 文件配置**：通过 `mcp-server-config.json` 文件管理
 - **混合模式**：同时支持数据库和文件配置
 
-### 与主服务集成
-
-主服务（TaskForceBackEnd）通过 `RemoteMcpClient` 连接到 MCP Server：
-- 建立 SSE 长连接接收工具列表
-- 通过 JSON-RPC 协议调用工具
-- 支持服务发现（Nacos）和负载均衡
-
 ---
 
-## 🚀 快速开始
+## 🚀 快速开始（本地运行）
 
-### 一键启动（Docker Compose）
+> 当前仓库仅提供本地运行方式。
+
+### 1. 启动基础依赖
+
+请先准备并启动以下服务（默认端口）：
+
+- MySQL 8.0（`3306`）
+- Redis 7（`6379`）
+- RocketMQ NameServer（`9876`）
+- Nacos（`8848`，如启用了服务发现）
+
+### 2. 启动 MCP Server
 
 ```bash
-./start.sh
+cd mcp-server
+mvn spring-boot:run
 ```
 
-启动完成后访问：
-- **前端**: http://localhost:3000
-- **后端 API**: http://localhost:8080
-- **MCP Server**: http://localhost:8082
+### 3. 启动后端主服务
 
-### 服务依赖
+```bash
+cd TaskForceBackEnd
+mvn spring-boot:run
+```
 
-Docker Compose 会自动启动以下服务：
-- **MySQL 8.0** - 数据持久化
-- **Redis 7** - 状态缓存和事件总线
-- **RocketMQ 5.1.0** - 消息队列（Namesrv + Broker + Dashboard）
-- **TaskForce Backend** - 主服务
-- **MCP Server** - MCP 工具服务
-- **Frontend** - Web 界面
+### 4. 启动前端
+
+```bash
+cd TaskForceFrontEnd
+npm install
+npm run dev
+```
+
+启动后常用地址：
+
+- 前端：`http://localhost:5173`
+- 后端 API：`http://localhost:8080`
+- MCP Server：`http://localhost:8082`
 
 ### 首次使用配置
 
-1. 访问前端界面 http://localhost:3000
-2. 进入"提供商管理"，添加 LLM Provider（OpenAI/Azure/Ollama 等）
-3. 进入"智能体管理"，创建：
-   - 至少 1 个 **PLANNER** 类型的 Agent（作为 Team Lead）
-   - 至少 1 个 **WORKER** 类型的 Agent
-4. 为 Workers 配置 MCP 工具（可选）
+1. 访问前端界面 `http://localhost:5173`
+2. 进入“提供商管理”，添加 LLM Provider（OpenAI/Azure/Ollama 等）
+3. 进入“智能体管理”，创建：
+   - 至少 1 个 **PLANNER** 类型 Agent（作为 Team Lead）
+   - 至少 1 个 **WORKER** 类型 Agent
+4. 为 Worker 配置 MCP 工具（可选）
 5. 创建 `TEAM` 会话或 `CHAT` 会话并开始对话
-
-### 停止服务
-
-```bash
-./stop.sh
-```
 
 ---
 
@@ -180,42 +155,13 @@ Docker Compose 会自动启动以下服务：
 ```text
 TaskForce/
 ├── TaskForceBackEnd/                    # 后端主服务
-│   ├── src/main/java/com/agent/
-│   │   ├── api/                         # REST API 控制器
-│   │   ├── domain/
-│   │   │   ├── team/                    # Team Lead / Team 事件 / Team 历史
-│   │   │   └── worker/                  # Worker 执行与实例管理
-│   │   ├── infrastructure/
-│   │   │   ├── llm/                     # LlmAdapter, ChatModelFactory
-│   │   │   ├── agent/                   # ReactAgentFactory
-│   │   │   ├── mcp/                     # RemoteMcpClient
-│   │   │   ├── event/                   # EventBus (Redis)
-│   │   │   ├── memory/                  # DbChatMemory
-│   │   │   ├── prompt/                  # PromptManager
-│   │   │   └── persistence/             # Mapper, Entity
-│   │   └── service/                     # 业务服务层
-│   └── src/main/resources/
-│       ├── application.yml              # 配置文件
-│       └── db/migration/                # 数据库 Schema
-│
+├── TaskForceFrontEnd/                   # 前端应用
 ├── mcp-server/                          # MCP Server 微服务
-│   ├── src/main/java/com/agent/mcpserver/
-│   │   ├── controller/                  # MCP 协议控制器
-│   │   │   ├── McpSseController.java    # SSE 长连接
-│   │   │   ├── McpStreamableHttpController.java  # JSON-RPC
-│   │   │   ├── ToolController.java      # REST API
-│   │   │   └── ProviderController.java  # 提供者管理
-│   │   ├── service/
-│   │   │   └── provider/                # StdioProvider, RemoteSseProvider
-│   │   ├── protocol/                    # JSON-RPC 协议
-│   │   ├── entity/                      # ToolProviderConfig
-│   │   └── tool/                        # 工具定义
-│   └── README.md                        # MCP Server 文档
-│
-├── docker-compose.yml                   # Docker Compose 配置
-├── start.sh                             # 一键启动脚本
-├── stop.sh                              # 停止服务脚本
-└── .env.example                         # 环境变量模板
+├── mcp-config.json                      # MCP 配置（可选）
+├── mcp-tools/                           # MCP 工具目录（可选）
+├── .env.example                         # 本地环境变量示例
+├── QUICKSTART.md                        # 中文快速开始
+└── QUICKSTART_EN.md                     # English quick start
 ```
 
 ---
@@ -230,10 +176,10 @@ mvn spring-boot:run
 ```
 
 **前置条件**：
-- 启动 MySQL（端口 3306）
-- 启动 Redis（端口 6379）
-- 启动 RocketMQ Namesrv（端口 9876）
-- 启动 MCP Server（端口 8082）
+- MySQL（端口 `3306`）
+- Redis（端口 `6379`）
+- RocketMQ NameServer（端口 `9876`）
+- MCP Server（端口 `8082`）
 
 ### 本地开发（MCP Server）
 
@@ -243,14 +189,24 @@ mvn spring-boot:run
 ```
 
 **前置条件**：
-- 启动 MySQL（端口 3306）
-- 启动 RocketMQ Namesrv（端口 9876）
+- MySQL（端口 `3306`）
+- RocketMQ NameServer（端口 `9876`）
+
+### 本地开发（前端）
+
+```bash
+cd TaskForceFrontEnd
+npm install
+npm run dev
+```
+
+默认开发端口：`5173`。
 
 ### 配置文件
 
-- **后端配置**：`TaskForceBackEnd/src/main/resources/application.yml`
-- **MCP Server 配置**：`mcp-server/src/main/resources/application.yml`
-- **环境变量**：`.env`（从 `.env.example` 复制）
+- 后端配置：`TaskForceBackEnd/src/main/resources/application.yml`
+- MCP Server 配置：`mcp-server/src/main/resources/application.yml`
+- 本地环境变量示例：`.env.example`
 
 ### 数据库初始化
 
@@ -260,8 +216,8 @@ mvn spring-boot:run
 
 ## 📘 文档
 
-- **快速开始 / 环境变量 / 常见问题**：[`QUICKSTART.md`](./QUICKSTART.md)
-- **MCP Server 详细文档**：[`mcp-server/README.md`](./mcp-server/README.md)
+- 快速开始 / 环境变量 / 常见问题：[`QUICKSTART.md`](./QUICKSTART.md)
+- MCP Server 详细文档：[`mcp-server/README.md`](./mcp-server/README.md)
 
 ---
 

@@ -1,6 +1,6 @@
 # MCP Server 微服务
 
-统一的 MCP (Model Context Protocol) Server 微服务，支持三种工具来源：
+统一的 MCP (Model Context Protocol) Server 微服务，支持两种工具来源：
 
 1. **STDIO 工具** - 通过 npx 等子进程启动的工具（如 weather、filesystem）
 2. **Remote SSE 工具** - 远程 SSE 服务（如 n8n 集成的工具）
@@ -47,23 +47,17 @@ mvn spring-boot:run
 ```
 
 服务启动后访问：
-- SSE 端点: http://localhost:8081/mcp/sse
-- 工具列表: http://localhost:8081/api/tools
-- 健康检查: http://localhost:8081/actuator/health
 
-### Docker 部署
-
-```bash
-cd mcp-server
-docker build -t mcp-server .
-docker run -p 8081:8081 mcp-server
-```
+- SSE 端点: http://localhost:8082/mcp/sse
+- 工具列表: http://localhost:8082/api/tools
+- 健康检查: http://localhost:8082/actuator/health
 
 ## 配置说明
 
 ### 配置来源
 
 通过环境变量 `MCP_CONFIG_SOURCE` 控制：
+
 - `database` - 从数据库加载配置
 - `file` - 从 JSON 配置文件加载
 - `both` - 同时从数据库和配置文件加载
