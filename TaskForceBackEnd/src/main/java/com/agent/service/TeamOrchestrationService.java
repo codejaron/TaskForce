@@ -13,6 +13,7 @@ import com.agent.infrastructure.llm.ChatModelFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.OrchestrationEvent;
 import com.agent.infrastructure.event.events.ErrorEvent;
+import com.agent.infrastructure.event.events.SessionCompleteEvent;
 import com.agent.infrastructure.event.events.TeamCreatedEvent;
 import com.agent.infrastructure.event.events.TeamStartedEvent;
 import com.agent.infrastructure.persistence.entity.Agent;
@@ -168,10 +169,13 @@ public class TeamOrchestrationService {
             // 5. 清理任务板（可选：保留任务历史）
             // taskBoardService.deleteAllTasks(sessionId);
 
-            // 6. 取消订阅
+            // 6. 发布会话完成事件，统一驱动状态与历史落库
+            eventBus.publish(sessionId, new SessionCompleteEvent(sessionId, "Session stopped by user"));
+
+            // 7. 取消订阅
             eventBus.unsubscribe(sessionId);
 
-            // 7. 取消执行跟踪
+            // 8. 取消执行跟踪
             executionTracker.cancelExecution(sessionId);
 
             log.info("[TeamOrchestrationService] Session stopped: sessionId={}", sessionId);

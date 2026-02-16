@@ -7,19 +7,19 @@
 This project is in the early stages of development and is intended primarily for personal study and technical exploration. The code may have bugs, welcome to learn and communicate.
 
 ## Introduction
-TaskForce is an AI Agent platform based on Plan-Execute architecture, supporting MCP tool integration.
+TaskForce is a **team-only multi-agent platform** centered on two runtime modes: `Team` (Lead + Workers) and `Single Chat`.
 
-It adopts a role separation + context isolation design:
+Core runtime model:
 
-- **Planner**: Analyzes requirements and generates structured execution plans
-- **Worker**: Independently executes each step with clean, non-accumulating context
-- **Artifact**: Passes key results between steps
+- **Team Lead**: coordinates tasks, delegates work, and reports progress
+- **Worker**: executes assigned tasks with MCP tools
+- **Single Chat**: direct conversation mode with one agent
 
 ## Core Features
-- **Plan-Execute Separation**: Decoupled planning and execution with clear responsibilities
-- **Context Isolation**: Each Worker only receives current task + necessary Artifacts, not polluted by irrelevant history
-- **Real-time Observability**: SSE pushes execution status, know what each step is doing
-- **Automatic Error Recovery**: Triggers Replanner to replan when failures occur
+- **Team-first orchestration**: legacy planner-worker graph orchestration removed
+- **Real-time observability**: Team and Worker SSE streams for live status
+- **Checkpoint persistence**: Redis-backed saver retained for Lead/Worker continuity
+- **Single Chat retained**: lightweight chat path remains available
 - **MCP Tool Integration**: Standardized tool integration approach
 
 📖 Detailed Introduction: [blog.jarontech.top](https://blog.jarontech.top)
@@ -43,10 +43,10 @@ After startup:
 1. Visit frontend interface
 2. Go to "Provider Management", add LLM Provider (OpenAI/Azure/Ollama, etc.)
 3. Go to "Agent Management", create:
-   - At least 1 **PLANNER** type Agent (for generating execution plans)
+   - At least 1 **PLANNER** type Agent (used as Team Lead)
    - At least 1 **WORKER** type Agent (for executing tasks)
 4. Configure MCP tools for Workers (optional, enhances capabilities)
-5. Create session and start conversation
+5. Create a `TEAM` or `CHAT` session and start conversation
 
 ### Stop
 
@@ -65,8 +65,8 @@ After startup:
 ### MCP Marketplace
 ![MCP Tools](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.34.59@2x.png)
 
-### A2A Workspace
-![A2A Workspace](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.32.40@2x.png)
+### Team Studio
+![Team Studio](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.32.40@2x.png)
 
 ## 📘 Docs
 

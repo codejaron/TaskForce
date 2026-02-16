@@ -1,13 +1,21 @@
 import { create } from 'zustand';
 import { api } from '../../../shared/api';
-import type { Session, A2AMessage, ToolCallDTO } from '../../../shared/api';
+import type { Session, ToolCallDTO } from '../../../shared/api';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { apiUrl } from '../../../shared/api/base';
+
+interface SingleChatMessage {
+  agentId: string;
+  agentName: string;
+  content: string;
+  timestamp: string;
+  type: 'text';
+}
 
 interface SingleChatState {
   sessions: Session[];
   currentSession: Session | null;
-  messages: A2AMessage[];
+  messages: SingleChatMessage[];
   toolCalls: ToolCallDTO[];
   isStreaming: boolean;
   error: string | null;
@@ -49,7 +57,7 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
       // 加载历史消息
       const dbMessages = await api.messages.getBySession(session.id);
 
-      const chatMessages: A2AMessage[] = dbMessages.map(msg => {
+      const chatMessages: SingleChatMessage[] = dbMessages.map(msg => {
         const isUser = msg.role === 'user';
         return {
           agentId: isUser ? 'human' : (msg.agentId?.toString() || 'assistant'),

@@ -112,62 +112,6 @@ export interface LLMProviderRequest {
   models?: ChannelModel[];
 }
 
-// ==================== 新增：异步工作流相关类型 ====================
-
-export interface SubmitResponse {
-  requestId: string;
-  status: 'PROCESSING' | 'RESUMED' | 'PAUSED' | 'ERROR';
-}
-
-export interface WorkflowStateResponse {
-  planId: string;
-  sessionId: string;
-  goal: string;
-  status: string;
-  currentPhase: string;
-  currentStepIndex: number;
-  totalSteps: number;
-  completedSteps: number;
-  pauseReason?: string;
-  pendingQuestion?: string;
-  steps: StepSummary[];
-}
-
-export interface StepSummary {
-  stepId: string;
-  stepIndex: number;
-  instruction: string;
-  status: string;
-  assignedAgentName: string;
-}
-
-export interface A2AMessage {
-  agentId: string;
-  agentName: string;
-  content: string;
-  rawContent?: string;
-  timestamp: string;
-  type: 'text' | 'tool_use' | 'tool_result' | 'plan' | 'question';
-
-  // 新增字段：步骤和计划信息
-  stepId?: string;
-  /**
-   * 原始 stepId（当 stepId 因去重被追加后缀时，用它来与后续事件/tool call 关联）
-   */
-  originalStepId?: string;
-  stepIndex?: number;
-  stepDescription?: string;
-  planId?: string;
-  goal?: string;
-
-  // 新增字段：并行执行层级信息
-  layerIndex?: number;
-  stepIds?: string[];
-
-  // 新增字段：流式状态
-  isStreaming?: boolean;
-}
-
 // ============= Token统计相关类型 =============
 
 export interface ProviderCostDTO {

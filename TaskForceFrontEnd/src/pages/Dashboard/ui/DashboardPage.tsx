@@ -174,7 +174,7 @@ export const DashboardPage: React.FC = () => {
       value: stats.sessions,
       icon: Users,
       color: 'bg-green-600',
-      link: '/a2a',
+      link: '/team-studio',
       description: t('dashboard.a2aSessionsDesc')
     }
   ];
