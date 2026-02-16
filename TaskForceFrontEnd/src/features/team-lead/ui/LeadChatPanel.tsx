@@ -9,6 +9,7 @@ import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 import { parseThinkContent } from '../../team/ui/thinkParser';
 import { useTranslation } from 'react-i18next';
+import { getToolDisplayName } from '../../../shared/utils/toolName';
 
 export const LeadChatPanel: React.FC = () => {
   const { t } = useTranslation();
@@ -267,9 +268,7 @@ const LeadToolCallBubble: React.FC<{ message: LeadMessage }> = ({ message }) => 
       ? 'border-purple-200 bg-purple-50'
       : 'border-amber-200 bg-amber-50';
 
-  const displayToolName = message.serverName
-    ? `${message.serverName}::${message.toolName || t('team.tool')}`
-    : (message.toolName || t('team.tool'));
+  const displayToolName = getToolDisplayName(message.toolName, t('team.tool'));
 
   const argsText = formatJsonString(message.toolArgs || (message.type === 'tool_call' ? message.content : ''));
   const resultText = formatJsonString(message.toolResult || (message.type === 'tool_result' ? message.content : ''));

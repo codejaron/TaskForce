@@ -9,6 +9,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { parseThinkContent } from './thinkParser';
 import { useTranslation } from 'react-i18next';
+import { getToolDisplayName } from '../../../shared/utils/toolName';
 
 export const WorkerChatPanel: React.FC = () => {
   const { t } = useTranslation();
@@ -201,9 +202,7 @@ const ToolCallBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
       ? 'border-purple-200 bg-purple-50'
       : 'border-amber-200 bg-amber-50';
 
-  const displayToolName = message.serverName
-    ? `${message.serverName}::${message.toolName || t('team.tool')}`
-    : (message.toolName || t('team.tool'));
+  const displayToolName = getToolDisplayName(message.toolName, t('team.tool'));
 
   const argsText = formatJsonString(message.toolArgs || (message.type === 'tool_call' ? message.content : ''));
   const resultText = formatJsonString(message.toolResult || (message.type === 'tool_result' ? message.content : ''));
