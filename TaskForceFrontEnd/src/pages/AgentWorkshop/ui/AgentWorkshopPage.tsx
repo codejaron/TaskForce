@@ -86,7 +86,7 @@ export const AgentWorkshopPage: React.FC = () => {
       systemPrompt: '',
       modelName: '',
       temperature: 0.7,
-      maxTokens: 4096,
+      maxTokens: undefined,
       selectedMcpTools: [],
       enabled: true,
       description: ''
@@ -174,6 +174,21 @@ export const AgentWorkshopPage: React.FC = () => {
         selectedMcpTools: [...tools, toolId]
       });
     }
+  };
+
+  const handleMaxTokensChange = (value: string) => {
+    if (!editingAgent) return;
+
+    if (value === '') {
+      setEditingAgent({ ...editingAgent, maxTokens: undefined });
+      return;
+    }
+
+    if (!/^\d+$/.test(value)) {
+      return;
+    }
+
+    setEditingAgent({ ...editingAgent, maxTokens: Number(value) });
   };
 
   const filteredTools = tools.filter(
@@ -418,15 +433,16 @@ export const AgentWorkshopPage: React.FC = () => {
               {/* Max Tokens */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  {t('agents.maxTokens')}: {editingAgent.maxTokens || 4096}
+                  {t('agents.maxTokens')}
+                  {editingAgent.maxTokens != null ? `: ${editingAgent.maxTokens}` : ''}
                 </label>
                 <input
-                  type="number"
-                  min="100"
-                  max="32000"
-                  step="100"
-                  value={editingAgent.maxTokens || 4096}
-                  onChange={e => setEditingAgent({ ...editingAgent, maxTokens: parseInt(e.target.value) || 4096 })}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={editingAgent.maxTokens != null ? String(editingAgent.maxTokens) : ''}
+                  onChange={e => handleMaxTokensChange(e.target.value)}
+                  placeholder="4096"
                   className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500 shadow-sm"
                 />
                 <p className="text-xs text-gray-500 mt-1">{t('agents.maxTokensHint')}</p>
