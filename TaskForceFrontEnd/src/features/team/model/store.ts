@@ -12,6 +12,7 @@ import type {
   WorkerInstance
 } from '../../../shared/api/types';
 import { apiUrl } from '../../../shared/api/base';
+import i18n from '../../../shared/i18n/config';
 
 // ========== 类型定义 ==========
 
@@ -126,6 +127,11 @@ const RECONNECT_CONFIG = {
   maxDelay: 32000,
   backoffMultiplier: 2
 };
+
+function tr(key: string, options?: Record<string, unknown>): string {
+  const value = i18n.t(key, options as never);
+  return typeof value === 'string' ? value : String(value);
+}
 
 function getReconnectDelay(retryCount: number): number {
   const baseDelay = RECONNECT_CONFIG.initialDelay *
@@ -247,10 +253,13 @@ function parseInboxSenders(toolResult: string): string[] {
 }
 
 function buildInboxReadHint(readBy: 'Lead' | 'Worker', senders: string[]): string {
+  const reader = readBy === 'Lead' ? tr('team.lead') : tr('team.worker');
+  const separator = i18n.language.startsWith('zh') ? '、' : ', ';
+  const senderList = senders.join(separator);
   if (senders.length === 0) {
-    return `${readBy} 读取了收件箱，但没有新消息`;
+    return tr('team.inboxReadNone', { reader });
   }
-  return `${readBy} 读取到来自 ${senders.join('、')} 的消息`;
+  return tr('team.inboxReadFrom', { reader, senders: senderList });
 }
 
 function isLikelyToolInvocationContent(content: string): boolean {
@@ -393,7 +402,7 @@ function toTimeValue(value?: string): number {
 function toUserFriendlySystemContent(content: string): string {
   const trimmed = content.trim();
   if (trimmed.startsWith('团队已启动') || /^team started\b/i.test(trimmed)) {
-    return '团队已启动';
+    return tr('team.msgTeamStarted');
   }
   return content;
 }
@@ -410,17 +419,18 @@ function extractWorkerInstanceIdFromAgentName(agentName?: string): string | null
 }
 
 function deriveWorkerDisplayName(instanceId?: string | null): string {
+  const workerLabel = tr('team.worker');
   if (!instanceId) {
-    return 'Worker';
+    return workerLabel;
   }
   const suffix = instanceId.match(/_w(\d+)$/i);
   if (suffix) {
-    return `Worker #${suffix[1]}`;
+    return tr('team.workerWithIndex', { index: suffix[1] });
   }
   if (instanceId.length > 18) {
-    return `Worker ${instanceId.slice(-6)}`;
+    return `${workerLabel} ${instanceId.slice(-6)}`;
   }
-  return `Worker ${instanceId}`;
+  return `${workerLabel} ${instanceId}`;
 }
 
 function toLeadMessageFromHistory(item: TeamHistoryMessageDTO): LeadMessage | null {
@@ -445,7 +455,7 @@ function toLeadMessageFromHistory(item: TeamHistoryMessageDTO): LeadMessage | nu
       type: 'lead',
       content: item.content || '',
       timestamp,
-      agentName: item.agentName || 'Lead'
+      agentName: item.agentName || tr('team.lead')
     };
   }
   if (item.messageType === 'TEAM_WORKER') {
@@ -514,10 +524,10 @@ function toLeadToolMessageFromHistory(item: TeamHistoryToolCallDTO): LeadMessage
     content: isRunning
       ? (item.toolArgs || '{}')
       : (item.status === 'FAILED'
-          ? `❌ ${item.errorMessage || item.toolResult || 'Tool call failed'}`
-          : (item.toolResult || 'Tool call completed')),
+          ? `❌ ${item.errorMessage || item.toolResult || tr('team.msgToolCallFailed')}`
+          : (item.toolResult || tr('team.msgToolCallCompleted'))),
     timestamp,
-    agentName: 'Lead',
+    agentName: tr('team.lead'),
     toolName: item.toolName,
     toolCallId: item.toolCallId,
     serverName: item.serverName,
@@ -537,8 +547,8 @@ function toWorkerToolMessageFromHistory(item: TeamHistoryToolCallDTO): WorkerMes
     content: isRunning
       ? (item.toolArgs || '{}')
       : (item.status === 'FAILED'
-          ? `❌ ${item.errorMessage || item.toolResult || 'Tool call failed'}`
-          : (item.toolResult || 'Tool call completed')),
+          ? `❌ ${item.errorMessage || item.toolResult || tr('team.msgToolCallFailed')}`
+          : (item.toolResult || tr('team.msgToolCallCompleted'))),
     timestamp: toTimestampIso(item.completedAt || item.startedAt),
     toolName: item.toolName,
     toolCallId: item.toolCallId,
@@ -820,7 +830,7 @@ function handleSSEEvent(
         const newMessage: LeadMessage = {
           id: `${Date.now()}_team_started`,
           type: 'system',
-          content: '团队已启动',
+          content: tr('team.msgTeamStarted'),
           timestamp: new Date().toISOString()
         };
         set({
@@ -854,7 +864,7 @@ function handleSSEEvent(
         const newMessage: LeadMessage = {
           id: `${Date.now()}_task_created`,
           type: 'system',
-          content: `任务创建: #${taskId} ${subject}`,
+          content: tr('team.msgTaskCreated', { taskId, subject }),
           timestamp: new Date().toISOString()
         };
 
@@ -940,7 +950,7 @@ function handleSSEEvent(
       {
         const instanceId = typeof data.instanceId === 'string' ? data.instanceId : '';
         const agentName = typeof data.agentName === 'string' ? data.agentName
-                        : typeof data.name === 'string' ? data.name : 'Unknown';
+                        : typeof data.name === 'string' ? data.name : tr('team.unknown');
 
         const newMember: TeamMember = {
           instanceId,
@@ -954,7 +964,7 @@ function handleSSEEvent(
         const newMessage: LeadMessage = {
           id: `${Date.now()}_worker_spawned`,
           type: 'system',
-          content: `Worker ${agentName} 已启动`,
+          content: tr('team.msgWorkerStarted', { agentName }),
           timestamp: new Date().toISOString(),
           agentName
         };
@@ -973,7 +983,7 @@ function handleSSEEvent(
     case 'worker_report':
       {
         const workerId = typeof data.workerId === 'string' ? data.workerId : '';
-        const agentName = typeof data.agentName === 'string' ? data.agentName : 'Worker';
+        const agentName = typeof data.agentName === 'string' ? data.agentName : tr('team.worker');
         const content = typeof data.content === 'string' ? data.content : '';
         const status = normalizeWorkerStatus(data.status);
 
@@ -1008,12 +1018,12 @@ function handleSSEEvent(
     case 'broadcast':
       {
         const content = typeof data.content === 'string' ? data.content : '';
-        const from = typeof data.from === 'string' ? data.from : 'System';
+        const from = typeof data.from === 'string' ? data.from : tr('team.msgTypeSystem');
 
         const newMessage: LeadMessage = {
           id: `${Date.now()}_broadcast`,
           type: 'system',
-          content: `[广播 from ${from}] ${content}`,
+          content: tr('team.msgBroadcast', { from, content }),
           timestamp: new Date().toISOString()
         };
 
@@ -1052,7 +1062,7 @@ function handleSSEEvent(
           type: 'lead',
           content,
           timestamp: new Date().toISOString(),
-          agentName: 'Lead'
+          agentName: tr('team.lead')
         };
 
         set({
@@ -1095,7 +1105,7 @@ function handleSSEEvent(
             type: 'lead',
             content: output,
             timestamp: new Date().toISOString(),
-            agentName: 'Lead'
+            agentName: tr('team.lead')
           };
 
           return {
@@ -1157,9 +1167,12 @@ function handleSSEEvent(
                   {
                     id: `${Date.now()}_inbox_lead_to_worker`,
                     type: 'lead' as const,
-                    content: `发给 ${deriveWorkerDisplayName(targetWorkerId)}: ${text}`,
+                    content: tr('team.msgLeadToWorker', {
+                      worker: deriveWorkerDisplayName(targetWorkerId),
+                      text
+                    }),
                     timestamp: new Date().toISOString(),
-                    agentName: 'Lead'
+                    agentName: tr('team.lead')
                   }
                 ]
               : state.messages;
@@ -1196,7 +1209,7 @@ function handleSSEEvent(
           break;
         }
 
-        const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+        const toolName = typeof data.toolName === 'string' ? data.toolName : tr('team.unknown');
         const serverName = typeof data.serverName === 'string' ? data.serverName : undefined;
         const toolArgs = typeof data.toolArgs === 'string'
           ? data.toolArgs
@@ -1208,7 +1221,7 @@ function handleSSEEvent(
           type: 'tool_call',
           content: toolArgs,
           timestamp: new Date().toISOString(),
-          agentName: 'Lead',
+          agentName: tr('team.lead'),
           toolName,
           toolCallId,
           serverName,
@@ -1252,7 +1265,7 @@ function handleSSEEvent(
           break;
         }
 
-        const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+        const toolName = typeof data.toolName === 'string' ? data.toolName : tr('team.unknown');
         const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
         const toolResult = typeof data.toolResult === 'string'
           ? data.toolResult
@@ -1269,10 +1282,10 @@ function handleSSEEvent(
           id: `${Date.now()}_lead_tool_result_${toolCallId || toolName}`,
           type: 'tool_result',
           content: toolStatus === 'FAILED'
-            ? `❌ ${errorMessage || toolResult || 'Tool call failed'}`
-            : (toolResult || 'Tool call completed'),
+            ? `❌ ${errorMessage || toolResult || tr('team.msgToolCallFailed')}`
+            : (toolResult || tr('team.msgToolCallCompleted')),
           timestamp: new Date().toISOString(),
-          agentName: 'Lead',
+          agentName: tr('team.lead'),
           toolName,
           toolCallId,
           toolResult,
@@ -1328,7 +1341,7 @@ function handleSSEEvent(
         const newMessage: LeadMessage = {
           id: `${Date.now()}_team_shutdown`,
           type: 'system',
-          content: '团队已关闭',
+          content: tr('team.msgTeamClosed'),
           timestamp: new Date().toISOString()
         };
 
@@ -1363,7 +1376,7 @@ function handleSSEEvent(
 
     case 'error':
       {
-        const errorMsg = typeof data.error === 'string' ? data.error : 'Unknown error';
+        const errorMsg = typeof data.error === 'string' ? data.error : tr('team.errorUnknown');
         set({
           error: errorMsg,
           leadLifecycleStatus: 'STOPPED',
@@ -1409,7 +1422,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       set({ sessions: teamSessions });
     } catch (error: unknown) {
       console.error('[Team] Failed to fetch sessions:', error);
-      set({ error: 'Failed to load sessions' });
+      set({ error: tr('team.errorLoadSessions') });
     }
   },
 
@@ -1430,7 +1443,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       get().selectSession(session);
     } catch (error: unknown) {
       console.error('[Team] Failed to create session:', error);
-      set({ error: 'Failed to create session' });
+      set({ error: tr('team.errorCreateSession') });
       throw error;
     }
   },
@@ -1700,7 +1713,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           } else {
             console.error('[Team SSE] Max reconnection attempts reached');
             set({
-              error: 'Connection lost. Please refresh the page.',
+              error: tr('team.errorConnectionLost'),
               leadLifecycleStatus: 'STOPPED',
               leadStatus: 'idle',
               isConnected: false
@@ -1767,7 +1780,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       });
     } catch (error: unknown) {
       console.error('[Team] Failed to delete session:', error);
-      set({ error: 'Failed to delete session' });
+      set({ error: tr('team.errorDeleteSession') });
       throw error;
     }
   },
@@ -1812,7 +1825,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       }
     } catch (error: unknown) {
       console.error('[Team] Failed to send message:', error);
-      const errMsg = error instanceof Error ? error.message : 'Failed to send message';
+      const errMsg = error instanceof Error ? error.message : tr('team.errorSendToLead');
       set({
         error: errMsg,
         leadLifecycleStatus: 'STOPPED',
@@ -1827,7 +1840,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           {
             id: `${Date.now()}_send_error`,
             type: 'system',
-            content: `发送失败: ${errMsg}`,
+            content: tr('team.msgSendFailed', { error: errMsg }),
             timestamp: new Date().toISOString()
           }
         ]
@@ -1852,7 +1865,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       console.log('[Team] Team session stopped successfully');
     } catch (error: unknown) {
       console.error('[Team] Failed to stop team:', error);
-      set({ error: 'Failed to stop team' });
+      set({ error: tr('team.errorStopTeam') });
     }
 
     get().disconnectStream();
@@ -1921,7 +1934,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           // ===== 工具调用开始 =====
           case 'tool_call_start':
             {
-              const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+              const toolName = typeof data.toolName === 'string' ? data.toolName : tr('team.unknown');
               const toolArgs = typeof data.toolArgs === 'string' ? data.toolArgs : JSON.stringify(data.toolArgs || {});
               const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
               msg = {
@@ -1941,7 +1954,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           // ===== 工具调用完成 =====
           case 'tool_call_complete':
             {
-              const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+              const toolName = typeof data.toolName === 'string' ? data.toolName : tr('team.unknown');
               const toolResult = typeof data.toolResult === 'string' ? data.toolResult : JSON.stringify(data.toolResult || {});
               const status = typeof data.status === 'string' ? data.status : 'SUCCESS';
               const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
@@ -1962,8 +1975,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
                 id: `${Date.now()}_tool_result_${toolCallId}`,
                 type: 'tool_result',
                 content: status === 'FAILED'
-                  ? `❌ ${errorMessage || toolResult}`
-                  : toolResult,
+                  ? `❌ ${errorMessage || toolResult || tr('team.msgToolCallFailed')}`
+                  : (toolResult || tr('team.msgToolCallCompleted')),
                 timestamp: new Date().toISOString(),
                 toolName,
                 toolCallId,
@@ -1995,7 +2008,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             msg = {
               id: `${Date.now()}_thinking`,
               type: 'thinking',
-              content: typeof data.content === 'string' ? data.content : 'Worker 开始思考...',
+              content: typeof data.content === 'string' ? data.content : tr('team.msgWorkerThinkingFallback'),
               timestamp: new Date().toISOString()
             };
             break;
@@ -2004,7 +2017,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             msg = {
               id: `${Date.now()}_output`,
               type: 'output',
-              content: typeof data.content === 'string' ? data.content : 'Worker 完成步骤',
+              content: typeof data.content === 'string' ? data.content : tr('team.msgWorkerStepCompletedFallback'),
               timestamp: new Date().toISOString()
             };
             break;
@@ -2165,7 +2178,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       const errorMsg: WorkerMessage = {
         id: `${Date.now()}_error`,
         type: 'error',
-        content: '发送消息失败',
+        content: tr('team.msgSendWorkerFailed'),
         timestamp: new Date().toISOString()
       };
 

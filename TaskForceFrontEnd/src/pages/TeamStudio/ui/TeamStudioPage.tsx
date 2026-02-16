@@ -12,12 +12,14 @@ import {
   Loader2
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useTranslation } from 'react-i18next';
 import { LeadChatPanel } from '../../../features/team-lead/ui';
 import { WorkerChatPanel } from '../../../features/team/ui/WorkerChatPanel';
 import { useTeamStore } from '../../../features/team/model/store';
 import { useAgentStore } from '../../../features/agents/model/store';
 
 export const TeamStudioPage: React.FC = () => {
+  const { t } = useTranslation();
 
   // Team store
   const {
@@ -90,18 +92,18 @@ export const TeamStudioPage: React.FC = () => {
   );
 
   const formatOwner = (owner?: string) => {
-    if (!owner) return '未分配';
+    if (!owner) return t('team.unassigned');
     const displayName = ownerNameById.get(owner);
     if (displayName) return displayName;
     const workerSuffix = owner.match(/_w(\d+)$/i);
-    if (workerSuffix) return `Worker #${workerSuffix[1]}`;
+    if (workerSuffix) return t('team.workerWithIndex', { index: workerSuffix[1] });
     if (owner.length > 20) return `${owner.slice(0, 8)}...${owner.slice(-4)}`;
     return owner;
   };
 
   const handleCreate = async () => {
     if (!newSessionName || selectedAgentIds.length < 1) {
-      alert('Please enter a session name and select at least 1 agent');
+      alert(t('team.createSessionValidation'));
       return;
     }
 
@@ -116,7 +118,7 @@ export const TeamStudioPage: React.FC = () => {
       setSelectedAgentIds([]);
     } catch (error) {
       console.error('Failed to create session:', error);
-      alert('Failed to create session');
+      alert(t('team.createSessionFailed'));
     } finally {
       setIsCreating(false);
     }
@@ -133,20 +135,20 @@ export const TeamStudioPage: React.FC = () => {
   const handleDelete = async (sessionId: string, e: React.MouseEvent) => {
     e.stopPropagation();
 
-    if (window.confirm('Are you sure you want to delete this session?')) {
+    if (window.confirm(t('team.confirmDeleteSession'))) {
       try {
         await deleteSession(sessionId);
       } catch (error) {
         console.error('Failed to delete session:', error);
-        alert('Failed to delete session');
+        alert(t('team.deleteSessionFailed'));
       }
     }
   };
 
   const lifecycleLabel = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
-    if (status === 'RUNNING') return '运行';
-    if (status === 'DESTROYED') return '销毁';
-    return '停止';
+    if (status === 'RUNNING') return t('team.lifecycleRunning');
+    if (status === 'DESTROYED') return t('team.lifecycleDestroyed');
+    return t('team.lifecycleStopped');
   };
 
   const lifecycleDotClass = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
@@ -168,7 +170,7 @@ export const TeamStudioPage: React.FC = () => {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Users size={20} className="text-purple-600" />
-                <h2 className="font-bold text-gray-900">Team Sessions</h2>
+                <h2 className="font-bold text-gray-900">{t('team.sessions')}</h2>
               </div>
               <button
                 onClick={() => setShowCreateModal(true)}
@@ -184,12 +186,12 @@ export const TeamStudioPage: React.FC = () => {
             {sessions.length === 0 ? (
               <div className="text-center py-8">
                 <MessageCircle size={32} className="mx-auto mb-3 text-gray-400" />
-                <p className="text-sm text-gray-500">No sessions yet</p>
+                <p className="text-sm text-gray-500">{t('team.noSessions')}</p>
                 <button
                   onClick={() => setShowCreateModal(true)}
                   className="mt-3 text-sm text-purple-600 hover:text-purple-700 cursor-pointer"
                 >
-                  Create your first session
+                  {t('team.createFirstSession')}
                 </button>
               </div>
             ) : (
@@ -212,7 +214,7 @@ export const TeamStudioPage: React.FC = () => {
                   <button
                     onClick={(e) => handleDelete(session.id, e)}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 text-gray-400 rounded transition-all duration-200 cursor-pointer"
-                    title="Delete session"
+                    title={t('team.deleteSession')}
                   >
                     <Trash2 size={14} />
                   </button>
@@ -243,7 +245,7 @@ export const TeamStudioPage: React.FC = () => {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h1 className="text-xl font-bold text-gray-900">{currentSession.name}</h1>
-                  <p className="text-sm text-gray-500">Team Studio</p>
+                  <p className="text-sm text-gray-500">{t('team.studioSubtitle')}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -251,7 +253,7 @@ export const TeamStudioPage: React.FC = () => {
                     className="px-3 py-2 border border-blue-200 bg-blue-50 text-blue-700 rounded-xl text-sm font-medium hover:bg-blue-100 transition-colors cursor-pointer flex items-center gap-2"
                   >
                     <Activity size={16} />
-                    <span>Task Board</span>
+                    <span>{t('team.taskBoard')}</span>
                     <span className="text-xs px-1.5 py-0.5 rounded-md bg-blue-100 text-blue-800">
                       {tasks.filter(t => t.status === 'COMPLETED').length}/{tasks.length}
                     </span>
@@ -273,7 +275,7 @@ export const TeamStudioPage: React.FC = () => {
                   <div className="flex items-start gap-2">
                     <Users size={16} className="text-green-600 shrink-0 mr-1" />
                     {members.length === 0 ? (
-                      <span className="text-xs text-gray-400">暂无 Worker</span>
+                      <span className="text-xs text-gray-400">{t('team.noWorker')}</span>
                     ) : (
                       members.map(m => (
                         <button
@@ -327,14 +329,14 @@ export const TeamStudioPage: React.FC = () => {
               )}>
                 <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200">
                   <Activity size={18} className="text-blue-600" />
-                  <h2 className="font-semibold text-gray-900">Task Board</h2>
+                  <h2 className="font-semibold text-gray-900">{t('team.taskBoard')}</h2>
                   <span className="text-xs text-gray-400 ml-auto">
                     {tasks.filter(t => t.status === 'COMPLETED').length}/{tasks.length}
                   </span>
                   <button
                     onClick={() => setShowTaskBoard(false)}
                     className="p-1.5 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-700 cursor-pointer"
-                    title="Close"
+                    title={t('team.close')}
                   >
                     <X size={16} />
                   </button>
@@ -345,7 +347,7 @@ export const TeamStudioPage: React.FC = () => {
                     <div className="h-full flex items-center justify-center">
                       <div className="text-center text-gray-500">
                         <Activity size={48} className="mx-auto mb-3 text-gray-300" />
-                        <p className="text-sm">暂无任务</p>
+                        <p className="text-sm">{t('team.noTasks')}</p>
                       </div>
                     </div>
                   ) : (
@@ -353,7 +355,7 @@ export const TeamStudioPage: React.FC = () => {
                       {dependencySummary.length > 0 && (
                         <div className="p-3 rounded-lg border border-indigo-200 bg-indigo-50">
                           <p className="text-[11px] uppercase tracking-wide text-indigo-700 font-semibold">
-                            依赖关系图（简版）
+                            {t('team.dependencyGraph')}
                           </p>
                           <div className="mt-1.5 space-y-1">
                             {dependencySummary.map(item => (
@@ -400,15 +402,15 @@ export const TeamStudioPage: React.FC = () => {
                                 completionNote: {task.completionNote}
                               </p>
                             )}
-                            <p className="text-xs text-gray-500 mt-1">负责人: {formatOwner(task.owner)}</p>
+                            <p className="text-xs text-gray-500 mt-1">{t('team.owner')}: {formatOwner(task.owner)}</p>
                             {blockedBy.length > 0 && (
                               <p className="text-xs text-amber-700 mt-1">
-                                被阻塞于: {blockedBy.map(depId => `#${depId}`).join(', ')}
+                                {t('team.blockedBy')}: {blockedBy.map(depId => `#${depId}`).join(', ')}
                               </p>
                             )}
                             {blocks.length > 0 && (
                               <p className="text-xs text-blue-700 mt-1">
-                                正在阻塞: {blocks.map(depId => `#${depId}`).join(', ')}
+                                {t('team.blocking')}: {blocks.map(depId => `#${depId}`).join(', ')}
                               </p>
                             )}
                           </div>
@@ -424,13 +426,13 @@ export const TeamStudioPage: React.FC = () => {
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <MessageCircle size={64} className="mx-auto mb-4 text-gray-300" />
-              <h3 className="text-xl font-medium text-gray-700 mb-2">No Session Selected</h3>
-              <p className="text-sm text-gray-500 mb-4">Create or select a session to start</p>
+              <h3 className="text-xl font-medium text-gray-700 mb-2">{t('team.noSessionSelected')}</h3>
+              <p className="text-sm text-gray-500 mb-4">{t('team.createOrSelectSession')}</p>
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-colors duration-200 cursor-pointer"
               >
-                Create New Session
+                {t('team.createNewSession')}
               </button>
             </div>
           </div>
@@ -442,7 +444,7 @@ export const TeamStudioPage: React.FC = () => {
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg border border-gray-200 shadow-2xl">
             <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-gray-900">Create Team Session</h2>
+              <h2 className="text-2xl font-bold text-gray-900">{t('team.createTeamSession')}</h2>
               <button
                 onClick={() => setShowCreateModal(false)}
                 className="text-gray-600 hover:text-gray-900 transition-colors duration-200 cursor-pointer"
@@ -454,26 +456,26 @@ export const TeamStudioPage: React.FC = () => {
             <div className="p-6 space-y-5">
               {/* Session Name */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Session Name *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{t('team.sessionName')} *</label>
                 <input
                   type="text"
                   value={newSessionName}
                   onChange={e => setNewSessionName(e.target.value)}
                   className="w-full bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
-                  placeholder="Enter session name"
+                  placeholder={t('team.enterSessionName')}
                 />
               </div>
 
               {/* Select Agents */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Agents *
-                  <span className="text-xs text-gray-500 ml-2">(Lead Agent auto-added • min 1)</span>
+                  {t('team.selectAgents')} *
+                  <span className="text-xs text-gray-500 ml-2">({t('team.leadAutoAddedMin1')})</span>
                 </label>
                 <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto bg-gray-50 border border-gray-200 rounded-xl p-3">
                   {workerAgents.length === 0 ? (
                     <p className="text-sm text-gray-500 text-center py-4 col-span-2">
-                      No agents available
+                      {t('team.noAgentsAvailable')}
                     </p>
                   ) : (
                     workerAgents.map(agent => (
@@ -509,7 +511,7 @@ export const TeamStudioPage: React.FC = () => {
                 onClick={() => setShowCreateModal(false)}
                 className="px-6 py-2.5 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-colors duration-200 cursor-pointer"
               >
-                Cancel
+                {t('team.cancel')}
               </button>
               <button
                 onClick={handleCreate}
@@ -517,7 +519,7 @@ export const TeamStudioPage: React.FC = () => {
                 className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-colors duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {isCreating && <Loader2 size={16} className="animate-spin" />}
-                {isCreating ? 'Creating...' : 'Create Session'}
+                {isCreating ? t('team.creating') : t('team.createSession')}
               </button>
             </div>
           </div>
