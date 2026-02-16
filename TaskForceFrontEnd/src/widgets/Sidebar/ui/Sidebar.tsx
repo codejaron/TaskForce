@@ -100,7 +100,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
               <button
                 onClick={toggleSidebar}
                 className="hidden md:flex p-2 hover:bg-gray-100 rounded-lg transition-colors shrink-0"
-                title="收起侧边栏"
+                title={t('sidebar.collapse')}
               >
                 <PanelLeftClose size={18} className="text-gray-600 hover:text-gray-900" />
               </button>
@@ -116,7 +116,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
               <button
                 onClick={toggleSidebar}
                 className="hidden md:flex p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                title="展开侧边栏"
+                title={t('sidebar.expand')}
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-gray-600">
                   <path d="M6 4L10 8L6 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>

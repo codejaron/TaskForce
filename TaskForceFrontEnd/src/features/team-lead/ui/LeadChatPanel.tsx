@@ -8,8 +8,10 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 import { parseThinkContent } from '../../team/ui/thinkParser';
+import { useTranslation } from 'react-i18next';
 
 export const LeadChatPanel: React.FC = () => {
+  const { t } = useTranslation();
   const { messages, sendToLead, stopTeam, leadStatus, leadLifecycleStatus, teamPhase, isTeamStarted } = useTeamStore();
   const [inputMessage, setInputMessage] = useState('');
   const [isStopping, setIsStopping] = useState(false);
@@ -72,9 +74,9 @@ export const LeadChatPanel: React.FC = () => {
   };
 
   const lifecycleLabel = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
-    if (status === 'RUNNING') return '运行';
-    if (status === 'DESTROYED') return '销毁';
-    return '停止';
+    if (status === 'RUNNING') return t('team.lifecycleRunning');
+    if (status === 'DESTROYED') return t('team.lifecycleDestroyed');
+    return t('team.lifecycleStopped');
   };
 
   const lifecycleDotClass = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
@@ -110,8 +112,8 @@ export const LeadChatPanel: React.FC = () => {
               <Bot size={20} className="text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Team Lead</h2>
-              <div className="text-sm text-gray-500">Team Coordinator</div>
+              <h2 className="text-lg font-semibold text-gray-900">{t('team.leadTitle')}</h2>
+              <div className="text-sm text-gray-500">{t('team.leadCoordinator')}</div>
             </div>
           </div>
           <div className={clsx(
@@ -119,7 +121,7 @@ export const LeadChatPanel: React.FC = () => {
             lifecycleBadgeClass(leadLifecycleStatus)
           )}>
             <span className={clsx("inline-block w-1.5 h-1.5 rounded-full", lifecycleDotClass(leadLifecycleStatus))} />
-            <span>Lead {lifecycleLabel(leadLifecycleStatus)}</span>
+            <span>{t('team.leadLifecycle', { status: lifecycleLabel(leadLifecycleStatus) })}</span>
           </div>
         </div>
       </div>
@@ -134,8 +136,8 @@ export const LeadChatPanel: React.FC = () => {
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
               <Users size={48} className="mx-auto mb-4 text-gray-300" />
-              <h3 className="text-lg font-medium text-gray-700 mb-2">Team Chat</h3>
-              <p className="text-sm text-gray-500">Messages from the team lead will appear here</p>
+              <h3 className="text-lg font-medium text-gray-700 mb-2">{t('team.teamChatTitle')}</h3>
+              <p className="text-sm text-gray-500">{t('team.teamChatHint')}</p>
             </div>
           </div>
         ) : (
@@ -172,7 +174,7 @@ export const LeadChatPanel: React.FC = () => {
                       </div>
                       <div className={clsx("max-w-[70%]", (isToolCall || isToolResult) && "max-w-[88%]")}>
                         <div className="text-xs text-gray-500 mb-1 flex items-center gap-2">
-                          {msg.agentName || (isUser ? 'You' : isWorker ? 'Worker' : 'Lead')}
+                          {msg.agentName || (isUser ? t('team.you') : isWorker ? t('team.worker') : t('team.lead'))}
                           {msg.timestamp && (
                             <span className="opacity-60">
                               {new Date(msg.timestamp).toLocaleTimeString()}
@@ -200,7 +202,7 @@ export const LeadChatPanel: React.FC = () => {
             {showWorkingIndicator && (
               <div className="flex items-center gap-2 text-gray-600">
                 <Loader2 size={16} className="animate-spin text-purple-600" />
-                <span className="text-sm">Team is working...</span>
+                <span className="text-sm">{t('team.teamWorking')}</span>
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -216,7 +218,7 @@ export const LeadChatPanel: React.FC = () => {
             value={inputMessage}
             onChange={e => setInputMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Send a message to the team lead..."
+            placeholder={t('team.sendToLeadPlaceholder')}
             className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none shadow-sm"
           />
           {showStopButton && (
@@ -224,10 +226,10 @@ export const LeadChatPanel: React.FC = () => {
               onClick={handleStop}
               disabled={isStopping}
               className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium transition-colors duration-200 flex items-center gap-2 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Stop current team execution"
+              title={t('team.stopExecution')}
             >
               {isStopping ? <Loader2 size={20} className="animate-spin" /> : <StopCircle size={20} />}
-              <span className="hidden sm:inline">{isStopping ? 'Stopping...' : 'Stop'}</span>
+              <span className="hidden sm:inline">{isStopping ? t('team.stopping') : t('team.stop')}</span>
             </button>
           )}
           <button
@@ -244,10 +246,15 @@ export const LeadChatPanel: React.FC = () => {
 };
 
 const LeadToolCallBubble: React.FC<{ message: LeadMessage }> = ({ message }) => {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   const status = message.toolStatus || (message.type === 'tool_result' ? 'SUCCESS' : 'RUNNING');
-  const statusLabel = status === 'FAILED' ? '失败' : status === 'SUCCESS' ? '完成' : '执行中';
+  const statusLabel = status === 'FAILED'
+    ? t('team.toolStatusFailed')
+    : status === 'SUCCESS'
+      ? t('team.toolStatusSuccess')
+      : t('team.toolStatusRunning');
   const statusIcon = status === 'FAILED'
     ? <AlertCircle size={14} className="text-red-600" />
     : status === 'SUCCESS'
@@ -261,8 +268,8 @@ const LeadToolCallBubble: React.FC<{ message: LeadMessage }> = ({ message }) => 
       : 'border-amber-200 bg-amber-50';
 
   const displayToolName = message.serverName
-    ? `${message.serverName}::${message.toolName || 'Tool'}`
-    : (message.toolName || 'Tool');
+    ? `${message.serverName}::${message.toolName || t('team.tool')}`
+    : (message.toolName || t('team.tool'));
 
   const argsText = formatJsonString(message.toolArgs || (message.type === 'tool_call' ? message.content : ''));
   const resultText = formatJsonString(message.toolResult || (message.type === 'tool_result' ? message.content : ''));
@@ -292,7 +299,7 @@ const LeadToolCallBubble: React.FC<{ message: LeadMessage }> = ({ message }) => 
         <div className="mt-2 border-t border-gray-200/70 pt-2 space-y-2">
           {argsText && (
             <div>
-              <div className="text-xs text-gray-500 mb-1">参数</div>
+              <div className="text-xs text-gray-500 mb-1">{t('team.toolArgs')}</div>
               <pre className="bg-white/80 rounded-md p-2 text-xs text-gray-700 whitespace-pre-wrap break-all max-h-32 overflow-auto">
                 {argsText}
               </pre>
@@ -301,7 +308,7 @@ const LeadToolCallBubble: React.FC<{ message: LeadMessage }> = ({ message }) => 
 
           {(resultText || message.errorMessage) && (
             <div>
-              <div className="text-xs text-gray-500 mb-1">结果</div>
+              <div className="text-xs text-gray-500 mb-1">{t('team.toolOutput')}</div>
               <pre className={clsx(
                 "rounded-md p-2 text-xs whitespace-pre-wrap break-all max-h-56 overflow-auto",
                 message.errorMessage ? "bg-red-50 text-red-700" : "bg-white/80 text-gray-700"
@@ -313,7 +320,7 @@ const LeadToolCallBubble: React.FC<{ message: LeadMessage }> = ({ message }) => 
 
           {typeof message.durationMs === 'number' && (
             <div className="text-xs text-gray-500">
-              耗时: {message.durationMs}ms
+              {t('team.toolDuration')}: {message.durationMs}ms
             </div>
           )}
         </div>
@@ -323,6 +330,7 @@ const LeadToolCallBubble: React.FC<{ message: LeadMessage }> = ({ message }) => 
 };
 
 const ThinkAwareMarkdownContent: React.FC<{ content: string }> = ({ content }) => {
+  const { t } = useTranslation();
   const parsed = useMemo(() => parseThinkContent(content), [content]);
   const hasThinking = parsed.thoughts.length > 0 || parsed.hasUnclosedThink;
 
@@ -335,7 +343,7 @@ const ThinkAwareMarkdownContent: React.FC<{ content: string }> = ({ content }) =
         <LeadMarkdownContent content={parsed.visibleContent} />
       ) : (
         hasThinking && (
-          <div className="text-xs text-slate-500">仅包含思考内容，正文已折叠</div>
+          <div className="text-xs text-slate-500">{t('team.thinkingOnly')}</div>
         )
       )}
     </div>
@@ -343,9 +351,10 @@ const ThinkAwareMarkdownContent: React.FC<{ content: string }> = ({ content }) =
 };
 
 const ThinkBlock: React.FC<{ thoughts: string[]; isRunning: boolean }> = ({ thoughts, isRunning }) => {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const content = thoughts.join('\n\n').trim();
-  const title = isRunning ? '思考中' : '思考过程';
+  const title = isRunning ? t('team.thinking') : t('team.thoughtProcess');
 
   return (
     <div className="rounded-xl border border-indigo-200 bg-indigo-50/80">
@@ -357,7 +366,7 @@ const ThinkBlock: React.FC<{ thoughts: string[]; isRunning: boolean }> = ({ thou
         <span className="text-xs font-semibold text-indigo-700">{title}</span>
         {isRunning && <Loader2 size={12} className="animate-spin text-indigo-600" />}
         <span className="text-[11px] text-indigo-600 ml-auto">
-          {expanded ? '收起' : '展开'}
+          {expanded ? t('team.collapse') : t('team.expand')}
         </span>
         <ChevronDown size={14} className={clsx("text-indigo-500 transition-transform", expanded && "rotate-180")} />
       </button>

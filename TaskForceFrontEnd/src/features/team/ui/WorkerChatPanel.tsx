@@ -8,8 +8,10 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { parseThinkContent } from './thinkParser';
+import { useTranslation } from 'react-i18next';
 
 export const WorkerChatPanel: React.FC = () => {
+  const { t } = useTranslation();
   const { activeWorkerId, workerMessages, members, sendToWorker } = useTeamStore();
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -22,9 +24,9 @@ export const WorkerChatPanel: React.FC = () => {
   const activeMember = members.find(m => m.instanceId === activeWorkerId);
 
   const lifecycleLabel = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
-    if (status === 'RUNNING') return '运行';
-    if (status === 'DESTROYED') return '销毁';
-    return '停止';
+    if (status === 'RUNNING') return t('team.lifecycleRunning');
+    if (status === 'DESTROYED') return t('team.lifecycleDestroyed');
+    return t('team.lifecycleStopped');
   };
 
   const lifecycleDotClass = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
@@ -61,7 +63,7 @@ export const WorkerChatPanel: React.FC = () => {
   if (!activeWorkerId || !activeMember) {
     return (
       <div className="h-full flex items-center justify-center text-gray-500">
-        <p className="text-sm">选择一个 Worker 查看对话</p>
+        <p className="text-sm">{t('team.selectWorkerToView')}</p>
       </div>
     );
   }
@@ -75,7 +77,7 @@ export const WorkerChatPanel: React.FC = () => {
             "w-2 h-2 rounded-full",
             lifecycleDotClass(activeMember?.lifecycleStatus || 'STOPPED')
           )} />
-          <h3 className="font-semibold text-gray-900">{activeMember?.agentName || 'Worker'}</h3>
+          <h3 className="font-semibold text-gray-900">{activeMember?.agentName || t('team.workerDefaultName')}</h3>
           <span className="text-xs text-gray-500 ml-auto">{lifecycleLabel(activeMember?.lifecycleStatus || 'STOPPED')}</span>
         </div>
       </div>
@@ -84,7 +86,7 @@ export const WorkerChatPanel: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 ? (
           <div className="h-full flex items-center justify-center text-gray-400">
-            <p className="text-sm">暂无消息</p>
+            <p className="text-sm">{t('team.noMessages')}</p>
           </div>
         ) : (
           messages.map(msg => (
@@ -102,7 +104,7 @@ export const WorkerChatPanel: React.FC = () => {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="发送消息给 Worker..."
+            placeholder={t('team.sendToWorkerPlaceholder')}
             className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none shadow-sm"
             disabled={isSending}
           />
@@ -120,6 +122,7 @@ export const WorkerChatPanel: React.FC = () => {
 };
 
 const MessageBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
+  const { t } = useTranslation();
   const isUser = message.type === 'user';
   const isToolMessage = message.type === 'tool_call' || message.type === 'tool_result';
 
@@ -146,12 +149,12 @@ const MessageBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
         {!isUser && (
           <div className="flex items-center gap-1 mb-1">
             <span className="text-xs font-medium text-gray-500">
-              {message.type === 'thinking' ? '💭 思考中' :
-               message.type === 'tool_call' ? `🔧 ${message.toolName || 'Tool Call'}` :
-               message.type === 'tool_result' ? `✅ ${message.toolName || 'Tool Result'}` :
-               message.type === 'output' ? '📤 输出' :
-               message.type === 'error' ? '❌ 错误' :
-               message.type === 'system' ? '🔔 系统' : ''}
+              {message.type === 'thinking' ? `💭 ${t('team.msgTypeThinking')}` :
+               message.type === 'tool_call' ? `🔧 ${message.toolName || t('team.msgTypeToolCall')}` :
+               message.type === 'tool_result' ? `✅ ${message.toolName || t('team.msgTypeToolResult')}` :
+               message.type === 'output' ? `📤 ${t('team.msgTypeOutput')}` :
+               message.type === 'error' ? `❌ ${t('team.msgTypeError')}` :
+               message.type === 'system' ? `🔔 ${t('team.msgTypeSystem')}` : ''}
             </span>
             <span className="text-xs text-gray-400 ml-auto">
               {new Date(message.timestamp).toLocaleTimeString()}
@@ -177,10 +180,15 @@ const MessageBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
 };
 
 const ToolCallBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   const status = message.toolStatus || (message.type === 'tool_result' ? 'SUCCESS' : 'RUNNING');
-  const statusLabel = status === 'FAILED' ? '失败' : status === 'SUCCESS' ? '完成' : '执行中';
+  const statusLabel = status === 'FAILED'
+    ? t('team.toolStatusFailed')
+    : status === 'SUCCESS'
+      ? t('team.toolStatusSuccess')
+      : t('team.toolStatusRunning');
   const statusIcon = status === 'FAILED'
     ? <AlertCircle size={14} className="text-red-600" />
     : status === 'SUCCESS'
@@ -194,8 +202,8 @@ const ToolCallBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
       : 'border-amber-200 bg-amber-50';
 
   const displayToolName = message.serverName
-    ? `${message.serverName}::${message.toolName || 'Tool'}`
-    : (message.toolName || 'Tool');
+    ? `${message.serverName}::${message.toolName || t('team.tool')}`
+    : (message.toolName || t('team.tool'));
 
   const argsText = formatJsonString(message.toolArgs || (message.type === 'tool_call' ? message.content : ''));
   const resultText = formatJsonString(message.toolResult || (message.type === 'tool_result' ? message.content : ''));
@@ -226,7 +234,7 @@ const ToolCallBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
           <div className="mt-2 border-t border-gray-200/70 pt-2 space-y-2">
             {argsText && (
               <div>
-                <div className="text-xs text-gray-500 mb-1">参数</div>
+                <div className="text-xs text-gray-500 mb-1">{t('team.toolArgs')}</div>
                 <pre className="bg-white/80 rounded-md p-2 text-xs text-gray-700 whitespace-pre-wrap break-all max-h-32 overflow-auto">
                   {argsText}
                 </pre>
@@ -235,7 +243,7 @@ const ToolCallBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
 
             {(resultText || message.errorMessage) && (
               <div>
-                <div className="text-xs text-gray-500 mb-1">结果</div>
+                <div className="text-xs text-gray-500 mb-1">{t('team.toolOutput')}</div>
                 <pre className={clsx(
                   "rounded-md p-2 text-xs whitespace-pre-wrap break-all max-h-56 overflow-auto",
                   message.errorMessage ? "bg-red-50 text-red-700" : "bg-white/80 text-gray-700"
@@ -247,7 +255,7 @@ const ToolCallBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
 
             {typeof message.durationMs === 'number' && (
               <div className="text-xs text-gray-500">
-                耗时: {message.durationMs}ms
+                {t('team.toolDuration')}: {message.durationMs}ms
               </div>
             )}
           </div>
@@ -258,6 +266,7 @@ const ToolCallBubble: React.FC<{ message: WorkerMessage }> = ({ message }) => {
 };
 
 const ThinkAwareWorkerContent: React.FC<{ content: string; markdown: boolean }> = ({ content, markdown }) => {
+  const { t } = useTranslation();
   const parsed = useMemo(() => parseThinkContent(content), [content]);
   const hasThinking = parsed.thoughts.length > 0 || parsed.hasUnclosedThink;
 
@@ -276,7 +285,7 @@ const ThinkAwareWorkerContent: React.FC<{ content: string; markdown: boolean }> 
         )
       ) : (
         hasThinking && (
-          <div className="text-xs text-slate-500">仅包含思考内容，正文已折叠</div>
+          <div className="text-xs text-slate-500">{t('team.thinkingOnly')}</div>
         )
       )}
     </div>
@@ -284,9 +293,10 @@ const ThinkAwareWorkerContent: React.FC<{ content: string; markdown: boolean }> 
 };
 
 const ThinkBlock: React.FC<{ thoughts: string[]; isRunning: boolean }> = ({ thoughts, isRunning }) => {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const content = thoughts.join('\n\n').trim();
-  const title = isRunning ? '思考中' : '思考过程';
+  const title = isRunning ? t('team.thinking') : t('team.thoughtProcess');
 
   return (
     <div className="rounded-xl border border-sky-200 bg-sky-50/80">
@@ -298,7 +308,7 @@ const ThinkBlock: React.FC<{ thoughts: string[]; isRunning: boolean }> = ({ thou
         <span className="text-xs font-semibold text-sky-700">{title}</span>
         {isRunning && <Loader2 size={12} className="animate-spin text-sky-600" />}
         <span className="text-[11px] text-sky-600 ml-auto">
-          {expanded ? '收起' : '展开'}
+          {expanded ? t('team.collapse') : t('team.expand')}
         </span>
         <ChevronDown size={14} className={clsx("text-sky-500 transition-transform", expanded && "rotate-180")} />
       </button>
