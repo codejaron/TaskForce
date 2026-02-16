@@ -18,6 +18,8 @@ import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.WorkerOutputEvent;
 import com.agent.service.SessionExecutionTracker;
+import com.agent.service.TokenUsageService;
+import com.agent.service.TokenUsageStreamTracker;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
@@ -67,6 +69,7 @@ public class WorkerLoop implements Runnable {
     private final AgentExecutionStateService executionStateService;
     private final ExecutionWaitIntentService waitIntentService;
     private final WorkerRoundControlService workerRoundControlService;
+    private final TokenUsageService tokenUsageService;
     private final String startupResumeInput;
     private final Runnable onStopped;
 
@@ -90,6 +93,7 @@ public class WorkerLoop implements Runnable {
             AgentExecutionStateService executionStateService,
             ExecutionWaitIntentService waitIntentService,
             WorkerRoundControlService workerRoundControlService,
+            TokenUsageService tokenUsageService,
             String startupResumeInput,
             Runnable onStopped) {
         this.workerInstance = workerInstance;
@@ -104,6 +108,7 @@ public class WorkerLoop implements Runnable {
         this.executionStateService = executionStateService;
         this.waitIntentService = waitIntentService;
         this.workerRoundControlService = workerRoundControlService;
+        this.tokenUsageService = tokenUsageService;
         this.startupResumeInput = startupResumeInput;
         this.onStopped = onStopped == null ? () -> {} : onStopped;
     }
@@ -406,10 +411,11 @@ public class WorkerLoop implements Runnable {
 
             // 3. 构建任务说明（作为本轮 user 输入主体）
             String taskInstruction = buildTaskInstruction(task);
+            Long currentAgentId = Long.valueOf(workerInstance.getAgentId());
 
             // 4. 构建 ReactAgent
             ReactAgent reactAgent = reactAgentFactory.buildWorkerReactAgent(
-                    Long.valueOf(workerInstance.getAgentId()),
+                    currentAgentId,
                     TASK_EXECUTION_INSTRUCTION,
                     MAX_REACT_ITERATIONS,
                     workerInstance.getSessionId(),
@@ -427,10 +433,16 @@ public class WorkerLoop implements Runnable {
             AtomicInteger streamedChunkCount = new AtomicInteger(0);
             log.info("[WorkerLoop] LLM stream started: instanceId={}, taskId={}, inputChars={}",
                     workerInstance.getInstanceId(), task.getTaskId(), agentInput.length());
+            TokenUsageStreamTracker usageTracker = new TokenUsageStreamTracker(
+                    tokenUsageService,
+                    workerInstance.getSessionId(),
+                    currentAgentId
+            );
 
             // 6. 执行任务（流式）
             Disposable disposable = reactAgent.stream(agentInput, config)
                     .doOnNext(nodeOutput -> {
+                        usageTracker.accept(nodeOutput);
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
                             if (chunk != null && !chunk.isEmpty()) {
@@ -578,6 +590,7 @@ public class WorkerLoop implements Runnable {
         try {
             workerInstance.startWorking(0);
             workerRepository.save(workerInstance);
+            Long currentAgentId = Long.valueOf(workerInstance.getAgentId());
 
             String instruction = """
                     你是团队模式下的 Worker，正在处理 Team Lead 的直接指令（非任务板任务）。
@@ -586,7 +599,7 @@ public class WorkerLoop implements Runnable {
                     完成回复后结束本轮，不要重复调用 send_message。
                     """;
             ReactAgent reactAgent = reactAgentFactory.buildWorkerReactAgent(
-                    Long.valueOf(workerInstance.getAgentId()),
+                    currentAgentId,
                     instruction,
                     MAX_REACT_ITERATIONS,
                     workerInstance.getSessionId(),
@@ -603,8 +616,14 @@ public class WorkerLoop implements Runnable {
             int inputChars = instructionMessage == null ? 0 : instructionMessage.length();
             log.info("[WorkerLoop] LLM direct stream started: instanceId={}, inputChars={}",
                     workerInstance.getInstanceId(), inputChars);
+            TokenUsageStreamTracker usageTracker = new TokenUsageStreamTracker(
+                    tokenUsageService,
+                    workerInstance.getSessionId(),
+                    currentAgentId
+            );
             Disposable disposable = reactAgent.stream(instructionMessage, config)
                     .doOnNext(nodeOutput -> {
+                        usageTracker.accept(nodeOutput);
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
                             if (chunk != null && !chunk.isEmpty()) {

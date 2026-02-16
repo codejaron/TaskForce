@@ -5,7 +5,6 @@ import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.ChatCompleteEvent;
 import com.agent.infrastructure.event.events.ChatDeltaEvent;
 import com.agent.infrastructure.event.events.ChatErrorEvent;
-import com.agent.infrastructure.persistence.entity.Session;
 import com.agent.infrastructure.persistence.entity.SessionAgent;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
@@ -36,9 +35,10 @@ public class SingleChatService {
     private final SessionService sessionService;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final TokenUsageService tokenUsageService;
 
-    // 缓存 ReactAgent（使用 ConcurrentHashMap）
-    private final Map<String, ReactAgent> agentCache = new ConcurrentHashMap<>();
+    // 缓存 ReactAgent + agentId（使用 ConcurrentHashMap）
+    private final Map<String, ChatAgentContext> agentCache = new ConcurrentHashMap<>();
     private final Map<String, Long> cacheTimestamps = new ConcurrentHashMap<>();
     private static final long CACHE_EXPIRY_MS = TimeUnit.MINUTES.toMillis(30);
 
@@ -47,12 +47,14 @@ public class SingleChatService {
             EventBus eventBus,
             SessionService sessionService,
             StringRedisTemplate redisTemplate,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            TokenUsageService tokenUsageService) {
         this.reactAgentFactory = reactAgentFactory;
         this.eventBus = eventBus;
         this.sessionService = sessionService;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        this.tokenUsageService = tokenUsageService;
     }
 
     /**
@@ -70,7 +72,13 @@ public class SingleChatService {
         return Flux.defer(() -> {
             try {
                 // 2. 获取或创建 ReactAgent
-                ReactAgent agent = getOrCreateAgent(sessionId);
+                ChatAgentContext agentContext = getOrCreateAgent(sessionId);
+                ReactAgent agent = agentContext.agent();
+                TokenUsageStreamTracker usageTracker = new TokenUsageStreamTracker(
+                        tokenUsageService,
+                        sessionId,
+                        agentContext.agentId()
+                );
 
                 // 3. 配置 RunnableConfig
                 RunnableConfig config = RunnableConfig.builder()
@@ -97,6 +105,8 @@ public class SingleChatService {
 
                 Flux<ServerSentEvent<String>> chatFlux = outputFlux
                         .flatMap(output -> {
+                            usageTracker.accept(output);
+
                             if (output instanceof StreamingOutput streamingOutput) {
                                 String chunk = streamingOutput.chunk();
 
@@ -159,7 +169,7 @@ public class SingleChatService {
     /**
      * 获取或创建 ReactAgent（带缓存）
      */
-    private ReactAgent getOrCreateAgent(String sessionId) {
+    private ChatAgentContext getOrCreateAgent(String sessionId) {
         // 检查缓存是否过期
         Long timestamp = cacheTimestamps.get(sessionId);
         if (timestamp != null && System.currentTimeMillis() - timestamp > CACHE_EXPIRY_MS) {
@@ -171,7 +181,6 @@ public class SingleChatService {
         // 从缓存获取或创建新的 ReactAgent
         return agentCache.computeIfAbsent(sessionId, key -> {
             // 从 Session 获取 agentId
-            Session session = sessionService.getSessionById(sessionId);
             List<SessionAgent> agents = sessionService.getSessionAgents(sessionId);
 
             if (agents.isEmpty()) {
@@ -186,7 +195,8 @@ public class SingleChatService {
             // 记录缓存时间戳
             cacheTimestamps.put(sessionId, System.currentTimeMillis());
 
-            return reactAgentFactory.buildChatReactAgent(agentId, sessionId);
+            ReactAgent reactAgent = reactAgentFactory.buildChatReactAgent(agentId, sessionId);
+            return new ChatAgentContext(reactAgent, agentId);
         });
     }
 
@@ -256,4 +266,6 @@ public class SingleChatService {
         cacheTimestamps.clear();
         log.info("[SingleChat] All cache cleared");
     }
+
+    private record ChatAgentContext(ReactAgent agent, Long agentId) {}
 }
