@@ -132,30 +132,6 @@ CREATE TABLE IF NOT EXISTS messages (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息表';
 
 -- ========================================
--- 8. 执行计划表（异步工作流状态）
--- ========================================
-CREATE TABLE IF NOT EXISTS execution_plan (
-    plan_id VARCHAR(64) PRIMARY KEY COMMENT '计划ID(UUID)',
-    session_id VARCHAR(64) NOT NULL COMMENT '会话ID',
-    goal TEXT COMMENT '用户目标',
-    status VARCHAR(32) NOT NULL COMMENT '状态: PLANNING/EXECUTING/REPLANNING/PAUSED/COMPLETED/FAILED',
-    current_step_index INT DEFAULT 0 COMMENT '当前执行步骤索引',
-    pause_reason VARCHAR(64) COMMENT '暂停原因: waiting_user/blocked/replan_limit',
-    paused_by VARCHAR(32) COMMENT '暂停触发源: PLANNER/WORKER/USER/BLOCKED',
-    paused_at_step_index INT COMMENT 'Worker澄清时记录的步骤索引',
-    paused_agent_id VARCHAR(64) COMMENT 'Worker澄清时记录的Agent ID',
-    pending_question TEXT COMMENT '待用户回答的问题',
-    replan_count INT DEFAULT 0 COMMENT '重规划次数',
-    steps_json JSON COMMENT '步骤列表(JSON格式)',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_session_id (session_id),
-    INDEX idx_status (status),
-    INDEX idx_paused_by (paused_by),
-    INDEX idx_updated_at (updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='执行计划表-异步工作流状态管理';
-
--- ========================================
 -- 10. Token 使用统计表（计费用）
 -- ========================================
 CREATE TABLE IF NOT EXISTS token_usage (

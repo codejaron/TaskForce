@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Users, UsersRound, Database, Bot, Server, Zap, PanelLeftClose, Settings, Sparkles, MessageCircle } from 'lucide-react';
+import { LayoutDashboard, UsersRound, Database, Bot, Server, Zap, PanelLeftClose, Settings, Sparkles, MessageCircle } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -58,12 +58,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
       icon: UsersRound,
       label: t('sidebar.teamStudio'),
       color: 'text-indigo-600'
-    },
-    {
-      path: '/a2a',
-      icon: Users,
-      label: t('sidebar.a2aStudio'),
-      color: 'text-green-600'
     },
     {
       path: '/system-config',

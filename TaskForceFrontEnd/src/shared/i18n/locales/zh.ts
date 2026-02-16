@@ -22,7 +22,7 @@ export default {
     mcpMarketplace: 'MCP 市场',
     skills: 'Skills 管理',
     singleChat: '单聊',
-    a2aStudio: 'A2A 工作室',
+    a2aStudio: 'Team 工作室',
     systemConfig: '系统配置',
     collapse: '收起侧边栏',
     expand: '展开侧边栏',
@@ -39,8 +39,8 @@ export default {
     agentsDesc: '智能 Agent 已就绪',
     mcpTools: 'MCP 工具',
     mcpToolsDesc: '来自 {{count}} 个服务器',
-    a2aSessions: 'A2A 会话',
-    a2aSessionsDesc: '群聊会话',
+    a2aSessions: 'Team 会话',
+    a2aSessionsDesc: '多 Agent 协作会话',
     quickActions: '快捷操作',
     configureProvider: '配置提供商',
     configureProviderDesc: '添加新的 LLM 提供商以连接 AI 模型',
@@ -48,7 +48,7 @@ export default {
     createAgentDesc: '使用自定义提示设计新的 AI Agent',
     connectMcpServer: '连接 MCP 服务器',
     connectMcpServerDesc: '通过模型上下文协议添加外部工具',
-    startA2aSession: '启动 A2A 会话',
+    startA2aSession: '启动 Team 会话',
     startA2aSessionDesc: '创建多 Agent 协作会话',
     systemStatus: '系统状态',
     backendApi: '后端 API',
@@ -175,8 +175,8 @@ export default {
     deleteServerFailed: '删除服务器失败，请稍后重试。',
   },
   a2a: {
-    title: 'A2A 工作室',
-    sessions: 'A2A 会话',
+    title: 'Team 工作室',
+    sessions: 'Team 会话',
     createSession: '创建会话',
     sessionName: '会话名称',
     selectAgents: '选择 Agents',
@@ -289,5 +289,4 @@ export default {
     pleaseSelectFolder: '请选择一个文件夹',
   },
 };
-
 

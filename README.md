@@ -8,15 +8,15 @@
 
 ## 简介
 
-TaskForce 是一个基于 **Plan-Execute 架构**的 AI Agent 编排平台，采用角色分离和上下文隔离设计，支持 MCP 工具集成和 Agent-to-Agent 通信。
+TaskForce 是一个 **多智能体协作平台**，核心运行模式为 `Team`（Lead + Workers）和 `Single Chat`（单 Agent 对话），支持 MCP 工具集成与实时事件流。
 
 ### 核心设计理念
 
-- **Planner Agent**：分析用户需求，生成结构化的 DAG 执行计划，支持 Self-Correction 重试
-- **Worker Agent**：独立执行计划步骤，基于 ReAct 模式调用 MCP 工具，上下文干净不累积
-- **层级并行执行**：同层级步骤并行执行，依赖步骤按拓扑顺序执行
-- **状态管理**：基于 Redis Hash 的计划状态缓存，支持断点续传
-- **实时可观测**：通过 Redis EventBus + SSE 推送执行状态和工具调用事件
+- **Team Lead 协调**：Lead 负责任务拆分、调度 Worker、进度汇报和收尾
+- **Worker 执行**：Worker 独立执行子任务，通过 MCP 工具完成操作
+- **统一状态流**：基于 EventBus + SSE 实时推送 Team/Worker 事件
+- **可恢复执行**：保留 Redis checkpoint，支持 Lead/Worker 的恢复与连续执行
+- **双模式并存**：保留 Team 协作与 Single Chat，移除旧 planner-worker 编排链路
 
 📖 详细介绍：[blog.jarontech.top](https://blog.jarontech.top)
 
@@ -24,62 +24,27 @@ TaskForce 是一个基于 **Plan-Execute 架构**的 AI Agent 编排平台，采
 
 ## 🏗️ 后端架构
 
-### 核心组件
+### Team-Only 核心组件
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    TaskForce Backend                         │
-│                  (Spring Boot 3.3.4 + Java 21)              │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │              Orchestration Layer                    │    │
-│  │  ┌──────────────┐         ┌──────────────┐        │    │
-│  │  │ PlannerNode  │────────▶│ WorkerNode   │        │    │
-│  │  │              │         │              │        │    │
-│  │  │ - 生成计划    │         │ - 层级并行    │        │    │
-│  │  │ - DAG 验证   │         │ - ReAct 循环 │        │    │
-│  │  │ - 重试机制    │         │ - 工具调用    │        │    │
-│  │  └──────────────┘         └──────────────┘        │    │
-│  └────────────────────────────────────────────────────┘    │
-│                          │                                  │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │              State Management                       │    │
-│  │  ┌──────────────┐  ┌──────────────┐               │    │
-│  │  │ StateManager │  │ EventBus     │               │    │
-│  │  │              │  │              │               │    │
-│  │  │ - Redis Hash │  │ - Redis Pub  │               │    │
-│  │  │ - Plan Cache │  │ - SSE Stream │               │    │
-│  │  └──────────────┘  └──────────────┘               │    │
-│  └────────────────────────────────────────────────────┘    │
-│                          │                                  │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │              Infrastructure                         │    │
-│  │  ┌──────────────┐  ┌──────────────┐               │    │
-│  │  │ReactAgent    │  │RemoteMcp     │               │    │
-│  │  │Factory       │  │Client        │               │    │
-│  │  │              │  │              │               │    │
-│  │  │ - 构建 Agent │  │ - MCP 集成   │               │    │
-│  │  │ - 工具注入   │  │ - SSE 连接   │               │    │
-│  │  └──────────────┘  └──────────────┘               │    │
-│  └────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-```
+- **Controller 层**：`/api/v2/team/**` 与 `/api/sessions/{sessionId}/single-chat`
+- **Team 领域层**：`TeamOrchestrationService` + `TeamLeadAgent` + `WorkerInstanceManager`
+- **执行底座**：`ReactAgentFactory`、`PromptManager`、`SessionExecutionTracker`
+- **事件与流**：`EventBus` / `RedisStreamEventBus` + SSE
+- **持久化层**：`sessions`、`messages`、`tool_calls`、`taskboard` 等 Team/Chat 所需表
 
 ### 执行流程
 
-1. **用户输入** → PlannerNode 生成执行计划（JSON 格式，包含步骤依赖关系）
-2. **DAG 验证** → 拓扑排序，按层级分组步骤
-3. **并行执行** → WorkerNode 并行执行同层级步骤
-4. **工具调用** → ReactAgent 通过 MCP Client 调用工具
-5. **状态同步** → StateManager 更新 Redis，EventBus 推送 SSE 事件
-6. **失败恢复** → 步骤失败触发 Replanner 重新规划
+1. **创建 Team 会话** → 选定 Lead（当前沿用 `PLANNER` 角色值）与可用 Worker
+2. **启动 Team** → Lead 分解任务并派发给 Worker
+3. **Worker 执行** → 调用 MCP 工具，持续上报进度与工具事件
+4. **实时观测** → 前端通过 Team/Worker SSE 订阅执行流
+5. **会话收敛** → 完成或停止后写入历史与最终状态
 
 ### 关键特性
 
-- **上下文隔离**：每个 Worker 只接收当前步骤描述 + 依赖步骤的 Artifact，不被历史对话污染
-- **Self-Correction**：Planner 生成计划失败时自动重试，附带错误信息进行自我修正
-- **ReAct 循环限制**：Worker 最多执行 20 次 ReAct 迭代，防止无限循环
+- **Team 优先**：移除旧 planner-worker 图编排与专用上下文系统
+- **实时可观测**：统一 SSE 主流 + Worker 子流
+- **工具链路完整**：工具调用记录落库并支持历史回放
 - **分布式锁**：基于 Redisson 的分布式锁，保证并发安全
 - **数据库记忆**：DbChatMemory 持久化对话历史，支持会话恢复
 
@@ -167,10 +132,10 @@ Docker Compose 会自动启动以下服务：
 1. 访问前端界面 http://localhost:3000
 2. 进入"提供商管理"，添加 LLM Provider（OpenAI/Azure/Ollama 等）
 3. 进入"智能体管理"，创建：
-   - 至少 1 个 **PLANNER** 类型的 Agent
+   - 至少 1 个 **PLANNER** 类型的 Agent（作为 Team Lead）
    - 至少 1 个 **WORKER** 类型的 Agent
 4. 为 Workers 配置 MCP 工具（可选）
-5. 创建会话并开始对话
+5. 创建 `TEAM` 会话或 `CHAT` 会话并开始对话
 
 ### 停止服务
 
@@ -190,7 +155,6 @@ Docker Compose 会自动启动以下服务：
 | Java | 21 | 编程语言 |
 | Spring AI | 1.1.2 | LLM 集成（OpenAI/Azure/Ollama） |
 | Spring AI Alibaba | 1.1.2.0 | Agent Framework + Sandbox |
-| AgentScope A2A | 1.0.2 | Agent-to-Agent 通信 |
 | MyBatis-Plus | 3.5.5 | ORM 框架 |
 | MySQL | 8.0 | 关系数据库 |
 | Redis | 7 | 缓存 + 状态管理 |
@@ -219,16 +183,8 @@ TaskForce/
 │   ├── src/main/java/com/agent/
 │   │   ├── api/                         # REST API 控制器
 │   │   ├── domain/
-│   │   │   ├── orchestration/           # 编排核心
-│   │   │   │   ├── graph/
-│   │   │   │   │   ├── node/            # PlannerNode, WorkerNode
-│   │   │   │   │   ├── parallel/        # ParallelExecutor
-│   │   │   │   │   ├── dispatcher/      # 调度器
-│   │   │   │   │   └── topology/        # DAG 拓扑排序
-│   │   │   │   ├── state/               # StateManager
-│   │   │   │   ├── model/               # ExecutionPlan, PlanStep
-│   │   │   │   └── validator/           # DAGValidator
-│   │   │   └── context/                 # 上下文管理
+│   │   │   ├── team/                    # Team Lead / Team 事件 / Team 历史
+│   │   │   └── worker/                  # Worker 执行与实例管理
 │   │   ├── infrastructure/
 │   │   │   ├── llm/                     # LlmAdapter, ChatModelFactory
 │   │   │   ├── agent/                   # ReactAgentFactory

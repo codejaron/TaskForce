@@ -1,4 +1,4 @@
-import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, SubmitResponse, WorkflowStateResponse, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO, ToolCallDTO, TaskBoard, WorkerInstance, TeamRuntimeStatus, TeamSessionHistoryDTO } from './types';
+import type { AgentProfile, McpServerDefinition, ToolInfo, AgentToolDetail, Session, LLMProvider, ChannelModel, Message, ProviderCostDTO, ModelUsageDTO, DailyCostDTO, SessionCostDTO, AgentUsageDTO, AgentCostDTO, ToolCallDTO, TaskBoard, WorkerInstance, TeamRuntimeStatus, TeamSessionHistoryDTO } from './types';
 import { API_BASE } from './base';
 
 // Backend ApiResponse format: { code: number, message: string, data?: T }
@@ -95,31 +95,6 @@ export const api = {
     createModel: (providerId: number, model: ChannelModel) => fetchJson<ChannelModel>(`/providers/${providerId}/models`, { method: 'POST', body: JSON.stringify(model) }),
     deleteModel: (providerId: number, modelId: number) => fetchJson<{success: boolean}>(`/providers/${providerId}/models/${modelId}`, { method: 'DELETE' }),
     replaceModels: (providerId: number, models: ChannelModel[]) => fetchJson<ChannelModel[]>(`/providers/${providerId}/models`, { method: 'PUT', body: JSON.stringify(models) }),
-  },
-  groupChat: {
-    // 新增：统一消息接口（后端自动判断 submit 还是 resume）
-    message: (sessionId: string, text: string) =>
-      fetchJson<SubmitResponse>(`/group-chat/${sessionId}/message`, {
-        method: 'POST',
-        body: JSON.stringify({ text })
-      }),
-    // 保留旧接口（可选，后续可删除）
-    submit: (sessionId: string, text: string) =>
-      fetchJson<SubmitResponse>(`/group-chat/${sessionId}/submit`, {
-        method: 'POST',
-        body: JSON.stringify({ text })
-      }),
-    resume: (sessionId: string, answer: string) =>
-      fetchJson<SubmitResponse>(`/group-chat/${sessionId}/resume`, {
-        method: 'POST',
-        body: JSON.stringify({ text: answer })
-      }),
-    getState: (sessionId: string) =>
-      fetchJson<WorkflowStateResponse>(`/group-chat/${sessionId}/state`),
-    stop: (sessionId: string) =>
-      fetchJson<void>(`/group-chat/${sessionId}/stop`, {
-        method: 'POST'
-      }),
   },
   tokenUsage: {
     getProviderCost: (startDate: string, endDate: string) =>

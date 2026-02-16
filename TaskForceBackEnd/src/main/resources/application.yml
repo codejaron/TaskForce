@@ -125,16 +125,6 @@ management:
 
 
 
-# ========== 上下文系统配置 ==========
-context:
-  workspace:
-    base-path: /Users/jaron/Downloads/test  # 工作空间根路径（MCP filesystem 路径）
-  assembly:
-    include-recent-output: true
-    max-history-steps: 20
-  summary:
-    fallback-enabled: true
-
 # ========== Skill 系统配置 ==========
 skill:
   user-directory: /Users/jaron/Downloads/test/skills # 用户 Skill 目录

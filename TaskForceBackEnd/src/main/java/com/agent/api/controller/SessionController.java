@@ -3,7 +3,6 @@ package com.agent.api.controller;
 import com.agent.api.response.ApiResponse;
 import com.agent.api.request.SessionCreateRequest;
 import com.agent.infrastructure.persistence.entity.SessionAgent;
-import com.agent.domain.orchestration.graph.AgentGraphRunner;
 import com.agent.service.SessionService;
 import com.agent.service.SessionStopService;
 import com.agent.infrastructure.persistence.entity.Session;
@@ -16,7 +15,6 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
-import java.util.UUID;
 
 /**
  * 会话管理控制器
@@ -31,7 +29,6 @@ public class SessionController {
 
     private final SessionService sessionService;
     private final SessionStopService sessionStopService;
-    private final AgentGraphRunner graphRunner;
     private final com.agent.service.SingleChatService singleChatService;
 
     /**
@@ -176,7 +173,7 @@ public class SessionController {
             // 标记停止标志并主动取消所有任务
             sessionStopService.markStopAndCancel(sessionId);
 
-            // 状态更新由 SessionPauseEvent 触发，不在这里手动更新
+            // 状态由 team/single-chat 事件流统一维护，不在这里手动更新
 
             log.info("Session stopped by user: {}", sessionId);
             return ApiResponse.success("会话已停止", null);
@@ -184,29 +181,6 @@ public class SessionController {
             log.error("Stop session failed", e);
             return ApiResponse.error(e.getMessage());
         }
-    }
-    
-    /**
-     * 聊天接口（SSE 流式响应）
-     */
-    @PostMapping("/{sessionId}/chat")
-    public Flux<ServerSentEvent<String>> chat(
-            @PathVariable String sessionId,
-            @RequestBody UserInputRequest request) {
-        
-        String requestId = UUID.randomUUID().toString();
-        return graphRunner.submit(sessionId, requestId, request.getMessage());
-    }
-    
-    /**
-     * 恢复执行（人工回答后）
-     */
-    @PostMapping("/{sessionId}/resume")
-    public Flux<ServerSentEvent<String>> resume(
-            @PathVariable String sessionId,
-            @RequestBody UserInputRequest request) {
-
-        return graphRunner.resume(sessionId, request.getMessage());
     }
 
     /**
