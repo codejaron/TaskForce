@@ -28,6 +28,7 @@ public class AgentResponse {
     private String systemPrompt;
     private BigDecimal temperature;
     private Integer maxTokens;
+    private Integer contextWindow;
     private String description;
     private String roleType;
     private LocalDateTime createdAt;
@@ -49,6 +50,7 @@ public class AgentResponse {
                 .systemPrompt(agent.getSystemPrompt())
                 .temperature(agent.getTemperature())
                 .maxTokens(agent.getMaxTokens())
+                .contextWindow(agent.getContextWindow())
                 .description(agent.getDescription())
                 .roleType(agent.getRoleType())
                 .createdAt(agent.getCreatedAt())

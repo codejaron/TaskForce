@@ -108,6 +108,8 @@ export default {
     temperature: 'Temperature',
     maxTokens: 'Max Tokens',
     maxTokensHint: 'Maximum tokens for AI response',
+    contextWindow: 'Context Window',
+    contextWindowHint: 'Model context limit in tokens (used to trigger summarization at 70%)',
     edit: 'Edit',
     delete: 'Delete',
     save: 'Save',

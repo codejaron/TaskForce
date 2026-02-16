@@ -34,7 +34,10 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * ReactAgent 工厂
@@ -57,6 +60,11 @@ public class ReactAgentFactory {
     private final TeamLeadToolProvider teamLeadToolProvider;
     private final WorkerToolProvider workerToolProvider;
     private final LeadSchedulingDecisionService leadSchedulingDecisionService;
+    private static final double SUMMARY_TRIGGER_RATIO = 0.70d;
+    private static final int DEFAULT_CONTEXT_WINDOW = 32000;
+    private static final int MIN_SUMMARY_TRIGGER_TOKENS = 2000;
+    private static final Pattern MODEL_WINDOW_K_PATTERN = Pattern.compile("(\\d{1,4})k");
+    private static final Pattern MODEL_WINDOW_M_PATTERN = Pattern.compile("(\\d{1,2})m");
 
     public ReactAgentFactory(
             AgentMapper agentMapper,
@@ -145,13 +153,18 @@ public class ReactAgentFactory {
         hooks.add(limitHook);
 
         // 5.2 添加 SummarizationHook（控制长链路上下文）
+        SummaryBudget workerSummaryBudget = resolveSummaryBudget(agent);
         SummarizationHook summarizationHook = SummarizationHook.builder()
                 .model(chatModel)
-                .maxTokensBeforeSummary(6000)
+                .maxTokensBeforeSummary(workerSummaryBudget.summaryTriggerTokens())
                 .messagesToKeep(10)
+                .keepFirstUserMessage(false)
                 .build();
         hooks.add(summarizationHook);
-        log.info("  Added SummarizationHook for worker (maxTokens: 6000, keepMessages: 10)");
+        log.info("  Added SummarizationHook for worker (triggerAt: {}, contextWindow: {}, source: {}, keepMessages: 10, keepFirstUserMessage: false)",
+                workerSummaryBudget.summaryTriggerTokens(),
+                workerSummaryBudget.contextWindow(),
+                workerSummaryBudget.source());
 
         // 5.3 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
         if (skillsAgentHook != null) {
@@ -286,13 +299,17 @@ public class ReactAgentFactory {
 
         // 6.1 添加 SummarizationHook（智能摘要，替代简单截断）
         // 使用相同的模型进行摘要（可以配置为更便宜的模型）
+        SummaryBudget chatSummaryBudget = resolveSummaryBudget(agent);
         SummarizationHook summarizationHook = SummarizationHook.builder()
                 .model(chatModel)
-                .maxTokensBeforeSummary(4000)  // 超过 4000 tokens 触发摘要
+                .maxTokensBeforeSummary(chatSummaryBudget.summaryTriggerTokens())
                 .messagesToKeep(8)  // 保留最近 8 条消息
                 .build();
         hooks.add(summarizationHook);
-        log.info("  Added SummarizationHook (maxTokens: 4000, keepMessages: 8)");
+        log.info("  Added SummarizationHook (triggerAt: {}, contextWindow: {}, source: {}, keepMessages: 8)",
+                chatSummaryBudget.summaryTriggerTokens(),
+                chatSummaryBudget.contextWindow(),
+                chatSummaryBudget.source());
 
         // 6.2 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
         if (skillsAgentHook != null) {
@@ -314,6 +331,60 @@ public class ReactAgentFactory {
         log.info("[ReactAgentFactory] ChatReactAgent built successfully: {}", agent.getName());
         return reactAgent;
     }
+
+    private SummaryBudget resolveSummaryBudget(Agent agent) {
+        Integer configuredContextWindow = agent.getContextWindow();
+        if (configuredContextWindow != null && configuredContextWindow > 0) {
+            return new SummaryBudget(
+                    configuredContextWindow,
+                    toSummaryTrigger(configuredContextWindow),
+                    "agent.contextWindow"
+            );
+        }
+
+        Integer inferredContextWindow = inferContextWindowFromModel(agent.getModel());
+        if (inferredContextWindow != null && inferredContextWindow > 0) {
+            return new SummaryBudget(
+                    inferredContextWindow,
+                    toSummaryTrigger(inferredContextWindow),
+                    "model-name-inferred"
+            );
+        }
+
+        return new SummaryBudget(
+                DEFAULT_CONTEXT_WINDOW,
+                toSummaryTrigger(DEFAULT_CONTEXT_WINDOW),
+                "default"
+        );
+    }
+
+    private int toSummaryTrigger(int contextWindow) {
+        int trigger = (int) Math.floor(contextWindow * SUMMARY_TRIGGER_RATIO);
+        return Math.max(MIN_SUMMARY_TRIGGER_TOKENS, trigger);
+    }
+
+    private Integer inferContextWindowFromModel(String modelName) {
+        if (modelName == null || modelName.isBlank()) {
+            return null;
+        }
+        String normalized = modelName.toLowerCase(Locale.ROOT);
+
+        Matcher mMatcher = MODEL_WINDOW_M_PATTERN.matcher(normalized);
+        if (mMatcher.find()) {
+            int value = Integer.parseInt(mMatcher.group(1));
+            return value * 1_000_000;
+        }
+
+        Matcher kMatcher = MODEL_WINDOW_K_PATTERN.matcher(normalized);
+        if (kMatcher.find()) {
+            int value = Integer.parseInt(kMatcher.group(1));
+            return value * 1_000;
+        }
+
+        return null;
+    }
+
+    private record SummaryBudget(int contextWindow, int summaryTriggerTokens, String source) {}
 
     /**
      * 为 Team Lead 构建 ReactAgent
@@ -382,7 +453,20 @@ public class ReactAgentFactory {
             log.info("[ReactAgentFactory] Lead idle-yield hook disabled for this round: sessionId={}", sessionId);
         }
 
-        // 5.3 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
+        // 5.3 添加 SummarizationHook（按上下文窗口 70% 触发）
+        SummaryBudget leadSummaryBudget = resolveSummaryBudget(agent);
+        SummarizationHook leadSummarizationHook = SummarizationHook.builder()
+                .model(finalChatModel)
+                .maxTokensBeforeSummary(leadSummaryBudget.summaryTriggerTokens())
+                .messagesToKeep(10)
+                .build();
+        hooks.add(leadSummarizationHook);
+        log.info("  Added SummarizationHook for lead (triggerAt: {}, contextWindow: {}, source: {}, keepMessages: 10)",
+                leadSummaryBudget.summaryTriggerTokens(),
+                leadSummaryBudget.contextWindow(),
+                leadSummaryBudget.source());
+
+        // 5.4 添加 SkillsAgentHook（支持 Skill 加载和 Sandbox 工具）
         if (skillsAgentHook != null) {
             hooks.add(skillsAgentHook);
             log.info("  Added SkillsAgentHook with {} skills", skillsAgentHook.getSkillCount());

@@ -38,6 +38,8 @@ public class AgentRequest {
 
     private Integer maxTokens;
 
+    private Integer contextWindow;
+
     private String description;
 
     private String roleType; // MODERATOR/WORKER

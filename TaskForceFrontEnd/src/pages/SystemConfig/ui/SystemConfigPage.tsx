@@ -19,6 +19,7 @@ interface SystemAgent {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  contextWindow?: number;
 }
 
 interface SystemAgentGroup {
@@ -28,6 +29,7 @@ interface SystemAgentGroup {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  contextWindow?: number;
 }
 
 const SYSTEM_AGENT_TYPES: Record<string, string> = {
@@ -109,7 +111,8 @@ export function SystemConfigPage() {
             providerId: (agent as SystemAgentProfile).providerId,
             model: agent.model || agent.modelName,  // Backend uses 'model', fallback to 'modelName'
             temperature: agent.temperature,
-            maxTokens: agent.maxTokens
+            maxTokens: agent.maxTokens,
+            contextWindow: agent.contextWindow
           };
         });
 
@@ -125,7 +128,8 @@ export function SystemConfigPage() {
           providerId: primaryAgent?.providerId,
           model: primaryAgent?.model,
           temperature: primaryAgent?.temperature ?? 0.3,
-          maxTokens: primaryAgent?.maxTokens
+          maxTokens: primaryAgent?.maxTokens,
+          contextWindow: primaryAgent?.contextWindow
         };
       });
 
@@ -182,7 +186,8 @@ export function SystemConfigPage() {
               providerId: providerId,
               model,
               temperature: group.temperature,
-              maxTokens: group.maxTokens
+              maxTokens: group.maxTokens,
+              contextWindow: group.contextWindow
             } as Partial<AgentProfile>)
           )
         );
@@ -195,6 +200,7 @@ export function SystemConfigPage() {
             model,
             temperature: group.temperature,
             maxTokens: group.maxTokens,
+            contextWindow: group.contextWindow,
             systemPrompt: ''
           } as unknown as Omit<AgentProfile, 'id'>);
         } catch (createErr) {
@@ -213,7 +219,8 @@ export function SystemConfigPage() {
             providerId: providerId,
             model,
             temperature: group.temperature,
-            maxTokens: group.maxTokens
+            maxTokens: group.maxTokens,
+            contextWindow: group.contextWindow
           } as Partial<AgentProfile>);
         }
       }
@@ -385,6 +392,30 @@ export function SystemConfigPage() {
                         ));
                       }}
                       placeholder="4096"
+                      className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 shadow-sm"
+                    />
+                  </div>
+
+                  {/* Context Window */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      {t('agents.contextWindow')}
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={group.contextWindow != null ? String(group.contextWindow) : ''}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value !== '' && !/^\d+$/.test(value)) {
+                          return;
+                        }
+                        setAgentGroups(prev => prev.map((g, idx) =>
+                          idx === groupIndex ? { ...g, contextWindow: value === '' ? undefined : Number(value) } : g
+                        ));
+                      }}
+                      placeholder="32000"
                       className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 shadow-sm"
                     />
                   </div>

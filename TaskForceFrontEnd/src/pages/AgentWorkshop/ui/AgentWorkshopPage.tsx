@@ -87,6 +87,7 @@ export const AgentWorkshopPage: React.FC = () => {
       modelName: '',
       temperature: 0.7,
       maxTokens: undefined,
+      contextWindow: undefined,
       selectedMcpTools: [],
       enabled: true,
       description: ''
@@ -189,6 +190,21 @@ export const AgentWorkshopPage: React.FC = () => {
     }
 
     setEditingAgent({ ...editingAgent, maxTokens: Number(value) });
+  };
+
+  const handleContextWindowChange = (value: string) => {
+    if (!editingAgent) return;
+
+    if (value === '') {
+      setEditingAgent({ ...editingAgent, contextWindow: undefined });
+      return;
+    }
+
+    if (!/^\d+$/.test(value)) {
+      return;
+    }
+
+    setEditingAgent({ ...editingAgent, contextWindow: Number(value) });
   };
 
   const filteredTools = tools.filter(
@@ -446,6 +462,24 @@ export const AgentWorkshopPage: React.FC = () => {
                   className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500 shadow-sm"
                 />
                 <p className="text-xs text-gray-500 mt-1">{t('agents.maxTokensHint')}</p>
+              </div>
+
+              {/* Context Window */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {t('agents.contextWindow')}
+                  {editingAgent.contextWindow != null ? `: ${editingAgent.contextWindow}` : ''}
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={editingAgent.contextWindow != null ? String(editingAgent.contextWindow) : ''}
+                  onChange={e => handleContextWindowChange(e.target.value)}
+                  placeholder="32000"
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500 shadow-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">{t('agents.contextWindowHint')}</p>
               </div>
 
               {/* System Prompt */}
