@@ -61,7 +61,7 @@ export default {
     dailyTokenTrend: '每日Token趋势',
     providerTokens: 'Provider Token分布',
     topModels: '模型消耗排行',
-    topAgents: 'Agent效能排行',
+    topAgents: 'Agent用量排行',
   },
   providers: {
     title: 'LLM 提供商',
