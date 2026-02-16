@@ -18,6 +18,8 @@ import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.service.AgentService;
 import com.agent.service.SessionExecutionTracker;
 import com.agent.service.SessionService;
+import com.agent.service.TokenUsageService;
+import com.agent.service.TokenUsageStreamTracker;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
@@ -62,6 +64,7 @@ public class TeamLeadAgent {
     private final LeadSchedulingDecisionService leadSchedulingDecisionService;
     private final WorkerInstanceManager workerInstanceManager;
     private final EventBus eventBus;
+    private final TokenUsageService tokenUsageService;
 
     private static final int MAX_REACT_ITERATIONS = 50; // Lead 需要更多迭代次数
     @Value("${team.lead.stream-timeout-seconds:180}")
@@ -141,10 +144,16 @@ public class TeamLeadAgent {
             runningLeadLoopTokens.put(sessionId, loopToken);
             log.info("[TeamLeadAgent] LLM stream started: sessionId={}, inputChars={}",
                     sessionId, runInput.length());
+            TokenUsageStreamTracker usageTracker = new TokenUsageStreamTracker(
+                    tokenUsageService,
+                    sessionId,
+                    agentId
+            );
 
             Disposable disposable = reactAgent.stream(runInput, config)
                     .timeout(Duration.ofSeconds(Math.max(30L, leadStreamTimeoutSeconds)))
                     .doOnNext(nodeOutput -> {
+                        usageTracker.accept(nodeOutput);
                         if (nodeOutput instanceof StreamingOutput streamingOutput) {
                             String chunk = streamingOutput.chunk();
                             if (chunk != null && !chunk.isEmpty()) {

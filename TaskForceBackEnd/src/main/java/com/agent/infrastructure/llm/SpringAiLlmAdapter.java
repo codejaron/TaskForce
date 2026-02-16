@@ -1,9 +1,7 @@
 package com.agent.infrastructure.llm;
 
-import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.llm.AgentFactory;
 import com.agent.infrastructure.prompt.PromptManager;
-import com.agent.infrastructure.persistence.mapper.AgentMapper;
 import com.agent.service.SessionStopService;
 import com.agent.service.SessionExecutionTracker;
 import com.agent.service.TokenUsageService;
@@ -35,7 +33,6 @@ public class SpringAiLlmAdapter implements LlmAdapter {
     private final SessionExecutionTracker executionTracker;
     private final PromptManager promptManager;
     private final TokenUsageService tokenUsageService;
-    private final AgentMapper agentMapper;
 
     @Override
     public Flux<String> streamChat(Long agentId, String systemPrompt, String userMessage) {
@@ -153,28 +150,13 @@ public class SpringAiLlmAdapter implements LlmAdapter {
         }
 
         try {
-            // 获取Agent配置信息
-            Agent agent = agentMapper.selectById(agentId);
-            if (agent == null) {
-                log.error("[LlmAdapter] Agent not found: {}", agentId);
-                return;
+            boolean recorded = tokenUsageService.recordUsageFromSpringUsage(sessionId, agentId, usage);
+            if (recorded) {
+                log.info("[LlmAdapter] Token usage recorded: agentId={}, prompt={}, completion={}, total={}",
+                        agentId, usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+            } else {
+                log.debug("[LlmAdapter] Token usage skipped: agentId={}, sessionId={}", agentId, sessionId);
             }
-
-            // 获取模型名称（优先使用agent.model覆盖，否则使用Provider默认）
-            String modelName = agent.getModel();
-
-            // 记录Token使用
-            tokenUsageService.recordUsage(
-                sessionId,
-                agent.getProviderId(),
-                agentId,
-                modelName,
-                usage.getPromptTokens().intValue(),
-                usage.getCompletionTokens().intValue()
-            );
-
-            log.info("[LlmAdapter] Token usage recorded: agentId={}, model={}, prompt={}, completion={}",
-                agentId, modelName, usage.getPromptTokens(), usage.getCompletionTokens());
 
         } catch (Exception e) {
             log.error("[LlmAdapter] Failed to record token usage", e);

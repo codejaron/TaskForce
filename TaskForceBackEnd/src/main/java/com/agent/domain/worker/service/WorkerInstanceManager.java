@@ -12,6 +12,7 @@ import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.WorkerSpawnedEvent;
 import com.agent.service.SessionExecutionTracker;
+import com.agent.service.TokenUsageService;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -45,6 +46,7 @@ public class WorkerInstanceManager {
     private final AgentExecutionStateService executionStateService;
     private final ExecutionWaitIntentService waitIntentService;
     private final WorkerRoundControlService workerRoundControlService;
+    private final TokenUsageService tokenUsageService;
 
     public WorkerInstanceManager(
             WorkerInstanceRepository workerRepository,
@@ -57,7 +59,8 @@ public class WorkerInstanceManager {
             BaseCheckpointSaver checkpointSaver,
             AgentExecutionStateService executionStateService,
             ExecutionWaitIntentService waitIntentService,
-            WorkerRoundControlService workerRoundControlService) {
+            WorkerRoundControlService workerRoundControlService,
+            TokenUsageService tokenUsageService) {
         this.workerRepository = workerRepository;
         this.taskBoardService = taskBoardService;
         this.reactAgentFactory = reactAgentFactory;
@@ -69,6 +72,7 @@ public class WorkerInstanceManager {
         this.executionStateService = executionStateService;
         this.waitIntentService = waitIntentService;
         this.workerRoundControlService = workerRoundControlService;
+        this.tokenUsageService = tokenUsageService;
     }
 
     // 线程池：用于运行 WorkerLoop
@@ -369,6 +373,7 @@ public class WorkerInstanceManager {
                 executionStateService,
                 waitIntentService,
                 workerRoundControlService,
+                tokenUsageService,
                 startupResumeInput,
                 () -> runningLoops.remove(instance.getInstanceId(), holder[0])
         );
