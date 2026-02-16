@@ -7,6 +7,7 @@ export interface AgentProfile {
   providerId?: number;  // LLM Provider ID for model selection
   temperature: number;
   maxTokens?: number;  // Maximum tokens for generation
+  contextWindow?: number; // Context window tokens for summarization budget
   selectedMcpTools?: string[];  // Optional since backend doesn't have this field yet
   description?: string;
   roleType?: string; // MODERATOR/WORKER

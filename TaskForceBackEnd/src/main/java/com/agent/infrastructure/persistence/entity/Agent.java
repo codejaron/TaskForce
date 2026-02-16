@@ -42,6 +42,9 @@ public class Agent {
     @TableField("max_tokens")
     @Builder.Default
     private Integer maxTokens = 4096;
+
+    @TableField("context_window")
+    private Integer contextWindow; // 模型上下文窗口（token）
     
     @TableField("description")
     private String description;

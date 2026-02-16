@@ -35,6 +35,7 @@ public class AgentService {
             .systemPrompt(request.getSystemPrompt())
             .temperature(request.getTemperature() != null ? request.getTemperature() : new BigDecimal("0.70"))
             .maxTokens(request.getMaxTokens() != null ? request.getMaxTokens() : 4096)
+            .contextWindow(request.getContextWindow())
             .description(request.getDescription())
             .roleType(request.getRoleType() != null ? request.getRoleType() : "WORKER")
             .build();
@@ -80,6 +81,9 @@ public class AgentService {
         }
         if (request.getMaxTokens() != null) {
             agent.setMaxTokens(request.getMaxTokens());
+        }
+        if (request.getContextWindow() != null) {
+            agent.setContextWindow(request.getContextWindow());
         }
         if (request.getDescription() != null) {
             agent.setDescription(request.getDescription());

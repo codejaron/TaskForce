@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS agents (
     model VARCHAR(100) NULL COMMENT 'Agent 指定的模型标识(例如 gpt-4o 或自定义部署名)',
     temperature DECIMAL(3,2) DEFAULT 0.70 COMMENT '温度参数',
     max_tokens INT DEFAULT 4096 COMMENT '最大Token数',
+    context_window INT NULL COMMENT '上下文窗口(Token)，用于摘要触发阈值计算',
     description TEXT COMMENT '描述',
     role_type VARCHAR(20) DEFAULT 'WORKER' COMMENT '角色类型: WORKER/PLANNER',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

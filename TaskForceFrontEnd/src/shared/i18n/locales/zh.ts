@@ -107,6 +107,8 @@ export default {
     temperature: '温度',
     maxTokens: '最大 Token 数',
     maxTokensHint: 'AI 回复的最大 token 数',
+    contextWindow: '上下文窗口',
+    contextWindowHint: '模型上下文上限 token 数（用于在 70% 位置触发压缩）',
     edit: '编辑',
     delete: '删除',
     save: '保存',
