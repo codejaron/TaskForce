@@ -9,7 +9,6 @@ TaskForce/
 ├── TaskForceBackEnd/          # Spring Boot 后端
 ├── TaskForceFrontEnd/         # React + Vite 前端
 ├── mcp-server/                # MCP Server 微服务
-├── broker.conf                # RocketMQ Broker 配置文件（可选）
 ├── mcp-config.json            # MCP 配置（可选）
 ├── mcp-tools/                 # MCP 工具目录（可选）
 ├── .env.example               # 本地环境变量示例
@@ -24,7 +23,6 @@ TaskForce/
 - npm 10+
 - MySQL 8.0（默认 `3306`）
 - Redis 7（默认 `6379`）
-- RocketMQ NameServer（默认 `9876`）
 - Nacos（默认 `8848`，如启用服务发现）
 
 ## 3. 配置（环境变量）
