@@ -367,6 +367,7 @@ export default {
     uploadSuccess: 'Upload complete: {{count}} files',
     uploadFailed: 'Upload failed',
     uploading: 'Uploading...',
+    stop: 'Stop',
   },
   skills: {
     title: 'Skills Management',
