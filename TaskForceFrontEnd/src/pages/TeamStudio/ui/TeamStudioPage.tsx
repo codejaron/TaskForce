@@ -158,7 +158,7 @@ export const TeamStudioPage: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex bg-white relative">
+    <div className="h-full flex bg-white dark:bg-neutral-950 relative">
       {/* Sidebar - Sessions */}
       <div className={clsx(
         "flex-shrink-0 border-r border-gray-200 bg-gray-50 transition-all duration-300 relative",
@@ -241,7 +241,7 @@ export const TeamStudioPage: React.FC = () => {
         {currentSession ? (
           <>
             {/* Session Header */}
-            <div className="p-4 border-b border-gray-200 bg-white">
+            <div className="p-4 border-b border-gray-200 dark:border-neutral-800 bg-white dark:bg-neutral-950">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h1 className="text-xl font-bold text-gray-900">{currentSession.name}</h1>
@@ -250,11 +250,11 @@ export const TeamStudioPage: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setShowTaskBoard(true)}
-                    className="px-3 py-2 border border-blue-200 bg-blue-50 text-blue-700 rounded-xl text-sm font-medium hover:bg-blue-100 transition-colors cursor-pointer flex items-center gap-2"
+                    className="px-3 py-2 border border-blue-200 dark:border-neutral-700 bg-blue-50 dark:bg-neutral-900 text-blue-700 dark:text-neutral-100 rounded-xl text-sm font-medium hover:bg-blue-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer flex items-center gap-2"
                   >
                     <Activity size={16} />
                     <span>{t('team.taskBoard')}</span>
-                    <span className="text-xs px-1.5 py-0.5 rounded-md bg-blue-100 text-blue-800">
+                    <span className="text-xs px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-neutral-800 text-blue-800 dark:text-neutral-200">
                       {tasks.filter(t => t.status === 'COMPLETED').length}/{tasks.length}
                     </span>
                   </button>
@@ -324,18 +324,18 @@ export const TeamStudioPage: React.FC = () => {
               />
 
               <aside className={clsx(
-                "absolute top-0 right-0 h-full w-full sm:w-[420px] max-w-[95vw] bg-white border-l border-gray-200 z-30 shadow-xl transform transition-transform duration-300 flex flex-col",
+                "absolute top-0 right-0 h-full w-full sm:w-[420px] max-w-[95vw] bg-white dark:bg-neutral-950 border-l border-gray-200 dark:border-neutral-800 z-30 shadow-xl transform transition-transform duration-300 flex flex-col",
                 showTaskBoard ? "translate-x-0" : "translate-x-full"
               )}>
-                <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200">
-                  <Activity size={18} className="text-blue-600" />
-                  <h2 className="font-semibold text-gray-900">{t('team.taskBoard')}</h2>
-                  <span className="text-xs text-gray-400 ml-auto">
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-neutral-800">
+                  <Activity size={18} className="text-blue-600 dark:text-neutral-300" />
+                  <h2 className="font-semibold text-gray-900 dark:text-neutral-100">{t('team.taskBoard')}</h2>
+                  <span className="text-xs text-gray-400 dark:text-neutral-500 ml-auto">
                     {tasks.filter(t => t.status === 'COMPLETED').length}/{tasks.length}
                   </span>
                   <button
                     onClick={() => setShowTaskBoard(false)}
-                    className="p-1.5 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-700 cursor-pointer"
+                    className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-200 cursor-pointer"
                     title={t('team.close')}
                   >
                     <X size={16} />
@@ -353,13 +353,13 @@ export const TeamStudioPage: React.FC = () => {
                   ) : (
                     <>
                       {dependencySummary.length > 0 && (
-                        <div className="p-3 rounded-lg border border-indigo-200 bg-indigo-50">
-                          <p className="text-[11px] uppercase tracking-wide text-indigo-700 font-semibold">
+                        <div className="p-3 rounded-lg border border-indigo-200 dark:border-neutral-700 bg-indigo-50 dark:bg-neutral-900">
+                          <p className="text-[11px] uppercase tracking-wide text-indigo-700 dark:text-neutral-200 font-semibold">
                             {t('team.dependencyGraph')}
                           </p>
                           <div className="mt-1.5 space-y-1">
                             {dependencySummary.map(item => (
-                              <p key={item.taskId} className="text-xs text-indigo-800">
+                              <p key={item.taskId} className="text-xs text-indigo-800 dark:text-neutral-300">
                                 {item.blockedBy.map(depId => `#${depId}`).join(' + ')} {'->'} #{item.taskId}
                               </p>
                             ))}
@@ -374,42 +374,43 @@ export const TeamStudioPage: React.FC = () => {
                         return (
                           <div key={task.taskId} className={clsx(
                             "p-3 rounded-lg border transition-all",
-                            task.status === 'COMPLETED' ? "bg-green-50 border-green-200" :
-                            task.status === 'WORKING' || task.status === 'ASSIGNED' ? "bg-blue-50 border-blue-200" :
-                            task.status === 'FAILED' ? "bg-red-50 border-red-200" :
-                            "bg-white border-gray-200"
+                            task.status === 'COMPLETED' ? "bg-green-50 dark:bg-green-950/25 border-green-200 dark:border-green-800/60" :
+                            task.status === 'WORKING' ? "bg-blue-50 dark:bg-blue-950/25 border-blue-200 dark:border-blue-800/60" :
+                            task.status === 'ASSIGNED' ? "bg-amber-50 dark:bg-amber-950/25 border-amber-200 dark:border-amber-800/60" :
+                            task.status === 'FAILED' ? "bg-red-50 dark:bg-red-950/25 border-red-200 dark:border-red-800/60" :
+                            "bg-white dark:bg-neutral-900 border-gray-200 dark:border-neutral-700"
                           )}>
                             <div className="flex items-center justify-between">
-                              <span className="text-sm font-medium text-gray-900">
+                              <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">
                                 #{task.taskId} {task.subject}
                               </span>
                               <span className={clsx(
                                 "text-xs px-2 py-0.5 rounded-full font-medium",
-                                task.status === 'COMPLETED' ? "bg-green-100 text-green-700" :
-                                task.status === 'WORKING' ? "bg-blue-100 text-blue-700" :
-                                task.status === 'ASSIGNED' ? "bg-yellow-100 text-yellow-700" :
-                                task.status === 'FAILED' ? "bg-red-100 text-red-700" :
-                                "bg-gray-100 text-gray-600"
+                                task.status === 'COMPLETED' ? "bg-green-100 dark:bg-green-900/35 text-green-700 dark:text-green-200" :
+                                task.status === 'WORKING' ? "bg-blue-100 dark:bg-blue-900/35 text-blue-700 dark:text-[#bfdbfe]" :
+                                task.status === 'ASSIGNED' ? "bg-yellow-100 dark:bg-amber-900/35 text-yellow-700 dark:text-[#fde68a]" :
+                                task.status === 'FAILED' ? "bg-red-100 dark:bg-red-900/35 text-red-700 dark:text-red-200" :
+                                "bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-300"
                               )}>
                                 {task.status}
                               </span>
                             </div>
                             {task.description && (
-                              <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>
+                              <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1 line-clamp-2">{task.description}</p>
                             )}
                             {task.completionNote && (
-                              <p className="text-xs text-emerald-700 mt-1">
+                              <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1">
                                 completionNote: {task.completionNote}
                               </p>
                             )}
-                            <p className="text-xs text-gray-500 mt-1">{t('team.owner')}: {formatOwner(task.owner)}</p>
+                            <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1">{t('team.owner')}: {formatOwner(task.owner)}</p>
                             {blockedBy.length > 0 && (
-                              <p className="text-xs text-amber-700 mt-1">
+                              <p className="text-xs text-amber-700 dark:text-[#fde68a] mt-1">
                                 {t('team.blockedBy')}: {blockedBy.map(depId => `#${depId}`).join(', ')}
                               </p>
                             )}
                             {blocks.length > 0 && (
-                              <p className="text-xs text-blue-700 mt-1">
+                              <p className="text-xs text-blue-700 dark:text-[#bfdbfe] mt-1">
                                 {t('team.blocking')}: {blocks.map(depId => `#${depId}`).join(', ')}
                               </p>
                             )}

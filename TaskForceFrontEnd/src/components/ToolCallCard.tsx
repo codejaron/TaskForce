@@ -36,9 +36,9 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ toolCall, defaultExp
 
   // 状态颜色
   const statusColor = {
-    RUNNING: 'border-blue-200 bg-blue-50',
-    SUCCESS: 'border-green-200 bg-green-50',
-    FAILED: 'border-red-200 bg-red-50'
+    RUNNING: 'border-blue-200 bg-blue-50 dark:border-blue-800/60 dark:bg-blue-950/20',
+    SUCCESS: 'border-green-200 bg-green-50 dark:border-green-800/60 dark:bg-green-950/20',
+    FAILED: 'border-red-200 bg-red-50 dark:border-red-800/60 dark:bg-red-950/20'
   }[toolCall.status];
 
   // 格式化 JSON
@@ -65,14 +65,14 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ toolCall, defaultExp
       >
         <div className="flex items-center gap-1.5">
           {/* 工具图标 */}
-          <svg className="w-3.5 h-3.5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-3.5 h-3.5 text-gray-600 dark:text-neutral-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
-          <span className="font-mono font-medium text-gray-800">{getToolDisplayName(toolCall.toolName, 'tool')}</span>
+          <span className="font-mono font-medium text-gray-800 dark:text-neutral-100">{getToolDisplayName(toolCall.toolName, 'tool')}</span>
           {statusIcon}
         </div>
-        <div className="flex items-center gap-2 text-gray-500">
+        <div className="flex items-center gap-2 text-gray-500 dark:text-neutral-400">
           {toolCall.durationMs !== undefined && (
             <span>{toolCall.durationMs}ms</span>
           )}
@@ -90,12 +90,12 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ toolCall, defaultExp
 
       {/* 展开内容：参数 + 结果 */}
       {expanded && (
-        <div className="border-t border-gray-200 px-2.5 py-2 space-y-2 bg-white bg-opacity-50">
+        <div className="border-t border-gray-200 dark:border-neutral-700 px-2.5 py-2 space-y-2 bg-white/50 dark:bg-neutral-900/70">
           {/* 参数 */}
           {toolCall.toolArgs && (
             <div>
-              <div className="font-medium text-gray-600 mb-1">参数</div>
-              <pre className="bg-white rounded p-2 overflow-x-auto max-h-32 text-gray-700 whitespace-pre-wrap break-all">
+              <div className="font-medium text-gray-600 dark:text-neutral-300 mb-1">参数</div>
+              <pre className="bg-white dark:bg-neutral-950 rounded p-2 overflow-x-auto max-h-32 text-gray-700 dark:text-neutral-200 whitespace-pre-wrap break-all">
                 {formatJson(toolCall.toolArgs)}
               </pre>
             </div>
@@ -104,8 +104,8 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ toolCall, defaultExp
           {/* 结果 */}
           {toolCall.toolResult && (
             <div>
-              <div className="font-medium text-gray-600 mb-1">结果</div>
-              <pre className="bg-white rounded p-2 overflow-x-auto max-h-48 text-gray-700 whitespace-pre-wrap break-all">
+              <div className="font-medium text-gray-600 dark:text-neutral-300 mb-1">结果</div>
+              <pre className="bg-white dark:bg-neutral-950 rounded p-2 overflow-x-auto max-h-48 text-gray-700 dark:text-neutral-200 whitespace-pre-wrap break-all">
                 {truncateResult(toolCall.toolResult, 2000)}
               </pre>
             </div>
@@ -113,7 +113,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ toolCall, defaultExp
 
           {/* 错误信息 */}
           {toolCall.errorMessage && (
-            <div className="text-red-600 bg-red-50 rounded p-2">
+            <div className="text-red-600 dark:text-red-200 bg-red-50 dark:bg-red-950/20 rounded p-2">
               {toolCall.errorMessage}
             </div>
           )}

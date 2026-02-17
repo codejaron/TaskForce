@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMcpStore } from '../../../features/mcp/model/store';
 import { api } from '../../../shared/api';
+import { clsx } from 'clsx';
 import {
   Server,
   Database,
@@ -189,7 +190,7 @@ export const McpMarketplacePage: React.FC = () => {
   });
 
   return (
-    <div className="h-screen overflow-y-auto bg-slate-50">
+    <div className="h-screen overflow-y-auto bg-slate-50 dark:bg-neutral-950">
       <div className="max-w-7xl mx-auto p-8">
         {/* Header */}
         <div className="flex justify-between items-start mb-8">
@@ -228,7 +229,7 @@ export const McpMarketplacePage: React.FC = () => {
                 value={toolSearch}
                 onChange={e => setToolSearch(e.target.value)}
                 placeholder={t('mcp.searchTools')}
-                className="w-full bg-white border border-gray-300 rounded-xl pl-10 pr-4 py-2 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none shadow-sm"
+                className="w-full bg-white dark:bg-neutral-900 border border-gray-300 dark:border-neutral-700 rounded-xl pl-10 pr-4 py-2 text-sm text-gray-900 dark:text-neutral-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none shadow-sm"
               />
             </div>
           </div>
@@ -236,16 +237,21 @@ export const McpMarketplacePage: React.FC = () => {
           {/* Tools by Server */}
           <div className="space-y-4">
             {serverEntries.map(({ serverId, serverName, tools: serverTools }) => (
-              <div key={serverId} className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+              <div key={serverId} className="bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-2xl overflow-hidden shadow-sm">
                 {/* Server Header */}
                 <button
                   onClick={() => setExpandedServer(expandedServer === serverId ? null : serverId)}
-                  className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors duration-200 cursor-pointer"
+                  className={clsx(
+                    "w-full p-4 flex items-center justify-between transition-colors duration-200 cursor-pointer",
+                    expandedServer === serverId
+                      ? "bg-gray-50 dark:bg-neutral-900"
+                      : "bg-white dark:bg-neutral-950 hover:bg-gray-50 dark:hover:bg-neutral-900"
+                  )}
                 >
                   <div className="flex items-center gap-3">
                     <Server size={18} className="text-orange-600" />
-                    <span className="font-medium text-gray-900">{serverName}</span>
-                    <span className="text-xs text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
+                    <span className="font-medium text-gray-900 dark:text-neutral-100">{serverName}</span>
+                    <span className="text-xs text-gray-600 dark:text-neutral-300 bg-gray-100 dark:bg-neutral-800 px-2 py-0.5 rounded-full">
                       {serverTools.length} {t('mcp.tools')}
                     </span>
                   </div>
@@ -258,7 +264,7 @@ export const McpMarketplacePage: React.FC = () => {
                           handleDeleteServer(serverId, serverName);
                         }}
                         disabled={deletingServerId === serverId}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-700 dark:text-red-200 bg-red-50 dark:bg-red-950/25 hover:bg-red-100 dark:hover:bg-red-900/35 border border-red-200 dark:border-red-800/60 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                         title={t('mcp.delete')}
                       >
                         <Trash2 size={14} />
@@ -266,45 +272,45 @@ export const McpMarketplacePage: React.FC = () => {
                       </button>
                     )}
                     {expandedServer === serverId ? (
-                      <ChevronUp size={18} className="text-gray-600" />
+                      <ChevronUp size={18} className="text-gray-600 dark:text-neutral-300" />
                     ) : (
-                      <ChevronDown size={18} className="text-gray-600" />
+                      <ChevronDown size={18} className="text-gray-600 dark:text-neutral-300" />
                     )}
                   </div>
                 </button>
 
                 {/* Tools List */}
                 {expandedServer === serverId && (
-                  <div className="border-t border-gray-200">
+                  <div className="border-t border-gray-200 dark:border-neutral-800">
                     {serverTools.length === 0 ? (
-                      <div className="p-6 text-sm text-gray-500">{t('mcp.noTools')}</div>
+                      <div className="p-6 text-sm text-gray-500 dark:text-neutral-400">{t('mcp.noTools')}</div>
                     ) : (
                       <table className="w-full text-left text-sm">
-                        <thead className="bg-slate-50 text-gray-700">
+                        <thead className="bg-slate-50 dark:bg-neutral-900 text-gray-700 dark:text-neutral-300">
                           <tr>
                             <th className="p-4 font-medium">{t('mcp.toolName')}</th>
                             <th className="p-4 font-medium">{t('mcp.description')}</th>
                             <th className="p-4 font-medium">ID</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-200">
+                        <tbody className="divide-y divide-gray-200 dark:divide-neutral-800">
                           {serverTools.map(tool => (
-                            <tr key={tool.id} className="hover:bg-slate-50 transition-colors duration-200">
+                            <tr key={tool.id} className="hover:bg-slate-50 dark:hover:bg-neutral-900 transition-colors duration-200">
                               <td className="p-4">
-                                <span className="font-medium text-orange-600">{tool.name}</span>
+                                <span className="font-medium text-orange-600 dark:text-neutral-200">{tool.name}</span>
                               </td>
-                              <td className="p-4 text-gray-700 max-w-md truncate">{tool.description}</td>
+                              <td className="p-4 text-gray-700 dark:text-neutral-300 max-w-md truncate">{tool.description}</td>
                               <td className="p-4">
                                 <div className="flex items-center gap-2">
-                                  <span className="font-mono text-xs text-gray-600 truncate max-w-[120px]">{tool.id}</span>
+                                  <span className="font-mono text-xs text-gray-600 dark:text-neutral-400 truncate max-w-[120px]">{tool.id}</span>
                                   <button
                                     onClick={() => copyToClipboard(tool.id, tool.id)}
-                                    className="p-1 hover:bg-gray-100 rounded transition-colors duration-200 cursor-pointer"
+                                    className="p-1 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded transition-colors duration-200 cursor-pointer"
                                   >
                                     {copiedId === tool.id ? (
                                       <Check size={12} className="text-green-600" />
                                     ) : (
-                                      <Copy size={12} className="text-gray-600" />
+                                      <Copy size={12} className="text-gray-600 dark:text-neutral-400" />
                                     )}
                                   </button>
                                 </div>
@@ -320,7 +326,7 @@ export const McpMarketplacePage: React.FC = () => {
             ))}
 
             {serverEntries.length === 0 && (
-              <div className="text-center py-12 text-gray-500">
+              <div className="text-center py-12 text-gray-500 dark:text-neutral-400">
                 {toolSearch ? t('mcp.noToolsMatch') : t('mcp.noToolsAvailable')}
               </div>
             )}
@@ -331,18 +337,18 @@ export const McpMarketplacePage: React.FC = () => {
       {/* JSON Editor Modal */}
       {showJsonEditor && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-3xl border border-gray-200 shadow-2xl max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+          <div className="bg-white dark:bg-neutral-900 rounded-2xl w-full max-w-3xl border border-gray-200 dark:border-neutral-800 shadow-2xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-gray-200 dark:border-neutral-800 flex justify-between items-center">
               <div>
-                <h2 className="text-2xl font-bold font-heading text-gray-900 flex items-center gap-2">
+                <h2 className="text-2xl font-bold font-heading text-gray-900 dark:text-neutral-100 flex items-center gap-2">
                   <FileCode size={24} className="text-purple-600" />
                   {t('mcp.addToolJsonTitle')}
                 </h2>
-                <p className="text-sm text-gray-600 mt-1">
+                <p className="text-sm text-gray-600 dark:text-neutral-400 mt-1">
                   {t('mcp.addToolJsonDesc')}
                 </p>
               </div>
-              <button onClick={() => setShowJsonEditor(false)} className="text-gray-600 hover:text-gray-900 transition-colors duration-200 cursor-pointer">
+              <button onClick={() => setShowJsonEditor(false)} className="text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-white transition-colors duration-200 cursor-pointer">
                 <X size={24} />
               </button>
             </div>
@@ -358,9 +364,9 @@ export const McpMarketplacePage: React.FC = () => {
                   value={toolKeyInput}
                   onChange={e => setToolKeyInput(e.target.value)}
                   placeholder={t('mcp.toolKeyPlaceholder')}
-                  className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-900 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none shadow-sm"
+                  className="w-full bg-white dark:bg-neutral-950 border border-gray-300 dark:border-neutral-700 rounded-lg px-4 py-2 text-gray-900 dark:text-neutral-100 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none shadow-sm"
                 />
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1">
                   {t('mcp.toolKeyHint')}
                 </p>
               </div>
@@ -382,21 +388,21 @@ export const McpMarketplacePage: React.FC = () => {
   "description": "Filesystem MCP Server",
   "enabled": true
 }`}
-                  className="w-full bg-white border border-gray-300 rounded-lg px-4 py-3 text-gray-900 font-mono text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none shadow-sm"
+                  className="w-full bg-white dark:bg-neutral-950 border border-gray-300 dark:border-neutral-700 rounded-lg px-4 py-3 text-gray-900 dark:text-neutral-100 font-mono text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none shadow-sm"
                   rows={15}
                 />
                 {jsonError && (
-                  <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <p className="text-red-700 text-sm">{jsonError}</p>
+                  <div className="mt-2 p-3 bg-red-50 dark:bg-red-950/25 border border-red-200 dark:border-red-800/60 rounded-lg">
+                    <p className="text-red-700 dark:text-red-200 text-sm">{jsonError}</p>
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
+            <div className="p-6 border-t border-gray-200 dark:border-neutral-800 flex justify-end gap-3">
               <button
                 onClick={() => setShowJsonEditor(false)}
-                className="px-6 py-2.5 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-colors duration-200 cursor-pointer"
+                className="px-6 py-2.5 text-gray-700 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200 cursor-pointer"
               >
                 {t('common.cancel')}
               </button>
