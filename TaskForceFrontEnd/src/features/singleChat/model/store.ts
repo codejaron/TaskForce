@@ -28,6 +28,7 @@ interface SingleChatState {
   clearSession: () => void;
   deleteSession: (sessionId: string) => Promise<void>;
   sendMessage: (sessionId: string, userMessage: string) => void;
+  stopStreaming: (sessionId: string) => Promise<void>;
   disconnectStream: () => void;
 }
 
@@ -66,6 +67,23 @@ function markStreamingAssistantCompleted(messages: SingleChatMessage[]): SingleC
     if (msg.type === 'text' && msg.agentId === 'assistant' && msg.streamState === 'streaming') {
       const next = [...messages];
       next[i] = { ...msg, streamState: 'completed' };
+      return next;
+    }
+  }
+  return messages;
+}
+
+function finalizeStreamingAssistantForTool(messages: SingleChatMessage[]): SingleChatMessage[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.type === 'text' && msg.agentId === 'assistant' && msg.streamState === 'streaming') {
+      const next = [...messages];
+      // 工具事件在首个 delta 前到达时，移除空占位，避免出现空白 assistant 行。
+      if (!msg.content || !msg.content.trim()) {
+        next.splice(i, 1);
+      } else {
+        next[i] = { ...msg, streamState: 'completed' };
+      }
       return next;
     }
   }
@@ -352,9 +370,11 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
                   toolCalls.push(mergedRecord);
                 }
 
+                const timelineMessages = finalizeStreamingAssistantForTool(state.messages);
+
                 return {
                   toolCalls,
-                  messages: upsertToolMessage(state.messages, mergedRecord)
+                  messages: upsertToolMessage(timelineMessages, mergedRecord)
                 };
               });
             }
@@ -385,6 +405,20 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
     } catch (error: unknown) {
       console.error('[SingleChat] Failed to send message:', error);
       set({ error: 'Failed to send message', isStreaming: false });
+    }
+  },
+
+  stopStreaming: async (sessionId: string) => {
+    try {
+      await api.sessions.stop(sessionId);
+    } catch (error: unknown) {
+      console.warn('[SingleChat] Failed to stop session on backend:', error);
+    } finally {
+      get().disconnectStream();
+      set(state => ({
+        isStreaming: false,
+        messages: markStreamingAssistantCompleted(state.messages)
+      }));
     }
   },
 

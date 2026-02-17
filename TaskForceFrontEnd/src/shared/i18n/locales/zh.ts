@@ -366,6 +366,7 @@ export default {
     uploadSuccess: '上传成功：{{count}} 个文件',
     uploadFailed: '上传失败',
     uploading: '上传中...',
+    stop: '停止',
   },
   skills: {
     title: 'Skills 管理',

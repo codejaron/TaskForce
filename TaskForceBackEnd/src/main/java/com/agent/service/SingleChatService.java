@@ -1,5 +1,6 @@
 package com.agent.service;
 
+import com.agent.common.exception.SessionStoppedException;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.ChatCompleteEvent;
@@ -13,10 +14,12 @@ import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.reactivestreams.Subscription;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -24,6 +27,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.UUID;
 
 /**
@@ -41,6 +45,8 @@ public class SingleChatService {
     private final ObjectMapper objectMapper;
     private final TokenUsageService tokenUsageService;
     private final SessionSandboxManager sessionSandboxManager;
+    private final SessionStopService sessionStopService;
+    private final SessionExecutionTracker executionTracker;
 
     // 缓存 ReactAgent + agentId（使用 ConcurrentHashMap）
     private final Map<String, ChatAgentContext> agentCache = new ConcurrentHashMap<>();
@@ -54,6 +60,8 @@ public class SingleChatService {
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
             TokenUsageService tokenUsageService,
+            SessionStopService sessionStopService,
+            SessionExecutionTracker executionTracker,
             @Autowired(required = false) SessionSandboxManager sessionSandboxManager) {
         this.reactAgentFactory = reactAgentFactory;
         this.eventBus = eventBus;
@@ -61,6 +69,8 @@ public class SingleChatService {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.tokenUsageService = tokenUsageService;
+        this.sessionStopService = sessionStopService;
+        this.executionTracker = executionTracker;
         this.sessionSandboxManager = sessionSandboxManager;
     }
 
@@ -77,12 +87,14 @@ public class SingleChatService {
         if (Boolean.FALSE.equals(locked)) {
             return Flux.error(new IllegalStateException("会话正在处理中，请稍后再试"));
         }
+        sessionStopService.clearStop(sessionId);
 
         return Flux.defer(() -> {
             try {
                 if (sessionSandboxManager != null) {
                     sessionSandboxManager.beginRound(sessionId, roundId);
                 }
+                AtomicReference<Disposable> trackedDisposableRef = new AtomicReference<>();
 
                 // 2. 获取或创建 ReactAgent
                 ChatAgentContext agentContext = getOrCreateAgent(sessionId);
@@ -101,7 +113,14 @@ public class SingleChatService {
                         .build();
 
                 // 4. 调用 ReactAgent.stream()
-                Flux<NodeOutput> outputFlux = agent.stream(userMessage, config);
+                Flux<NodeOutput> outputFlux = agent.stream(userMessage, config)
+                        .handle((output, sink) -> {
+                            if (sessionStopService.shouldStop(sessionId)) {
+                                sink.error(new SessionStoppedException(sessionId, "Chat stopped by user"));
+                                return;
+                            }
+                            sink.next(output);
+                        });
 
                 // 5. 订阅 EventBus 获取工具调用事件
                 Flux<ServerSentEvent<String>> toolEventFlux = eventBus.subscribe(sessionId)
@@ -115,9 +134,6 @@ public class SingleChatService {
                                 .data(event.toJson())
                                 .build());
 
-                // 6. 收集流式输出
-                StringBuilder responseBuilder = new StringBuilder();
-
                 Flux<ServerSentEvent<String>> chatFlux = outputFlux
                         .flatMap(output -> {
                             usageTracker.accept(output);
@@ -129,8 +145,6 @@ public class SingleChatService {
                                 if (chunk == null || chunk.isEmpty()) {
                                     return Flux.empty();
                                 }
-
-                                responseBuilder.append(chunk);
 
                                 // 发布增量事件
                                 publishDeltaEvent(sessionId, chunk);
@@ -144,6 +158,9 @@ public class SingleChatService {
                             return Flux.empty();
                         })
                         .concatWith(Flux.defer(() -> {
+                            if (sessionStopService.shouldStop(sessionId)) {
+                                return Flux.error(new SessionStoppedException(sessionId, "Chat stopped by user"));
+                            }
                             // 先完成文件 flush，成功后再发布 complete 事件
                             flushRoundOnce(sessionId, roundId, flushed);
                             publishCompleteEvent(sessionId);
@@ -156,7 +173,13 @@ public class SingleChatService {
 
                 // 7. 合并聊天流和工具事件流
                 return Flux.merge(chatFlux, toolEventFlux)
+                        .doOnSubscribe(subscription ->
+                                trackedDisposableRef.set(registerStreamDisposable(sessionId, subscription)))
                         .onErrorResume(e -> {
+                            if (e instanceof SessionStoppedException) {
+                                log.info("[SingleChat] Chat stopped by user: sessionId={}", sessionId);
+                                return Flux.empty();
+                            }
                             log.error("[SingleChat] Error: sessionId={}", sessionId, e);
                             publishErrorEvent(sessionId, e.getMessage());
                             return Flux.just(ServerSentEvent.<String>builder()
@@ -169,12 +192,18 @@ public class SingleChatService {
                                     .build());
                         })
                         .doFinally(signalType -> {
+                            Disposable trackedDisposable = trackedDisposableRef.get();
+                            if (trackedDisposable != null && !trackedDisposable.isDisposed()) {
+                                trackedDisposable.dispose();
+                            }
                             try {
                                 flushRoundOnce(sessionId, roundId, flushed);
                             } catch (Exception e) {
                                 log.warn("[SingleChat] Final flush failed: sessionId={}, roundId={}, err={}",
                                         sessionId, roundId, e.getMessage());
                             }
+                            executionTracker.cleanup(sessionId);
+                            sessionStopService.clearStop(sessionId);
                             // 释放锁（使用 DEL，不会抛异常）
                             try {
                                 redisTemplate.delete(lockKey);
@@ -188,6 +217,8 @@ public class SingleChatService {
                 // 异常时也要释放锁
                 try {
                     flushRoundOnce(sessionId, roundId, flushed);
+                    executionTracker.cleanup(sessionId);
+                    sessionStopService.clearStop(sessionId);
                     redisTemplate.delete(lockKey);
                 } catch (Exception ex) {
                     log.warn("[SingleChat] Failed to release lock on error", ex);
@@ -309,6 +340,25 @@ public class SingleChatService {
         if (!synced) {
             throw new IllegalStateException("Round flush failed: sessionId=" + sessionId + ", roundId=" + roundId);
         }
+    }
+
+    private Disposable registerStreamDisposable(String sessionId, Subscription subscription) {
+        AtomicBoolean disposed = new AtomicBoolean(false);
+        Disposable disposable = new Disposable() {
+            @Override
+            public void dispose() {
+                if (disposed.compareAndSet(false, true)) {
+                    subscription.cancel();
+                }
+            }
+
+            @Override
+            public boolean isDisposed() {
+                return disposed.get();
+            }
+        };
+        executionTracker.registerDisposable(sessionId, disposable);
+        return disposable;
     }
 
     private record ChatAgentContext(ReactAgent agent, Long agentId) {}

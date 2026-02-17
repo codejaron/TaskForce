@@ -24,7 +24,7 @@ import remarkGfm from 'remark-gfm';
 import type { Session } from '../../../shared/api/types';
 
 export const SingleChatPage: React.FC = () => {
-  const { sessions, currentSession, messages, isStreaming, fetchSessions, selectSession, sendMessage, disconnectStream, deleteSession } = useSingleChatStore();
+  const { sessions, currentSession, messages, isStreaming, fetchSessions, selectSession, sendMessage, stopStreaming, disconnectStream, deleteSession } = useSingleChatStore();
   const { agents, fetchAgents } = useAgentStore();
   const { t } = useTranslation();
 
@@ -481,11 +481,21 @@ export const SingleChatPage: React.FC = () => {
                   disabled={isStreaming || isUploading}
                 />
                 <button
-                  onClick={handleSend}
-                  disabled={!inputMessage.trim() || isStreaming || isUploading}
-                  className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer shadow-sm"
+                  onClick={isStreaming ? () => currentSession && stopStreaming(currentSession.id) : handleSend}
+                  disabled={!currentSession || isUploading || (!isStreaming && !inputMessage.trim())}
+                  className={clsx(
+                    "px-6 py-3 text-white rounded-xl font-medium transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer shadow-sm",
+                    isStreaming ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"
+                  )}
                 >
-                  <Send size={20} />
+                  {isStreaming ? (
+                    <>
+                      <X size={20} />
+                      <span>{t('singleChat.stop')}</span>
+                    </>
+                  ) : (
+                    <Send size={20} />
+                  )}
                 </button>
               </div>
             </div>
