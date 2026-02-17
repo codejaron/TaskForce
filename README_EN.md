@@ -2,43 +2,52 @@
 
 [中文 README](./README.md) | [English README](./README_EN.md)
 
-## 🚧 Disclaimer
+## Overview
 
-This project is in an early stage and is mainly for learning and technical exploration. Bugs are expected.
+TaskForce is a local-first multi-agent collaboration platform with two core runtime modes:
 
-## Introduction
+- `Team`: a Team Lead coordinates multiple Workers
+- `Single Chat`: direct interaction with one agent
 
-TaskForce is a **multi-agent collaboration platform** centered on two runtime modes: `Team` (Lead + Workers) and `Single Chat`.
+It includes MCP tool integration, real-time event streaming, and session-level state management for building and validating agent workflows.
 
-Core runtime model:
+## Key Capabilities
 
-- **Team Lead**: coordinates tasks, delegates work, and reports progress
-- **Worker**: executes assigned tasks with MCP tools
-- **Single Chat**: direct conversation mode with one agent
+- Multi-agent collaboration: Team Lead plans, delegates, and consolidates outcomes
+- Worker execution pipeline: workers run tasks and call MCP tools independently
+- Real-time observability: Team/Worker events are streamed via SSE
+- Session state handling: execution data is persisted for continuity
+- MCP provider support: both STDIO and remote SSE providers are supported
+- Dual runtime modes: switch between `Team` and `Single Chat` by scenario
 
-## Core Features
-
-- **Team-first orchestration**: legacy planner-worker graph orchestration removed
-- **Real-time observability**: Team and Worker SSE streams for live status
-- **Checkpoint persistence**: Redis-backed saver retained for Lead/Worker continuity
-- **Single Chat retained**: lightweight chat path remains available
-- **MCP Tool Integration**: standardized tool integration approach
-
-📖 Detailed introduction: [blog.jarontech.top](https://blog.jarontech.top)
+📖 Project blog: [blog.jarontech.top](https://blog.jarontech.top)
 
 ---
 
-## 🚀 Quick Start (Local Run)
+## System Components
 
-> This repository now supports local run only.
+- `TaskForceFrontEnd`: React + Vite UI for configuration and conversations
+- `TaskForceBackEnd`: Spring Boot orchestration and business API service
+- `mcp-server`: standalone MCP tool service for registration, routing, and execution
+
+## Runtime Flow
+
+1. Configure an LLM provider
+2. Create Team Lead and Worker agents
+3. Start a `TEAM` or `CHAT` session
+4. Observe execution through live event streams
+5. Review conversation and tool-call history
+
+---
+
+## Quick Start (Local)
 
 ### 1. Start dependencies
 
-Prepare and run these services first (default ports):
+Run these services first (default ports):
 
 - MySQL 8.0 (`3306`)
 - Redis 7 (`6379`)
-- RocketMQ NameServer (`9876`)
 - Nacos (`8848`, if service discovery is enabled)
 
 ### 2. Start MCP Server
@@ -63,54 +72,73 @@ npm install
 npm run dev
 ```
 
-Default local URLs:
+Local URLs:
 
 - Frontend: `http://localhost:5173`
 - Backend API: `http://localhost:8080`
 - MCP Server: `http://localhost:8082`
 
-### Initial setup
+### 5. Initial setup
 
 1. Open `http://localhost:5173`
-2. In "Provider Management", add an LLM provider (OpenAI/Azure/Ollama, etc.)
-3. In "Agent Management", create:
-   - at least 1 **PLANNER** agent (used as Team Lead)
-   - at least 1 **WORKER** agent
-4. Configure MCP tools for workers (optional)
-5. Create a `TEAM` or `CHAT` session and start conversation
+2. Add an LLM provider in Provider Management (OpenAI/Azure/Ollama, etc.)
+3. Create agents in Agent Management:
+   - at least 1 Team Lead agent
+   - at least 1 Worker agent
+4. Bind MCP tools to workers (optional)
+5. Create a `TEAM` or `CHAT` session
 
-## 📱 Page Screenshots
+---
 
-### Dashboard
-![Dashboard](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.15.03@2x.png)
+## Tech Stack
 
-### Agent Workshop
-![Agent Workshop](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.34.21@2x.png)
+### Backend
 
-### MCP Marketplace
-![MCP Tools](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.34.59@2x.png)
+| Tech | Version | Purpose |
+|---|---|---|
+| Spring Boot | 3.3.4 | Application framework |
+| Java | 21 | Language runtime |
+| Spring AI | 1.1.2 | LLM integration |
+| Spring AI Alibaba | 1.1.2.0 | Agent framework + sandbox |
+| MyBatis-Plus | 3.5.5 | ORM |
+| MySQL | 8.0 | Relational storage |
+| Redis | 7 | Cache and state management |
+| Redisson | 3.27.0 | Distributed lock |
+| Nacos | 2023.0.1.0 | Service discovery |
 
-### Team Studio
-![Team Studio](https://cdn.jsdelivr.net/gh/codejaron/image/obsidian/CleanShot%202026-01-18%20at%2019.32.40@2x.png)
+### Frontend
 
-## 📘 Docs
+- React
+- TypeScript
+- Vite
+- TailwindCSS
 
-- Quick start / env vars / FAQ: [QUICKSTART_EN.md](./QUICKSTART_EN.md)
+### MCP Server
 
-## 🏗️ Project Structure
+| Tech | Version | Purpose |
+|---|---|---|
+| Spring Boot | 3.3.4 | Application framework |
+| Spring AI | 1.1.2 | AI integration |
+| MCP SDK | 0.17.0 | MCP protocol implementation |
+| MyBatis-Plus | 3.5.5 | ORM |
+
+---
+
+## Project Structure
 
 ```text
 TaskForce/
-├── TaskForceFrontEnd/         # React frontend
-├── TaskForceBackEnd/          # Spring Boot backend
-├── mcp-server/                # MCP server
-├── mcp-config.json            # MCP config (optional)
-├── mcp-tools/                 # MCP tools directory (optional)
-├── .env.example               # Local environment variable example
+├── TaskForceBackEnd/          # Backend service
+├── TaskForceFrontEnd/         # Frontend app
+├── mcp-server/                # MCP service
+├── .env.example               # Local env var example
+├── QUICKSTART.md              # Chinese quick start
 └── QUICKSTART_EN.md           # English quick start
 ```
 
-## 🧑‍💻 Development
+---
+
+## Development
 
 ### Backend
 
@@ -134,18 +162,21 @@ cd mcp-server
 mvn spring-boot:run
 ```
 
-## Tech Stack
+Configuration files:
 
-### Backend
+- Backend: `TaskForceBackEnd/src/main/resources/application.yml`
+- MCP Server: `mcp-server/src/main/resources/application.yml`
+- Env example: `.env.example`
 
-- Spring Boot
-- Java
-- MySQL
-- Redis
+---
 
-### Frontend
+## Documentation
 
-- React
-- TypeScript
-- Vite
-- TailwindCSS
+- Quick start and FAQ: [`QUICKSTART_EN.md`](./QUICKSTART_EN.md)
+- MCP Server docs: [`mcp-server/README.md`](./mcp-server/README.md)
+
+---
+
+## License
+
+MIT

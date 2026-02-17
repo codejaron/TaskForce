@@ -18,7 +18,6 @@ TaskForce/
 ├── TaskForceBackEnd/          # Spring Boot backend
 ├── TaskForceFrontEnd/         # React + Vite frontend
 ├── mcp-server/                # MCP server microservice
-├── broker.conf                # RocketMQ broker config (optional)
 ├── mcp-config.json            # MCP config (optional)
 ├── mcp-tools/                 # MCP tools directory (optional)
 ├── .env.example               # Local environment variable example
@@ -33,7 +32,6 @@ TaskForce/
 - npm 10+
 - MySQL 8.0 (default `3306`)
 - Redis 7 (default `6379`)
-- RocketMQ NameServer (default `9876`)
 - Nacos (default `8848`, if service discovery is enabled)
 
 ## Configuration (Environment Variables)
