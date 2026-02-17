@@ -275,7 +275,7 @@ export const AgentWorkshopPage: React.FC = () => {
                       </div>
                       <div>
                         <h3 className="font-bold text-xl font-heading text-gray-900">{agent.name}</h3>
-                        <span className="text-xs px-2 py-0.5 rounded-full text-purple-700 bg-purple-100">
+                        <span className="text-xs px-2 py-0.5 rounded-full text-purple-700 bg-purple-100 dark:bg-neutral-800 dark:border dark:border-neutral-700 dark:text-neutral-200">
                           {agent.modelName || 'No model'}
                         </span>
                       </div>
@@ -530,7 +530,7 @@ export const AgentWorkshopPage: React.FC = () => {
                       return (
                         <span
                           key={toolId}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-purple-50 border border-purple-200 rounded-lg text-sm text-purple-700"
+                          className="flex items-center gap-1 px-3 py-1.5 bg-purple-50 dark:bg-neutral-800 border border-purple-200 dark:border-neutral-700 rounded-lg text-sm text-purple-700 dark:text-neutral-200"
                         >
                           <CheckCircle size={12} />
                           {tool?.name || toolId}
@@ -575,8 +575,8 @@ export const AgentWorkshopPage: React.FC = () => {
                               className={clsx(
                                 "flex items-start gap-3 p-2 rounded-lg cursor-pointer transition-colors duration-200",
                                 editingAgent.selectedMcpTools?.includes(tool.id)
-                                  ? "bg-purple-50 border border-purple-200"
-                                  : "hover:bg-white border border-transparent"
+                                  ? "bg-purple-50 dark:bg-neutral-800 border border-purple-200 dark:border-neutral-700"
+                                  : "hover:bg-white dark:hover:bg-neutral-900 border border-transparent"
                               )}
                             >
                               <input

@@ -1,20 +1,36 @@
-import React from 'react';
-import { LayoutDashboard, UsersRound, Database, Bot, Server, Zap, PanelLeftClose, Settings, Sparkles, MessageCircle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { LayoutDashboard, UsersRound, Database, Bot, Server, Zap, PanelLeftClose, Settings, Sparkles, MessageCircle, Moon, Sun } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from '../../../shared/components/LanguageSwitcher';
+import type { ThemeMode } from '../../../app/Layout';
 
 interface SidebarProps {
   isOpen: boolean;
   toggleSidebar: () => void;
+  themeMode: ThemeMode;
+  toggleThemeMode: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, themeMode, toggleThemeMode }) => {
   const location = useLocation();
   const { t } = useTranslation();
+  const [showExpandedContent, setShowExpandedContent] = useState(isOpen);
 
   const isActive = (path: string) => location.pathname === path;
+  const SIDEBAR_TRANSITION_MS = 300;
+
+  useEffect(() => {
+    if (!isOpen) {
+      setShowExpandedContent(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setShowExpandedContent(true);
+    }, SIDEBAR_TRANSITION_MS - 30);
+    return () => window.clearTimeout(timer);
+  }, [isOpen]);
 
   const navItems = [
     {
@@ -80,7 +96,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
 
       {/* Sidebar Container */}
       <div className={clsx(
-        "fixed md:static inset-y-0 left-0 z-30 bg-white text-gray-900 flex flex-col transition-all duration-300 ease-in-out border-r border-gray-200",
+        "fixed md:static inset-y-0 left-0 z-30 bg-white text-gray-900 flex flex-col overflow-hidden transition-all duration-300 ease-in-out border-r border-gray-200",
         isOpen ? "w-[260px]" : "-translate-x-full md:translate-x-0 md:w-[70px]"
       )}>
         {/* Logo / Brand */}
@@ -91,10 +107,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
                 <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center shadow-lg group-hover:shadow-purple-500/25 transition-shadow shrink-0">
                   <Zap size={20} className="text-white" />
                 </div>
-                <div>
-                  <h1 className="font-bold text-lg text-gray-900">{t('common.appName')}</h1>
-                  <p className="text-xs text-gray-500">{t('common.appSubtitle')}</p>
-                </div>
+                {showExpandedContent && (
+                  <div className="min-w-0">
+                    <h1 className="font-bold text-lg text-gray-900 whitespace-nowrap">{t('common.appName')}</h1>
+                    <p className="text-xs text-gray-500 whitespace-nowrap">{t('common.appSubtitle')}</p>
+                  </div>
+                )}
               </Link>
               {/* 收起按钮 - 在侧边栏内部 */}
               <button
@@ -149,9 +167,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
                     isActive(item.path) ? item.color : "text-gray-500"
                   )}
                 />
-                {isOpen && (
+                {isOpen && showExpandedContent && (
                   <>
-                    <span>{item.label}</span>
+                    <span className="truncate whitespace-nowrap">{item.label}</span>
                     {isActive(item.path) && (
                       <div className="ml-auto w-2 h-2 rounded-full bg-purple-600" />
                     )}
@@ -163,9 +181,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
         </div>
 
         {/* Language Switcher */}
-        {isOpen && (
-          <div className="p-3 border-t border-gray-200">
-            <LanguageSwitcher />
+        {isOpen && showExpandedContent && (
+          <div className="p-3 border-t border-gray-200 dark:border-neutral-800">
+            <div className="flex items-center gap-2">
+              <LanguageSwitcher className="flex-1" />
+              <button
+                onClick={toggleThemeMode}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer whitespace-nowrap"
+                aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                {themeMode === 'dark' ? <Sun size={16} className="text-gray-500 dark:text-neutral-400" /> : <Moon size={16} className="text-gray-500 dark:text-neutral-400" />}
+                <span>{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
+              </button>
+            </div>
           </div>
         )}
       </div>

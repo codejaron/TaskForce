@@ -19,14 +19,16 @@ import {
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 import type { Session } from '../../../shared/api/types';
+import { useIsDarkMode } from '../../../shared/hooks/useIsDarkMode';
 
 export const SingleChatPage: React.FC = () => {
   const { sessions, currentSession, messages, isStreaming, fetchSessions, selectSession, sendMessage, stopStreaming, disconnectStream, deleteSession } = useSingleChatStore();
   const { agents, fetchAgents } = useAgentStore();
   const { t } = useTranslation();
+  const isDarkMode = useIsDarkMode();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newSessionName, setNewSessionName] = useState('');
@@ -322,18 +324,18 @@ export const SingleChatPage: React.FC = () => {
                                 defaultExpanded={false}
                               />
                             ) : msg.content && (
-                              <div className={clsx(
+                            <div className={clsx(
                                 "px-4 py-3 rounded-2xl text-sm",
                                 isHuman
-                                  ? "bg-slate-100 text-slate-900 rounded-tr-sm"
-                                  : "bg-white border border-slate-200 text-slate-900 rounded-tl-sm shadow-sm"
+                                  ? "bg-slate-100 dark:bg-neutral-800 text-slate-900 dark:text-slate-100 rounded-tr-sm"
+                                  : "bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-700 text-slate-900 dark:text-slate-100 rounded-tl-sm shadow-sm"
                               )}>
                                 <div className="break-words max-w-full overflow-hidden">
                                   <ReactMarkdown
                                     remarkPlugins={[remarkGfm]}
                                     components={{
                                       p: ({ children }) => <p className="mb-2 last:mb-0 break-words">{children}</p>,
-                                      pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-gray-200 rounded p-2 text-xs">{children}</pre>,
+                                      pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-gray-200 dark:bg-neutral-800 rounded p-2 text-xs">{children}</pre>,
                                       code(props: unknown) {
                                         const { inline, className, children, ...rest } = props as {
                                           inline?: boolean;
@@ -349,7 +351,7 @@ export const SingleChatPage: React.FC = () => {
                                             <div className="my-2 overflow-x-auto rounded">
                                               <SyntaxHighlighter
                                                 {...(rest as any)}
-                                                style={oneLight}
+                                                style={isDarkMode ? oneDark : oneLight}
                                                 language={match[1]}
                                                 PreTag="div"
                                                 customStyle={{ margin: 0, fontSize: '0.75rem' }}
@@ -364,7 +366,7 @@ export const SingleChatPage: React.FC = () => {
                                         if (!inline) {
                                           if (!text.includes('\n') && text.length < 100) {
                                             return (
-                                              <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
+                                              <code className="bg-gray-200 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-900 border border-gray-300 dark:border-neutral-700">
                                                 {children as any}
                                               </code>
                                             );
@@ -373,7 +375,7 @@ export const SingleChatPage: React.FC = () => {
                                             <div className="my-2 overflow-x-auto rounded">
                                               <SyntaxHighlighter
                                                 {...(rest as any)}
-                                                style={oneLight}
+                                                style={isDarkMode ? oneDark : oneLight}
                                                 language="text"
                                                 PreTag="div"
                                                 customStyle={{ margin: 0, fontSize: '0.75rem' }}
@@ -386,7 +388,7 @@ export const SingleChatPage: React.FC = () => {
                                         }
 
                                         return (
-                                          <code className="bg-gray-300 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-800">
+                                          <code className="bg-gray-200 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-xs font-mono break-all text-gray-900 border border-gray-300 dark:border-neutral-700">
                                             {children as any}
                                           </code>
                                         );
@@ -398,7 +400,7 @@ export const SingleChatPage: React.FC = () => {
                                       h2: ({ children }) => <h2 className="text-base font-bold mb-2 break-words">{children}</h2>,
                                       h3: ({ children }) => <h3 className="text-sm font-bold mb-1 break-words">{children}</h3>,
                                       blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-3 my-2 italic break-words">{children}</blockquote>,
-                                      a: ({ href, children }) => <a href={href} className="text-blue-600 hover:underline break-all" target="_blank" rel="noopener noreferrer">{children}</a>,
+                                      a: ({ href, children }) => <a href={href} className="text-blue-600 dark:text-neutral-200 hover:underline break-all" target="_blank" rel="noopener noreferrer">{children}</a>,
                                       table: ({ children }) => <div className="overflow-x-auto my-2"><table className="min-w-full border-collapse">{children}</table></div>,
                                       th: ({ children }) => <th className="border border-gray-300 px-2 py-1 bg-gray-100 text-left break-words">{children}</th>,
                                       td: ({ children }) => <td className="border border-gray-300 px-2 py-1 break-words">{children}</td>

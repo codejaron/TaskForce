@@ -1,8 +1,13 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Globe } from 'lucide-react';
+import { clsx } from 'clsx';
 
-export const LanguageSwitcher: React.FC = () => {
+interface LanguageSwitcherProps {
+  className?: string;
+}
+
+export const LanguageSwitcher: React.FC<LanguageSwitcherProps> = ({ className }) => {
   const { i18n } = useTranslation();
 
   const currentLang = i18n.language || 'en';
@@ -19,11 +24,14 @@ export const LanguageSwitcher: React.FC = () => {
   return (
     <button
       onClick={toggleLanguage}
-      className="flex items-center gap-2 px-3 py-2 hover:bg-white/10 rounded-lg transition-colors text-sm w-full"
+      className={clsx(
+        "flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors text-sm text-gray-700 dark:text-neutral-200",
+        className
+      )}
       title={isZh ? '切换到英文' : 'Switch to Chinese'}
     >
-      <Globe size={16} className="text-gray-400" />
-      <span className="text-gray-300">{displayText}</span>
+      <Globe size={16} className="text-gray-500 dark:text-neutral-400" />
+      <span>{displayText}</span>
     </button>
   );
 };
