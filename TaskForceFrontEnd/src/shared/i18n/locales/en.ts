@@ -362,6 +362,11 @@ export default {
     selectAgentLabel: 'Select Agent',
     selectAgentPlaceholder: 'Choose an agent...',
     chatType: 'Single Chat',
+    uploadFiles: 'Upload Files',
+    uploadFolder: 'Upload Folder',
+    uploadSuccess: 'Upload complete: {{count}} files',
+    uploadFailed: 'Upload failed',
+    uploading: 'Uploading...',
   },
   skills: {
     title: 'Skills Management',

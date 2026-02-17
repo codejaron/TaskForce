@@ -137,6 +137,15 @@ sandbox:
   # Docker 模式（默认本地 Docker）
   # 如果 sandbox server 跑在远端，改成远端地址
   #base-url: http://localhost:8000
+  sync:
+    storage-dir: ${SANDBOX_SYNC_STORAGE_DIR:${java.io.tmpdir}/taskforce-round-sync}
+    fail-round-id: ${SANDBOX_SYNC_FAIL_ROUND_ID:}
+    minio:
+      enabled: ${SANDBOX_SYNC_MINIO_ENABLED:false}
+      endpoint: ${MINIO_ENDPOINT:}
+      access-key: ${MINIO_ACCESS_KEY:}
+      secret-key: ${MINIO_SECRET_KEY:}
+      bucket: ${MINIO_BUCKET:taskforce-round-sync}
 
 # ========== 单聊配置 ==========
 chat:

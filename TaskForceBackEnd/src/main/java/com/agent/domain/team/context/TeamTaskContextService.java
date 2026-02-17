@@ -2,16 +2,13 @@ package com.agent.domain.team.context;
 
 import com.agent.domain.taskboard.model.Task;
 import com.agent.domain.taskboard.service.TaskBoardService;
-import com.agent.infrastructure.mcp.RemoteMcpClient;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
+import com.agent.infrastructure.sandbox.SessionSandboxManager;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Team 模式任务上下文服务。
@@ -22,14 +19,19 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class TeamTaskContextService {
 
     private static final String TASKFORCE_MD = "TASKFORCE.md";
 
     private final TaskBoardService taskBoardService;
-    private final RemoteMcpClient remoteMcpClient;
-    private final ObjectMapper objectMapper;
+    private final SessionSandboxManager sessionSandboxManager;
+
+    public TeamTaskContextService(
+            TaskBoardService taskBoardService,
+            @Autowired(required = false) SessionSandboxManager sessionSandboxManager) {
+        this.taskBoardService = taskBoardService;
+        this.sessionSandboxManager = sessionSandboxManager;
+    }
 
     public String buildTaskInstruction(String sessionId, Task currentTask) {
         StringBuilder instruction = new StringBuilder();
@@ -51,7 +53,7 @@ public class TeamTaskContextService {
                 .append(safe(currentTask.getSubject())).append("\n\n");
         instruction.append(safe(currentTask.getDescription())).append("\n\n");
         instruction.append("你需要在项目目录内自行获取代码上下文。")
-                .append("优先使用 read / grep / glob / bash。\n");
+                .append("优先使用 fs_read_file / fs_search_files / run_shell_command。\n");
         instruction.append("完成后必须调用 complete_task，summary 填一句话，作为 completionNote。\n");
 
         return instruction.toString();
@@ -86,47 +88,21 @@ public class TeamTaskContextService {
     }
 
     private String readTaskforceMarkdown(String sessionId) {
+        if (sessionSandboxManager == null) {
+            log.info("[TeamTaskContext] SessionSandboxManager unavailable, skip TASKFORCE.md read");
+            return null;
+        }
         try {
-            RemoteMcpClient.ToolCallResultDTO result = remoteMcpClient.callTool(
-                    "native::read",
-                    Map.of("filePath", TASKFORCE_MD, "offset", 1, "limit", 400),
-                    sessionId,
-                    null
-            );
-
-            if (result == null) {
+            String content = sessionSandboxManager.readTextFile(sessionId, TASKFORCE_MD, 1, 400);
+            if (content == null || content.isBlank()) {
+                log.info("[TeamTaskContext] TASKFORCE.md unavailable for session {}", sessionId);
                 return null;
             }
-            if (Boolean.TRUE.equals(result.getIsError())) {
-                String text = result.getTextContent();
-                log.info("[TeamTaskContext] TASKFORCE.md unavailable for session {}: {}", sessionId, text);
-                return null;
-            }
-
-            return extractReadContent(result.getTextContent());
+            return content;
         } catch (Exception e) {
             log.info("[TeamTaskContext] Failed to read TASKFORCE.md for session {}: {}", sessionId, e.getMessage());
             return null;
         }
-    }
-
-    private String extractReadContent(String toolText) {
-        if (toolText == null || toolText.isBlank()) {
-            return null;
-        }
-        try {
-            JsonNode root = objectMapper.readTree(toolText);
-            if (!root.path("success").asBoolean(false)) {
-                return null;
-            }
-            JsonNode content = root.get("content");
-            if (content != null && content.isTextual()) {
-                return content.asText();
-            }
-        } catch (Exception ignore) {
-            // Non-JSON fallback.
-        }
-        return toolText;
     }
 
     private String safe(String text) {

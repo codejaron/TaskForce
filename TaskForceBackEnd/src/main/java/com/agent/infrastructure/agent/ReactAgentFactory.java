@@ -13,6 +13,7 @@ import com.agent.infrastructure.mcp.RemoteMcpClient;
 import com.agent.infrastructure.memory.DbChatMemory;
 import com.agent.infrastructure.persistence.entity.Agent;
 import com.agent.infrastructure.persistence.mapper.AgentMapper;
+import com.agent.infrastructure.sandbox.SessionSandboxManager;
 import com.agent.service.AgentToolService;
 import com.agent.service.SessionService;
 import com.agent.service.ToolCallService;
@@ -30,11 +31,14 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -60,6 +64,9 @@ public class ReactAgentFactory {
     private final TeamLeadToolProvider teamLeadToolProvider;
     private final WorkerToolProvider workerToolProvider;
     private final LeadSchedulingDecisionService leadSchedulingDecisionService;
+    private final List<ToolCallback> sandboxTools;
+    private final SessionSandboxManager sessionSandboxManager;
+    private final Set<String> sandboxToolNames;
     private static final double SUMMARY_TRIGGER_RATIO = 0.70d;
     private static final int DEFAULT_CONTEXT_WINDOW = 32000;
     private static final int MIN_SUMMARY_TRIGGER_TOKENS = 2000;
@@ -80,6 +87,11 @@ public class ReactAgentFactory {
             @Lazy WorkerToolProvider workerToolProvider,
             @Lazy LeadSchedulingDecisionService leadSchedulingDecisionService,
             @org.springframework.beans.factory.annotation.Autowired(required = false)
+            @Qualifier("sandboxTools")
+            List<ToolCallback> sandboxTools,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            SessionSandboxManager sessionSandboxManager,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
             com.alibaba.cloud.ai.graph.agent.hook.skills.SkillsAgentHook skillsAgentHook) {
         this.agentMapper = agentMapper;
         this.chatModelFactory = chatModelFactory;
@@ -94,6 +106,19 @@ public class ReactAgentFactory {
         this.teamLeadToolProvider = teamLeadToolProvider;
         this.workerToolProvider = workerToolProvider;
         this.leadSchedulingDecisionService = leadSchedulingDecisionService;
+        this.sandboxTools = sandboxTools == null ? List.of() : sandboxTools;
+        this.sessionSandboxManager = sessionSandboxManager;
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (ToolCallback callback : this.sandboxTools) {
+            if (callback == null || callback.getToolDefinition() == null) {
+                continue;
+            }
+            String name = callback.getToolDefinition().name();
+            if (name != null && !name.isBlank()) {
+                names.add(name);
+            }
+        }
+        this.sandboxToolNames = Set.copyOf(names);
     }
 
     /**
@@ -175,7 +200,16 @@ public class ReactAgentFactory {
         // 6. 创建 Interceptor（统一处理工具调用事件发布和持久化）
         AtomicInteger sequenceCounter = new AtomicInteger(0);
         EventPublishingToolInterceptor toolInterceptor = new EventPublishingToolInterceptor(
-                sessionId, stepId, stepIndex, agentId, eventBus, toolCallService, sequenceCounter, instanceId
+                sessionId,
+                stepId,
+                stepIndex,
+                agentId,
+                eventBus,
+                toolCallService,
+                sequenceCounter,
+                instanceId,
+                sessionSandboxManager,
+                sandboxToolNames
         );
 
         // 7. 构建 ReactAgent
@@ -209,22 +243,6 @@ public class ReactAgentFactory {
         List<String> enabledToolIds = new ArrayList<>(agentToolService.getEnabledToolIds(agentId));
         log.info("  Agent {} enabled tool IDs from DB: {}", agentName, enabledToolIds);
 
-        // 自动添加 native 工具（所有 Agent 默认拥有）
-        try {
-            var allAvailableTools = remoteMcpClient.listTools();
-            List<String> nativeToolIds = allAvailableTools.stream()
-                    .filter(tool -> tool.getId() != null && tool.getId().startsWith("native::"))
-                    .map(tool -> tool.getId())
-                    .toList();
-
-            if (!nativeToolIds.isEmpty()) {
-                enabledToolIds.addAll(nativeToolIds);
-                log.info("  Auto-added {} native tools to agent {}", nativeToolIds.size(), agentName);
-            }
-        } catch (Exception e) {
-            log.warn("  Failed to fetch native tools: {}", e.getMessage());
-        }
-
         // 从 MCP Server 获取工具回调（不再包装）
         if (!enabledToolIds.isEmpty()) {
             ToolCallback[] remoteTools = remoteMcpClient.getToolCallbacks(enabledToolIds);
@@ -234,7 +252,7 @@ public class ReactAgentFactory {
                 for (ToolCallback callback : remoteTools) {
                     String toolName = callback.getToolDefinition().name();
                     log.debug("  Loading tool: {}", toolName);
-                    allTools.add(callback);
+                    appendToolIfAbsent(allTools, callback);
                 }
                 log.info("  Attached {} MCP tools", remoteTools.length);
             } else {
@@ -242,7 +260,28 @@ public class ReactAgentFactory {
             }
         }
 
+        if (!sandboxTools.isEmpty()) {
+            for (ToolCallback callback : sandboxTools) {
+                appendToolIfAbsent(allTools, callback);
+            }
+            log.info("  Attached {} sandbox tools", sandboxTools.size());
+        }
+
         return allTools;
+    }
+
+    private void appendToolIfAbsent(List<ToolCallback> allTools, ToolCallback candidate) {
+        if (candidate == null || candidate.getToolDefinition() == null) {
+            return;
+        }
+        String name = candidate.getToolDefinition().name();
+        boolean exists = allTools.stream()
+                .anyMatch(existing -> existing != null
+                        && existing.getToolDefinition() != null
+                        && name.equals(existing.getToolDefinition().name()));
+        if (!exists) {
+            allTools.add(candidate);
+        }
     }
 
     /**
@@ -291,7 +330,16 @@ public class ReactAgentFactory {
         // 5. 创建 Interceptor（统一处理工具调用事件发布和持久化）
         AtomicInteger sequenceCounter = new AtomicInteger(0);
         EventPublishingToolInterceptor toolInterceptor = new EventPublishingToolInterceptor(
-                sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter, null
+                sessionId,
+                null,
+                null,
+                agentId,
+                eventBus,
+                toolCallService,
+                sequenceCounter,
+                null,
+                sessionSandboxManager,
+                sandboxToolNames
         );
 
         // 6. 创建 Hooks
@@ -476,7 +524,16 @@ public class ReactAgentFactory {
         ContextEnrichingToolInterceptor contextInterceptor = new ContextEnrichingToolInterceptor(sessionId, null);
         AtomicInteger sequenceCounter = new AtomicInteger(0);
         EventPublishingToolInterceptor toolInterceptor = new EventPublishingToolInterceptor(
-                sessionId, null, null, agentId, eventBus, toolCallService, sequenceCounter, null
+                sessionId,
+                null,
+                null,
+                agentId,
+                eventBus,
+                toolCallService,
+                sequenceCounter,
+                null,
+                sessionSandboxManager,
+                sandboxToolNames
         );
 
         // 7. 构建 ReactAgent

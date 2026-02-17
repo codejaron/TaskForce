@@ -5,11 +5,14 @@ import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { apiUrl } from '../../../shared/api/base';
 
 interface SingleChatMessage {
+  id: string;
   agentId: string;
   agentName: string;
   content: string;
   timestamp: string;
-  type: 'text';
+  type: 'text' | 'tool_call';
+  streamState?: 'streaming' | 'completed';
+  toolCall?: ToolCallDTO;
 }
 
 interface SingleChatState {
@@ -30,6 +33,147 @@ interface SingleChatState {
 
 // 存储当前的 AbortController，用于关闭 SSE 连接
 let currentAbortController: AbortController | null = null;
+
+function toTimeValue(timestamp?: string): number {
+  if (!timestamp) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const time = new Date(timestamp).getTime();
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
+}
+
+function resolveToolTimestamp(toolCall: ToolCallDTO): string {
+  return toolCall.startedAt
+    || toolCall.completedAt
+    || new Date().toISOString();
+}
+
+function toToolMessage(toolCall: ToolCallDTO, existing?: SingleChatMessage): SingleChatMessage {
+  return {
+    id: `tool_${toolCall.toolCallId}`,
+    agentId: 'assistant',
+    agentName: 'Agent',
+    content: '',
+    timestamp: existing?.timestamp || resolveToolTimestamp(toolCall),
+    type: 'tool_call',
+    toolCall
+  };
+}
+
+function markStreamingAssistantCompleted(messages: SingleChatMessage[]): SingleChatMessage[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.type === 'text' && msg.agentId === 'assistant' && msg.streamState === 'streaming') {
+      const next = [...messages];
+      next[i] = { ...msg, streamState: 'completed' };
+      return next;
+    }
+  }
+  return messages;
+}
+
+function appendAssistantDelta(messages: SingleChatMessage[], delta: string): SingleChatMessage[] {
+  if (!delta) {
+    return messages;
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.type === 'text' && msg.agentId === 'assistant' && msg.streamState === 'streaming') {
+      const next = [...messages];
+      next[i] = {
+        ...msg,
+        content: msg.content + delta
+      };
+      return next;
+    }
+  }
+  return [
+    ...messages,
+    {
+      id: `assistant_${Date.now()}`,
+      agentId: 'assistant',
+      agentName: 'Agent',
+      content: delta,
+      timestamp: new Date().toISOString(),
+      type: 'text',
+      streamState: 'streaming'
+    }
+  ];
+}
+
+function upsertToolMessage(messages: SingleChatMessage[], toolCall: ToolCallDTO): SingleChatMessage[] {
+  const index = messages.findIndex(
+    msg => msg.type === 'tool_call' && msg.toolCall?.toolCallId === toolCall.toolCallId
+  );
+  if (index < 0) {
+    return [...messages, toToolMessage(toolCall)];
+  }
+  const next = [...messages];
+  next[index] = toToolMessage(toolCall, next[index]);
+  return next;
+}
+
+function parseToolStatus(
+  eventType: string,
+  rawStatus: unknown,
+  previousStatus?: ToolCallDTO['status']
+): ToolCallDTO['status'] {
+  if (rawStatus === 'RUNNING' || rawStatus === 'SUCCESS' || rawStatus === 'FAILED') {
+    return rawStatus;
+  }
+  if (eventType === 'tool_call_start') {
+    return 'RUNNING';
+  }
+  if (eventType === 'tool_call_failed') {
+    return 'FAILED';
+  }
+  if (eventType === 'tool_call_complete') {
+    return previousStatus === 'FAILED' ? 'FAILED' : 'SUCCESS';
+  }
+  return previousStatus || 'RUNNING';
+}
+
+function mergeToolCallRecord(
+  eventType: string,
+  incoming: unknown,
+  previous?: ToolCallDTO
+): ToolCallDTO | null {
+  if (!incoming || typeof incoming !== 'object') {
+    return null;
+  }
+
+  const data = incoming as Partial<ToolCallDTO> & Record<string, unknown>;
+  const toolCallId = typeof data.toolCallId === 'string' && data.toolCallId.trim()
+    ? data.toolCallId
+    : previous?.toolCallId;
+
+  if (!toolCallId) {
+    return null;
+  }
+
+  const toolName = typeof data.toolName === 'string' && data.toolName.trim()
+    ? data.toolName
+    : (previous?.toolName || 'unknown');
+
+  return {
+    toolCallId,
+    toolName,
+    serverName: typeof data.serverName === 'string' ? data.serverName : previous?.serverName,
+    instanceId: typeof data.instanceId === 'string' ? data.instanceId : previous?.instanceId,
+    // toolArgs 在 complete 事件通常缺失，必须保留 start 事件的值
+    toolArgs: typeof data.toolArgs === 'string' ? data.toolArgs : (previous?.toolArgs || ''),
+    toolResult: typeof data.toolResult === 'string' ? data.toolResult : previous?.toolResult,
+    status: parseToolStatus(eventType, data.status, previous?.status),
+    errorMessage: typeof data.errorMessage === 'string' ? data.errorMessage : previous?.errorMessage,
+    durationMs: typeof data.durationMs === 'number' ? data.durationMs : previous?.durationMs,
+    stepId: typeof data.stepId === 'string' ? data.stepId : previous?.stepId,
+    sequence: typeof data.sequence === 'number'
+      ? data.sequence
+      : (typeof previous?.sequence === 'number' ? previous.sequence : 0),
+    startedAt: typeof data.startedAt === 'string' ? data.startedAt : previous?.startedAt,
+    completedAt: typeof data.completedAt === 'string' ? data.completedAt : previous?.completedAt
+  };
+}
 
 export const useSingleChatStore = create<SingleChatState>((set, get) => ({
   sessions: [],
@@ -60,6 +204,7 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
       const chatMessages: SingleChatMessage[] = dbMessages.map(msg => {
         const isUser = msg.role === 'user';
         return {
+          id: `msg_${msg.id}`,
           agentId: isUser ? 'human' : (msg.agentId?.toString() || 'assistant'),
           agentName: msg.agentName || (isUser ? 'User' : 'Agent'),
           content: msg.content,
@@ -70,8 +215,11 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
 
       // 加载工具调用记录
       const toolCallRecords = await api.toolCalls.getBySession(session.id);
+      const toolMessages: SingleChatMessage[] = toolCallRecords.map(tc => toToolMessage(tc));
+      const mergedTimeline = [...chatMessages, ...toolMessages]
+        .sort((a, b) => toTimeValue(a.timestamp) - toTimeValue(b.timestamp));
 
-      set({ messages: chatMessages, toolCalls: toolCallRecords });
+      set({ messages: mergedTimeline, toolCalls: toolCallRecords });
     } catch (error: unknown) {
       console.warn('Failed to fetch messages:', error);
       set({ messages: [], toolCalls: [] });
@@ -80,7 +228,7 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
 
   clearSession: () => {
     get().disconnectStream();
-    set({ currentSession: null, messages: [], isStreaming: false });
+    set({ currentSession: null, messages: [], toolCalls: [], isStreaming: false });
   },
 
   deleteSession: async (sessionId: string) => {
@@ -111,6 +259,7 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
     if (userMessage && userMessage.trim()) {
       set(state => ({
         messages: [...state.messages, {
+          id: `user_${Date.now()}`,
           agentId: 'human',
           agentName: 'Human',
           content: userMessage,
@@ -141,11 +290,13 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
             // 添加一条空的 assistant 消息用于接收流式输出
             set(state => ({
               messages: [...state.messages, {
+                id: `assistant_${Date.now()}`,
                 agentId: 'assistant',
                 agentName: 'Agent',
                 content: '',
                 timestamp: new Date().toISOString(),
-                type: 'text'
+                type: 'text',
+                streamState: 'streaming'
               }]
             }));
           } else {
@@ -160,43 +311,51 @@ export const useSingleChatStore = create<SingleChatState>((set, get) => ({
             const data = JSON.parse(ev.data);
 
             if (eventType === 'chat_delta') {
-              // 追加增量内容到最后一条消息
               const delta = data.delta || '';
               set(state => {
-                const messages = [...state.messages];
-                const lastMsg = messages[messages.length - 1];
-                if (lastMsg && lastMsg.agentId === 'assistant') {
-                  messages[messages.length - 1] = {
-                    ...lastMsg,
-                    content: lastMsg.content + delta
-                  };
-                }
-                return { messages };
+                return { messages: appendAssistantDelta(state.messages, delta) };
               });
             } else if (eventType === 'chat_complete') {
               console.log('[SingleChat] Chat completed');
-              set({ isStreaming: false });
+              set(state => ({
+                isStreaming: false,
+                messages: markStreamingAssistantCompleted(state.messages)
+              }));
               disconnectStream();
             } else if (eventType === 'chat_error') {
               console.error('[SingleChat] Error:', data.error);
-              set({ error: data.error, isStreaming: false });
+              set(state => ({
+                error: data.error,
+                isStreaming: false,
+                messages: markStreamingAssistantCompleted(state.messages)
+              }));
               disconnectStream();
             } else if (eventType === 'tool_call_start' || eventType === 'tool_call_complete' || eventType === 'tool_call_failed') {
-              // 工具调用事件：更新或添加工具调用记录
-              const toolCall = data as ToolCallDTO;
               set(state => {
                 const toolCalls = [...state.toolCalls];
-                const existingIndex = toolCalls.findIndex(tc => tc.toolCallId === toolCall.toolCallId);
+                const incoming = data as Partial<ToolCallDTO>;
+                const incomingId = typeof incoming.toolCallId === 'string' ? incoming.toolCallId : '';
+                const existingIndex = incomingId
+                  ? toolCalls.findIndex(tc => tc.toolCallId === incomingId)
+                  : -1;
 
-                if (existingIndex >= 0) {
-                  // 更新现有记录
-                  toolCalls[existingIndex] = toolCall;
-                } else {
-                  // 添加新记录
-                  toolCalls.push(toolCall);
+                const existingRecord = existingIndex >= 0 ? toolCalls[existingIndex] : undefined;
+                const mergedRecord = mergeToolCallRecord(eventType, data, existingRecord);
+                if (!mergedRecord) {
+                  return {};
                 }
 
-                return { toolCalls };
+                if (existingIndex >= 0) {
+                  // 合并更新，保留已有入参等字段
+                  toolCalls[existingIndex] = mergedRecord;
+                } else {
+                  toolCalls.push(mergedRecord);
+                }
+
+                return {
+                  toolCalls,
+                  messages: upsertToolMessage(state.messages, mergedRecord)
+                };
               });
             }
           } catch (e) {

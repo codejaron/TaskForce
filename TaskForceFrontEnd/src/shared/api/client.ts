@@ -71,6 +71,31 @@ export const api = {
       fetchJson<{success: boolean}>(`/sessions/${sessionId}/stop`, { method: 'POST' }),
     delete: (sessionId: string) =>
       fetchJson<void>(`/sessions/${sessionId}`, { method: 'DELETE' }),
+    uploadWorkspaceFiles: async (sessionId: string, files: File[], paths?: string[]) => {
+      const formData = new FormData();
+      files.forEach((file, index) => {
+        formData.append('files', file);
+        if (paths && index < paths.length && paths[index]) {
+          formData.append('paths', paths[index]);
+        }
+      });
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}/workspace/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) {
+        throw new Error(`API Error: ${res.statusText}`);
+      }
+      const json = await res.json();
+      if (json && typeof json === 'object' && 'code' in json && 'message' in json) {
+        const apiResponse = json as ApiResponse<{ uploadedCount: number; paths: string[] }>;
+        if (apiResponse.code !== 200) {
+          throw new Error(apiResponse.message || 'API request failed');
+        }
+        return apiResponse.data ?? { uploadedCount: 0, paths: [] };
+      }
+      return json as { uploadedCount: number; paths: string[] };
+    },
   },
   messages: {
     getBySession: (sessionId: string) => fetchJson<Message[]>(`/messages/session/${sessionId}`),

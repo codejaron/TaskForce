@@ -26,6 +26,7 @@ public class ToolCallService {
     @Transactional
     public ToolCall createToolCall(String sessionId, String stepId, Long agentId,
                                    String toolCallId, String toolName, String serverName, String instanceId,
+                                   String roundId,
                                    String toolArgs, int sequence) {
         ToolCall toolCall = ToolCall.builder()
                 .sessionId(sessionId)
@@ -35,8 +36,10 @@ public class ToolCallService {
                 .toolName(toolName)
                 .serverName(serverName)
                 .instanceId(instanceId)
+                .roundId(roundId)
                 .toolArgs(toolArgs)
                 .status("RUNNING")
+                .syncStatus("PENDING_SYNC")
                 .startedAt(LocalDateTime.now())
                 .sequence(sequence)
                 .build();
@@ -82,6 +85,13 @@ public class ToolCallService {
     }
 
     /**
+     * 查询指定 round 的工具调用。
+     */
+    public List<ToolCall> getByRoundId(String sessionId, String roundId) {
+        return toolCallMapper.selectBySessionAndRoundId(sessionId, roundId);
+    }
+
+    /**
      * 更新工具结果文件路径
      */
     @Transactional
@@ -91,6 +101,19 @@ public class ToolCallService {
             log.debug("Updated tool call file path: {} -> {}", toolCallId, filePath);
         } else {
             log.warn("Failed to update tool call file path: {} - record not found", toolCallId);
+        }
+    }
+
+    /**
+     * 更新 round 级同步状态。
+     */
+    @Transactional
+    public void updateRoundSyncStatus(String sessionId, String roundId,
+                                      String syncStatus, String syncError, LocalDateTime syncedAt) {
+        int updated = toolCallMapper.updateRoundSyncStatus(sessionId, roundId, syncStatus, syncError, syncedAt);
+        if (updated <= 0) {
+            log.debug("No tool calls updated for round sync status: sessionId={}, roundId={}, status={}",
+                    sessionId, roundId, syncStatus);
         }
     }
 }

@@ -3,7 +3,7 @@ import { useSingleChatStore } from '../../../features/singleChat/model/store';
 import { useAgentStore } from '../../../features/agents/model/store';
 import { api } from '../../../shared/api';
 import { useTranslation } from 'react-i18next';
-import { ToolCallList } from '../../../components/ToolCallCard';
+import { ToolCallCard } from '../../../components/ToolCallCard';
 import {
   Plus,
   MessageCircle,
@@ -24,7 +24,7 @@ import remarkGfm from 'remark-gfm';
 import type { Session } from '../../../shared/api/types';
 
 export const SingleChatPage: React.FC = () => {
-  const { sessions, currentSession, messages, toolCalls, isStreaming, fetchSessions, selectSession, sendMessage, disconnectStream, deleteSession } = useSingleChatStore();
+  const { sessions, currentSession, messages, isStreaming, fetchSessions, selectSession, sendMessage, disconnectStream, deleteSession } = useSingleChatStore();
   const { agents, fetchAgents } = useAgentStore();
   const { t } = useTranslation();
 
@@ -35,9 +35,14 @@ export const SingleChatPage: React.FC = () => {
 
   const [inputMessage, setInputMessage] = useState('');
   const [showSidebar, setShowSidebar] = useState(true);
+  const [showUploadMenu, setShowUploadMenu] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const uploadMenuRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchSessions();
@@ -51,6 +56,22 @@ export const SingleChatPage: React.FC = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (!showUploadMenu) {
+      return;
+    }
+    const onClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (uploadMenuRef.current && target && !uploadMenuRef.current.contains(target)) {
+        setShowUploadMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside);
+    };
+  }, [showUploadMenu]);
 
   const handleCreate = async () => {
     if (!newSessionName || !selectedAgentId) {
@@ -103,6 +124,49 @@ export const SingleChatPage: React.FC = () => {
         alert('Failed to delete session');
       }
     }
+  };
+
+  const getRelativePath = (file: File) => {
+    const fileWithRelative = file as File & { webkitRelativePath?: string };
+    if (fileWithRelative.webkitRelativePath && fileWithRelative.webkitRelativePath.trim()) {
+      return fileWithRelative.webkitRelativePath;
+    }
+    return file.name;
+  };
+
+  const uploadSelectedFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0 || !currentSession) {
+      return;
+    }
+    const files = Array.from(fileList);
+    const paths = files.map(getRelativePath);
+    setIsUploading(true);
+    setShowUploadMenu(false);
+    try {
+      const result = await api.sessions.uploadWorkspaceFiles(currentSession.id, files, paths);
+      alert(t('singleChat.uploadSuccess', { count: result.uploadedCount ?? files.length }));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      alert(`${t('singleChat.uploadFailed')}: ${message}`);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      if (folderInputRef.current) {
+        folderInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleChooseFiles = () => {
+    setShowUploadMenu(false);
+    fileInputRef.current?.click();
+  };
+
+  const handleChooseFolder = () => {
+    setShowUploadMenu(false);
+    folderInputRef.current?.click();
   };
 
   return (
@@ -225,9 +289,10 @@ export const SingleChatPage: React.FC = () => {
                 <>
                   {messages.map((msg, idx) => {
                     const isHuman = msg.agentId === 'human' || msg.agentName === 'Human';
+                    const isToolCall = msg.type === 'tool_call' && !!msg.toolCall;
 
                     return (
-                      <div key={idx} className="w-full">
+                      <div key={msg.id || idx} className="w-full">
                         <div className={clsx("flex gap-3 w-full", isHuman && "flex-row-reverse")}>
                           <div className={clsx(
                             "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
@@ -241,7 +306,7 @@ export const SingleChatPage: React.FC = () => {
                               <Bot size={20} className="text-white" />
                             )}
                           </div>
-                          <div className="max-w-[70%]">
+                          <div className={clsx("max-w-[70%]", isToolCall && "max-w-[88%]")}>
                             <div className="text-xs text-gray-500 mb-1 flex items-center gap-2">
                               {msg.agentName || (isHuman ? 'You' : 'Agent')}
                               {msg.timestamp && (
@@ -251,7 +316,12 @@ export const SingleChatPage: React.FC = () => {
                               )}
                             </div>
 
-                            {msg.content && (
+                            {isToolCall && msg.toolCall ? (
+                              <ToolCallCard
+                                toolCall={msg.toolCall}
+                                defaultExpanded={false}
+                              />
+                            ) : msg.content && (
                               <div className={clsx(
                                 "px-4 py-3 rounded-2xl text-sm",
                                 isHuman
@@ -339,11 +409,6 @@ export const SingleChatPage: React.FC = () => {
                                 </div>
                               </div>
                             )}
-
-                            {/* Tool Calls - 在最后一条 assistant 消息下方显示所有工具调用 */}
-                            {!isHuman && idx === messages.length - 1 && toolCalls.length > 0 && (
-                              <ToolCallList toolCalls={toolCalls} />
-                            )}
                           </div>
                         </div>
                       </div>
@@ -363,6 +428,49 @@ export const SingleChatPage: React.FC = () => {
             {/* Input Area */}
             <div className="p-4 border-t border-gray-200 bg-white">
               <div className="flex gap-3">
+                <div className="relative" ref={uploadMenuRef}>
+                  <button
+                    onClick={() => setShowUploadMenu(v => !v)}
+                    disabled={!currentSession || isStreaming || isUploading}
+                    className="h-full min-h-[50px] px-3 bg-white border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm flex items-center justify-center"
+                    title={t('singleChat.uploadFiles')}
+                  >
+                    {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                  </button>
+                  {showUploadMenu && !isUploading && (
+                    <div className="absolute bottom-[56px] left-0 z-20 w-40 bg-white border border-gray-200 rounded-lg shadow-lg p-1">
+                      <button
+                        onClick={handleChooseFiles}
+                        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md cursor-pointer"
+                      >
+                        {t('singleChat.uploadFiles')}
+                      </button>
+                      <button
+                        onClick={handleChooseFolder}
+                        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md cursor-pointer"
+                      >
+                        {t('singleChat.uploadFolder')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={e => uploadSelectedFiles(e.target.files)}
+                />
+                <input
+                  ref={folderInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={e => uploadSelectedFiles(e.target.files)}
+                  {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+                />
+
                 <input
                   type="text"
                   value={inputMessage}
@@ -370,11 +478,11 @@ export const SingleChatPage: React.FC = () => {
                   onKeyDown={handleKeyDown}
                   placeholder={t('singleChat.sendMessagePlaceholder')}
                   className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none shadow-sm"
-                  disabled={isStreaming}
+                  disabled={isStreaming || isUploading}
                 />
                 <button
                   onClick={handleSend}
-                  disabled={!inputMessage.trim() || isStreaming}
+                  disabled={!inputMessage.trim() || isStreaming || isUploading}
                   className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer shadow-sm"
                 >
                   <Send size={20} />

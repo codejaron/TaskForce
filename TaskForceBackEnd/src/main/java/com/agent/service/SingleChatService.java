@@ -6,12 +6,14 @@ import com.agent.infrastructure.event.events.ChatCompleteEvent;
 import com.agent.infrastructure.event.events.ChatDeltaEvent;
 import com.agent.infrastructure.event.events.ChatErrorEvent;
 import com.agent.infrastructure.persistence.entity.SessionAgent;
+import com.agent.infrastructure.sandbox.SessionSandboxManager;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
@@ -21,6 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.UUID;
 
 /**
  * 单聊服务
@@ -36,6 +40,7 @@ public class SingleChatService {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final TokenUsageService tokenUsageService;
+    private final SessionSandboxManager sessionSandboxManager;
 
     // 缓存 ReactAgent + agentId（使用 ConcurrentHashMap）
     private final Map<String, ChatAgentContext> agentCache = new ConcurrentHashMap<>();
@@ -48,13 +53,15 @@ public class SingleChatService {
             SessionService sessionService,
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
-            TokenUsageService tokenUsageService) {
+            TokenUsageService tokenUsageService,
+            @Autowired(required = false) SessionSandboxManager sessionSandboxManager) {
         this.reactAgentFactory = reactAgentFactory;
         this.eventBus = eventBus;
         this.sessionService = sessionService;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.tokenUsageService = tokenUsageService;
+        this.sessionSandboxManager = sessionSandboxManager;
     }
 
     /**
@@ -62,6 +69,8 @@ public class SingleChatService {
      */
     public Flux<ServerSentEvent<String>> chat(String sessionId, String userMessage) {
         String lockKey = "chat:lock:" + sessionId;
+        String roundId = UUID.randomUUID().toString();
+        AtomicBoolean flushed = new AtomicBoolean(false);
 
         // 1. Redis SETNX 加锁（防止并发请求）
         Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, "1", 30, TimeUnit.SECONDS);
@@ -71,6 +80,10 @@ public class SingleChatService {
 
         return Flux.defer(() -> {
             try {
+                if (sessionSandboxManager != null) {
+                    sessionSandboxManager.beginRound(sessionId, roundId);
+                }
+
                 // 2. 获取或创建 ReactAgent
                 ChatAgentContext agentContext = getOrCreateAgent(sessionId);
                 ReactAgent agent = agentContext.agent();
@@ -83,6 +96,8 @@ public class SingleChatService {
                 // 3. 配置 RunnableConfig
                 RunnableConfig config = RunnableConfig.builder()
                         .threadId(sessionId)
+                        .addMetadata("sessionId", sessionId)
+                        .addMetadata("roundId", roundId)
                         .build();
 
                 // 4. 调用 ReactAgent.stream()
@@ -129,22 +144,37 @@ public class SingleChatService {
                             return Flux.empty();
                         })
                         .concatWith(Flux.defer(() -> {
-                            // 完成时发布事件（消息已由 DbChatMemory 自动存储）
+                            // 先完成文件 flush，成功后再发布 complete 事件
+                            flushRoundOnce(sessionId, roundId, flushed);
                             publishCompleteEvent(sessionId);
 
                             return Flux.just(ServerSentEvent.<String>builder()
                                     .event("chat_complete")
-                                    .data(toJson(Map.of("status", "completed")))
+                                    .data(toJson(Map.of("status", "completed", "syncStatus", SessionSandboxManager.SYNCED)))
                                     .build());
                         }));
 
                 // 7. 合并聊天流和工具事件流
                 return Flux.merge(chatFlux, toolEventFlux)
-                        .doOnError(e -> {
+                        .onErrorResume(e -> {
                             log.error("[SingleChat] Error: sessionId={}", sessionId, e);
                             publishErrorEvent(sessionId, e.getMessage());
+                            return Flux.just(ServerSentEvent.<String>builder()
+                                    .event("chat_error")
+                                    .data(toJson(Map.of(
+                                            "status", "error",
+                                            "error", e.getMessage(),
+                                            "syncStatus", SessionSandboxManager.SYNC_FAILED
+                                    )))
+                                    .build());
                         })
                         .doFinally(signalType -> {
+                            try {
+                                flushRoundOnce(sessionId, roundId, flushed);
+                            } catch (Exception e) {
+                                log.warn("[SingleChat] Final flush failed: sessionId={}, roundId={}, err={}",
+                                        sessionId, roundId, e.getMessage());
+                            }
                             // 释放锁（使用 DEL，不会抛异常）
                             try {
                                 redisTemplate.delete(lockKey);
@@ -157,6 +187,7 @@ public class SingleChatService {
             } catch (Exception e) {
                 // 异常时也要释放锁
                 try {
+                    flushRoundOnce(sessionId, roundId, flushed);
                     redisTemplate.delete(lockKey);
                 } catch (Exception ex) {
                     log.warn("[SingleChat] Failed to release lock on error", ex);
@@ -265,6 +296,19 @@ public class SingleChatService {
         agentCache.clear();
         cacheTimestamps.clear();
         log.info("[SingleChat] All cache cleared");
+    }
+
+    private void flushRoundOnce(String sessionId, String roundId, AtomicBoolean flushed) {
+        if (flushed != null && !flushed.compareAndSet(false, true)) {
+            return;
+        }
+        if (sessionSandboxManager == null) {
+            return;
+        }
+        boolean synced = sessionSandboxManager.flushRound(sessionId, roundId);
+        if (!synced) {
+            throw new IllegalStateException("Round flush failed: sessionId=" + sessionId + ", roundId=" + roundId);
+        }
     }
 
     private record ChatAgentContext(ReactAgent agent, Long agentId) {}

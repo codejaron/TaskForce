@@ -42,6 +42,9 @@ public class ToolCall {
     @TableField("instance_id")
     private String instanceId;
 
+    @TableField("round_id")
+    private String roundId;
+
     @TableField("tool_args")
     private String toolArgs;
 
@@ -68,6 +71,15 @@ public class ToolCall {
 
     @TableField("file_path")
     private String filePath;  // 工具结果文件路径
+
+    @TableField("sync_status")
+    private String syncStatus; // SYNCED/PENDING_SYNC/SYNC_FAILED/SYNC_LOST_RISK
+
+    @TableField("sync_error")
+    private String syncError;
+
+    @TableField("synced_at")
+    private LocalDateTime syncedAt;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
