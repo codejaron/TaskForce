@@ -123,6 +123,7 @@ public class TeamHistoryQueryService {
                 .stepId(toolCall.getStepId())
                 .sequence(toolCall.getSequence())
                 .instanceId(toolCall.getInstanceId())
+                .roundId(toolCall.getRoundId())
                 .toolName(toolCall.getToolName())
                 .serverName(toolCall.getServerName())
                 .toolArgs(toolCall.getToolArgs())
@@ -132,6 +133,9 @@ public class TeamHistoryQueryService {
                 .durationMs(toolCall.getDurationMs())
                 .startedAt(formatDateTime(toolCall.getStartedAt()))
                 .completedAt(formatDateTime(toolCall.getCompletedAt()))
+                .syncStatus(toolCall.getSyncStatus())
+                .syncError(toolCall.getSyncError())
+                .syncedAt(formatDateTime(toolCall.getSyncedAt()))
                 .build();
     }
 

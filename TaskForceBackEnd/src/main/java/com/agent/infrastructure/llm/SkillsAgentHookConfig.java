@@ -6,6 +6,7 @@ import com.alibaba.cloud.ai.graph.agent.hook.skills.SkillsAgentHook;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,7 +24,7 @@ public class SkillsAgentHookConfig {
     @Bean
     public SkillsAgentHook skillsAgentHook(
             DbFilteredSkillRegistry skillRegistry,
-            @Autowired(required = false) List<ToolCallback> sandboxTools) {
+            @Autowired(required = false) @Qualifier("sandboxTools") List<ToolCallback> sandboxTools) {
 
         log.info("Creating SkillsAgentHook with {} skills", skillRegistry.size());
 

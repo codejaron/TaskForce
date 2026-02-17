@@ -24,6 +24,11 @@ public interface ToolCallMapper extends BaseMapper<ToolCall> {
     @Select("SELECT * FROM tool_calls WHERE tool_call_id = #{toolCallId}")
     ToolCall selectByToolCallId(@Param("toolCallId") String toolCallId);
 
+    @Select("SELECT * FROM tool_calls WHERE session_id = #{sessionId} AND round_id = #{roundId} " +
+            "ORDER BY created_at ASC, sequence ASC")
+    List<ToolCall> selectBySessionAndRoundId(@Param("sessionId") String sessionId,
+                                             @Param("roundId") String roundId);
+
     @Update("UPDATE tool_calls SET tool_result = #{toolResult}, status = #{status}, " +
             "error_message = #{errorMessage}, completed_at = #{completedAt}, duration_ms = #{durationMs} " +
             "WHERE tool_call_id = #{toolCallId}")
@@ -36,4 +41,12 @@ public interface ToolCallMapper extends BaseMapper<ToolCall> {
 
     @Update("UPDATE tool_calls SET file_path = #{filePath} WHERE tool_call_id = #{toolCallId}")
     int updateFilePath(@Param("toolCallId") String toolCallId, @Param("filePath") String filePath);
+
+    @Update("UPDATE tool_calls SET sync_status = #{syncStatus}, sync_error = #{syncError}, synced_at = #{syncedAt} " +
+            "WHERE session_id = #{sessionId} AND round_id = #{roundId}")
+    int updateRoundSyncStatus(@Param("sessionId") String sessionId,
+                              @Param("roundId") String roundId,
+                              @Param("syncStatus") String syncStatus,
+                              @Param("syncError") String syncError,
+                              @Param("syncedAt") java.time.LocalDateTime syncedAt);
 }

@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     tool_name VARCHAR(200) NOT NULL COMMENT '工具名称',
     server_name VARCHAR(200) COMMENT 'MCP Server 名称（便于前端展示和调试）',
     instance_id VARCHAR(128) NULL COMMENT '触发调用的实例ID（Worker/Lead）',
+    round_id VARCHAR(128) NULL COMMENT '轮次ID（Worker轮次/单聊一轮）',
     tool_args JSON COMMENT '工具参数',
     tool_result LONGTEXT COMMENT '工具执行结果',
     status VARCHAR(20) DEFAULT 'RUNNING' COMMENT '状态: RUNNING/SUCCESS/FAILED',
@@ -179,12 +180,18 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     completed_at TIMESTAMP NULL COMMENT '完成时间',
     duration_ms BIGINT COMMENT '执行耗时（毫秒）',
     sequence INT DEFAULT 0 COMMENT '同一步骤中的调用顺序',
+    file_path VARCHAR(500) COMMENT '工具结果文件路径（相对于会话工作空间）',
+    sync_status VARCHAR(32) DEFAULT 'PENDING_SYNC' COMMENT '同步状态: SYNCED/PENDING_SYNC/SYNC_FAILED/SYNC_LOST_RISK',
+    sync_error TEXT COMMENT '同步错误',
+    synced_at TIMESTAMP NULL COMMENT '同步完成时间',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_session_id (session_id),
     INDEX idx_tool_calls_session_started (session_id, started_at),
     INDEX idx_tool_calls_session_instance_started (session_id, instance_id, started_at),
+    INDEX idx_tool_calls_session_round (session_id, round_id),
     INDEX idx_step_id (step_id),
     INDEX idx_tool_call_id (tool_call_id),
+    INDEX idx_file_path (file_path),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具调用记录表';
 

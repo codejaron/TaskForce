@@ -18,6 +18,7 @@ public class TeamHistoryToolCallDTO {
     private String stepId;
     private Integer sequence;
     private String instanceId;
+    private String roundId;
     private String toolName;
     private String serverName;
     private String toolArgs;
@@ -27,4 +28,7 @@ public class TeamHistoryToolCallDTO {
     private Long durationMs;
     private String startedAt;
     private String completedAt;
+    private String syncStatus;
+    private String syncError;
+    private String syncedAt;
 }

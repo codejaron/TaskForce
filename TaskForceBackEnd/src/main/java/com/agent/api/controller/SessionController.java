@@ -3,6 +3,7 @@ package com.agent.api.controller;
 import com.agent.api.response.ApiResponse;
 import com.agent.api.request.SessionCreateRequest;
 import com.agent.infrastructure.persistence.entity.SessionAgent;
+import com.agent.infrastructure.sandbox.SessionSandboxManager;
 import com.agent.service.SessionService;
 import com.agent.service.SessionStopService;
 import com.agent.infrastructure.persistence.entity.Session;
@@ -10,11 +11,17 @@ import jakarta.validation.Valid;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Flux;
 
+import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * 会话管理控制器
@@ -30,6 +37,10 @@ public class SessionController {
     private final SessionService sessionService;
     private final SessionStopService sessionStopService;
     private final com.agent.service.SingleChatService singleChatService;
+    @Autowired(required = false)
+    private SessionSandboxManager sessionSandboxManager;
+
+    private static final Pattern DRIVE_PREFIX = Pattern.compile("^[a-zA-Z]:/");
 
     /**
      * 获取所有会话
@@ -207,10 +218,120 @@ public class SessionController {
     }
 
     /**
+     * 上传文件（或文件夹展开后的文件列表）到会话 workspace。
+     */
+    @PostMapping(
+            value = "/{sessionId}/workspace/upload",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+    )
+    public ApiResponse<WorkspaceUploadResult> uploadWorkspaceFiles(
+            @PathVariable String sessionId,
+            @RequestParam("files") MultipartFile[] files,
+            @RequestParam(value = "paths", required = false) List<String> paths) {
+        try {
+            sessionService.getSessionById(sessionId);
+            if (sessionSandboxManager == null) {
+                return ApiResponse.error("Sandbox is disabled");
+            }
+            if (files == null || files.length == 0) {
+                return ApiResponse.error(400, "No files uploaded");
+            }
+
+            int uploadedCount = 0;
+            List<String> uploadedPaths = new ArrayList<>();
+            for (int i = 0; i < files.length; i++) {
+                MultipartFile file = files[i];
+                if (file == null || file.isEmpty()) {
+                    continue;
+                }
+                String rawPath = resolveRawPath(file, paths, i);
+                String relativePath = normalizeRelativePath(rawPath, file.getOriginalFilename());
+                String workspacePath = "/workspace/" + relativePath;
+                try (InputStream in = file.getInputStream()) {
+                    sessionSandboxManager.writeBinaryFile(sessionId, workspacePath, in);
+                }
+                uploadedCount++;
+                if (uploadedPaths.size() < 50) {
+                    uploadedPaths.add(relativePath);
+                }
+            }
+
+            WorkspaceUploadResult result = new WorkspaceUploadResult();
+            result.setUploadedCount(uploadedCount);
+            result.setPaths(uploadedPaths);
+            return ApiResponse.success("上传成功", result);
+        } catch (IllegalArgumentException e) {
+            log.warn("Upload workspace files rejected: sessionId={}, err={}", sessionId, e.getMessage());
+            return ApiResponse.error(400, e.getMessage());
+        } catch (Exception e) {
+            log.error("Upload workspace files failed: sessionId={}", sessionId, e);
+            return ApiResponse.error("上传失败: " + e.getMessage());
+        }
+    }
+
+    private String resolveRawPath(MultipartFile file, List<String> paths, int index) {
+        if (paths != null && index < paths.size()) {
+            String candidate = paths.get(index);
+            if (candidate != null && !candidate.isBlank()) {
+                return candidate;
+            }
+        }
+        String originalFilename = file == null ? null : file.getOriginalFilename();
+        if (originalFilename != null && !originalFilename.isBlank()) {
+            return originalFilename;
+        }
+        return "uploaded-file-" + index;
+    }
+
+    private String normalizeRelativePath(String rawPath, String fallbackName) {
+        String candidate = rawPath == null ? "" : rawPath.trim();
+        candidate = candidate.replace('\\', '/');
+        candidate = DRIVE_PREFIX.matcher(candidate).replaceFirst("");
+        while (candidate.startsWith("/")) {
+            candidate = candidate.substring(1);
+        }
+        if (candidate.isBlank()) {
+            candidate = fallbackName == null ? "uploaded-file" : fallbackName;
+        }
+
+        String[] segments = candidate.split("/");
+        List<String> normalized = new ArrayList<>();
+        for (String segment : segments) {
+            if (segment == null || segment.isBlank() || ".".equals(segment)) {
+                continue;
+            }
+            if ("..".equals(segment)) {
+                throw new IllegalArgumentException("Invalid upload path segment: ..");
+            }
+            normalized.add(cleanPathSegment(segment));
+        }
+        if (normalized.isEmpty()) {
+            normalized.add("uploaded-file");
+        }
+        return String.join("/", normalized);
+    }
+
+    private String cleanPathSegment(String segment) {
+        String cleaned = segment == null ? "" : segment.trim();
+        cleaned = cleaned.replace('\0', '_');
+        cleaned = cleaned.replaceAll("[\\r\\n\\t]", "_");
+        if (cleaned.isBlank()) {
+            return "file";
+        }
+        return cleaned;
+    }
+
+    /**
      * 用户输入请求 DTO
      */
     @Data
     public static class UserInputRequest {
         private String message;
+    }
+
+    @Data
+    public static class WorkspaceUploadResult {
+        private int uploadedCount;
+        private List<String> paths;
     }
 }

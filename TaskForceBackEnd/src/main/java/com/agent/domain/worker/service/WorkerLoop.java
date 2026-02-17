@@ -17,6 +17,7 @@ import com.agent.infrastructure.agent.CheckpointThreadIds;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.WorkerOutputEvent;
+import com.agent.infrastructure.sandbox.SessionSandboxManager;
 import com.agent.service.SessionExecutionTracker;
 import com.agent.service.TokenUsageService;
 import com.agent.service.TokenUsageStreamTracker;
@@ -31,6 +32,7 @@ import java.util.ArrayDeque;
 import java.time.Duration;
 import java.util.Deque;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -69,6 +71,7 @@ public class WorkerLoop implements Runnable {
     private final AgentExecutionStateService executionStateService;
     private final ExecutionWaitIntentService waitIntentService;
     private final WorkerRoundControlService workerRoundControlService;
+    private final SessionSandboxManager sessionSandboxManager;
     private final TokenUsageService tokenUsageService;
     private final String startupResumeInput;
     private final Runnable onStopped;
@@ -93,6 +96,7 @@ public class WorkerLoop implements Runnable {
             AgentExecutionStateService executionStateService,
             ExecutionWaitIntentService waitIntentService,
             WorkerRoundControlService workerRoundControlService,
+            SessionSandboxManager sessionSandboxManager,
             TokenUsageService tokenUsageService,
             String startupResumeInput,
             Runnable onStopped) {
@@ -108,6 +112,7 @@ public class WorkerLoop implements Runnable {
         this.executionStateService = executionStateService;
         this.waitIntentService = waitIntentService;
         this.workerRoundControlService = workerRoundControlService;
+        this.sessionSandboxManager = sessionSandboxManager;
         this.tokenUsageService = tokenUsageService;
         this.startupResumeInput = startupResumeInput;
         this.onStopped = onStopped == null ? () -> {} : onStopped;
@@ -409,140 +414,149 @@ public class WorkerLoop implements Runnable {
                         "Unsupported task status for execution: " + task.getStatus() + ", taskId=" + task.getTaskId());
             }
 
+            String roundId = UUID.randomUUID().toString();
+            if (sessionSandboxManager != null) {
+                sessionSandboxManager.beginRound(workerInstance.getSessionId(), roundId);
+            }
+
             // 3. 构建任务说明（作为本轮 user 输入主体）
-            String taskInstruction = buildTaskInstruction(task);
-            Long currentAgentId = Long.valueOf(workerInstance.getAgentId());
+            try {
+                String taskInstruction = buildTaskInstruction(task);
+                Long currentAgentId = Long.valueOf(workerInstance.getAgentId());
 
-            // 4. 构建 ReactAgent
-            ReactAgent reactAgent = reactAgentFactory.buildWorkerReactAgent(
-                    currentAgentId,
-                    TASK_EXECUTION_INSTRUCTION,
-                    MAX_REACT_ITERATIONS,
-                    workerInstance.getSessionId(),
-                    String.valueOf(task.getTaskId()),
-                    null, // stepIndex 在 Team 模式下不适用
-                    workerInstance.getInstanceId() // Worker 实例 ID，用于 ToolContext
-            );
+                // 4. 构建 ReactAgent
+                ReactAgent reactAgent = reactAgentFactory.buildWorkerReactAgent(
+                        currentAgentId,
+                        TASK_EXECUTION_INSTRUCTION,
+                        MAX_REACT_ITERATIONS,
+                        workerInstance.getSessionId(),
+                        String.valueOf(task.getTaskId()),
+                        null, // stepIndex 在 Team 模式下不适用
+                        workerInstance.getInstanceId() // Worker 实例 ID，用于 ToolContext
+                );
 
-            // 5. 配置 RunnableConfig（传递 sessionId 和 instanceId 到 metadata）
-            RunnableConfig config = buildWorkerConfig(task.getTaskId());
-            String agentInput = buildTaskRunInput(taskInstruction, resumeMessage);
-            long streamStartTimeMs = System.currentTimeMillis();
-            long[] firstChunkLatencyMs = new long[]{-1L};
-            AtomicBoolean firstChunkObserved = new AtomicBoolean(false);
-            AtomicInteger streamedChunkCount = new AtomicInteger(0);
-            log.info("[WorkerLoop] LLM stream started: instanceId={}, taskId={}, inputChars={}",
-                    workerInstance.getInstanceId(), task.getTaskId(), agentInput.length());
-            TokenUsageStreamTracker usageTracker = new TokenUsageStreamTracker(
-                    tokenUsageService,
-                    workerInstance.getSessionId(),
-                    currentAgentId
-            );
+                // 5. 配置 RunnableConfig（传递 sessionId 和 instanceId 到 metadata）
+                RunnableConfig config = buildWorkerConfig(task.getTaskId(), roundId);
+                String agentInput = buildTaskRunInput(taskInstruction, resumeMessage);
+                long streamStartTimeMs = System.currentTimeMillis();
+                long[] firstChunkLatencyMs = new long[]{-1L};
+                AtomicBoolean firstChunkObserved = new AtomicBoolean(false);
+                AtomicInteger streamedChunkCount = new AtomicInteger(0);
+                log.info("[WorkerLoop] LLM stream started: instanceId={}, taskId={}, inputChars={}",
+                        workerInstance.getInstanceId(), task.getTaskId(), agentInput.length());
+                TokenUsageStreamTracker usageTracker = new TokenUsageStreamTracker(
+                        tokenUsageService,
+                        workerInstance.getSessionId(),
+                        currentAgentId
+                );
 
-            // 6. 执行任务（流式）
-            Disposable disposable = reactAgent.stream(agentInput, config)
-                    .doOnNext(nodeOutput -> {
-                        usageTracker.accept(nodeOutput);
-                        if (nodeOutput instanceof StreamingOutput streamingOutput) {
-                            String chunk = streamingOutput.chunk();
-                            if (chunk != null && !chunk.isEmpty()) {
-                                if (firstChunkObserved.compareAndSet(false, true)) {
-                                    firstChunkLatencyMs[0] = System.currentTimeMillis() - streamStartTimeMs;
-                                    log.info("[WorkerLoop] LLM first token: instanceId={}, taskId={}, latencyMs={}",
-                                            workerInstance.getInstanceId(), task.getTaskId(), firstChunkLatencyMs[0]);
-                                }
-                                streamedChunkCount.incrementAndGet();
-                                // 发布实时事件给前端
-                                try {
-                                    WorkerOutputEvent event = new WorkerOutputEvent(
-                                            workerInstance.getSessionId(),
-                                            workerInstance.getInstanceId(),
-                                            task.getTaskId(),
-                                            chunk
-                                    );
-                                    eventBus.publishToWorker(
-                                            workerInstance.getSessionId(),
-                                            workerInstance.getInstanceId(),
-                                            event
-                                    );
-                                } catch (Exception e) {
-                                    log.warn("[WorkerLoop] Failed to publish output event", e);
+                // 6. 执行任务（流式）
+                Disposable disposable = reactAgent.stream(agentInput, config)
+                        .doOnNext(nodeOutput -> {
+                            usageTracker.accept(nodeOutput);
+                            if (nodeOutput instanceof StreamingOutput streamingOutput) {
+                                String chunk = streamingOutput.chunk();
+                                if (chunk != null && !chunk.isEmpty()) {
+                                    if (firstChunkObserved.compareAndSet(false, true)) {
+                                        firstChunkLatencyMs[0] = System.currentTimeMillis() - streamStartTimeMs;
+                                        log.info("[WorkerLoop] LLM first token: instanceId={}, taskId={}, latencyMs={}",
+                                                workerInstance.getInstanceId(), task.getTaskId(), firstChunkLatencyMs[0]);
+                                    }
+                                    streamedChunkCount.incrementAndGet();
+                                    // 发布实时事件给前端
+                                    try {
+                                        WorkerOutputEvent event = new WorkerOutputEvent(
+                                                workerInstance.getSessionId(),
+                                                workerInstance.getInstanceId(),
+                                                task.getTaskId(),
+                                                chunk
+                                        );
+                                        eventBus.publishToWorker(
+                                                workerInstance.getSessionId(),
+                                                workerInstance.getInstanceId(),
+                                                event
+                                        );
+                                    } catch (Exception e) {
+                                        log.warn("[WorkerLoop] Failed to publish output event", e);
+                                    }
                                 }
                             }
-                        }
-                    })
-                    .doOnComplete(() -> {
-                        long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
-                        log.info("[WorkerLoop] Task execution completed: taskId={}, totalMs={}, firstTokenMs={}, chunkCount={}",
-                                task.getTaskId(), totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get());
-                    })
-                    .doOnError(e -> {
-                        long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
-                        log.error("[WorkerLoop] Task execution error: taskId={}, elapsedMs={}, firstTokenMs={}, chunkCount={}",
-                                task.getTaskId(), totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get(), e);
-                    })
-                    .subscribe();
+                        })
+                        .doOnComplete(() -> {
+                            long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
+                            log.info("[WorkerLoop] Task execution completed: taskId={}, totalMs={}, firstTokenMs={}, chunkCount={}",
+                                    task.getTaskId(), totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get());
+                        })
+                        .doOnError(e -> {
+                            long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
+                            log.error("[WorkerLoop] Task execution error: taskId={}, elapsedMs={}, firstTokenMs={}, chunkCount={}",
+                                    task.getTaskId(), totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get(), e);
+                        })
+                        .subscribe();
 
-            // 注册 Disposable
-            executionTracker.registerDisposable(workerInstance.getSessionId(), disposable);
-            workerRoundControlService.register(workerInstance.getInstanceId(), disposable);
+                // 注册 Disposable
+                executionTracker.registerDisposable(workerInstance.getSessionId(), disposable);
+                workerRoundControlService.register(workerInstance.getInstanceId(), disposable);
 
-            try {
-                // 等待执行完成
-                while (!disposable.isDisposed() && !shutdown.get()) {
-                    Thread.sleep(100);
-                    // complete_task 会在工具执行期间把任务状态改为 COMPLETED。
-                    // 一旦任务进入终态，立即结束本轮流，避免继续产生重复 send_message。
-                    if (isTaskTerminal(task.getTaskId())) {
-                        if (!disposable.isDisposed()) {
-                            disposable.dispose();
-                            log.info("[WorkerLoop] Disposed running stream after task became terminal: taskId={}",
-                                    task.getTaskId());
+                try {
+                    // 等待执行完成
+                    while (!disposable.isDisposed() && !shutdown.get()) {
+                        Thread.sleep(100);
+                        // complete_task 会在工具执行期间把任务状态改为 COMPLETED。
+                        // 一旦任务进入终态，立即结束本轮流，避免继续产生重复 send_message。
+                        if (isTaskTerminal(task.getTaskId())) {
+                            if (!disposable.isDisposed()) {
+                                disposable.dispose();
+                                log.info("[WorkerLoop] Disposed running stream after task became terminal: taskId={}",
+                                        task.getTaskId());
+                            }
+                            break;
                         }
-                        break;
+                    }
+                } finally {
+                    workerRoundControlService.clear(workerInstance.getInstanceId(), disposable);
+                }
+
+                // 7. 更新任务状态
+                if (shutdown.get()) {
+                    log.info("[WorkerLoop] Task interrupted by shutdown: taskId={}", task.getTaskId());
+                    TaskUpdateRequest updateRequest = TaskUpdateRequest.builder()
+                            .status(TaskStatus.PENDING)
+                            .owner(null)
+                            .build();
+                    taskBoardService.updateTask(workerInstance.getSessionId(), task.getTaskId(), updateRequest);
+                    workerInstance.completeWork();
+                    workerRepository.save(workerInstance);
+                    return TaskExecutionOutcome.INTERRUPTED;
+                } else {
+                    boolean shouldWaitReply = waitIntentService.consumeWaitingReply(workerInstance.getInstanceId());
+                    Task updatedTask = taskBoardService.getTask(workerInstance.getSessionId(), task.getTaskId());
+                    if (updatedTask.isCompleted()) {
+                        log.info("[WorkerLoop] Task completed by worker: taskId={}", task.getTaskId());
+                        workerInstance.completeWork();
+                        workerRepository.save(workerInstance);
+                        return TaskExecutionOutcome.COMPLETED;
+                    } else if (updatedTask.isFailed()) {
+                        log.info("[WorkerLoop] Task already marked as failed: taskId={}", task.getTaskId());
+                        workerInstance.completeWork();
+                        workerRepository.save(workerInstance);
+                        return TaskExecutionOutcome.FAILED;
+                    } else if (shouldWaitReply) {
+                        log.info("[WorkerLoop] Task paused waiting for inbox reply: taskId={}", task.getTaskId());
+                        workerInstance.startWaitingReply(task.getTaskId());
+                        workerRepository.save(workerInstance);
+                        return TaskExecutionOutcome.WAITING_FOR_REPLY;
+                    } else {
+                        log.warn("[WorkerLoop] Task ended without complete_task and no wait intent, marking failed: taskId={}",
+                                task.getTaskId());
+                        taskBoardService.failTask(workerInstance.getSessionId(), task.getTaskId());
+                        workerInstance.completeWork();
+                        workerRepository.save(workerInstance);
+                        return TaskExecutionOutcome.FAILED;
                     }
                 }
             } finally {
-                workerRoundControlService.clear(workerInstance.getInstanceId(), disposable);
-            }
-
-            // 7. 更新任务状态
-            if (shutdown.get()) {
-                log.info("[WorkerLoop] Task interrupted by shutdown: taskId={}", task.getTaskId());
-                TaskUpdateRequest updateRequest = TaskUpdateRequest.builder()
-                        .status(TaskStatus.PENDING)
-                        .owner(null)
-                        .build();
-                taskBoardService.updateTask(workerInstance.getSessionId(), task.getTaskId(), updateRequest);
-                workerInstance.completeWork();
-                workerRepository.save(workerInstance);
-                return TaskExecutionOutcome.INTERRUPTED;
-            } else {
-                boolean shouldWaitReply = waitIntentService.consumeWaitingReply(workerInstance.getInstanceId());
-                Task updatedTask = taskBoardService.getTask(workerInstance.getSessionId(), task.getTaskId());
-                if (updatedTask.isCompleted()) {
-                    log.info("[WorkerLoop] Task completed by worker: taskId={}", task.getTaskId());
-                    workerInstance.completeWork();
-                    workerRepository.save(workerInstance);
-                    return TaskExecutionOutcome.COMPLETED;
-                } else if (updatedTask.isFailed()) {
-                    log.info("[WorkerLoop] Task already marked as failed: taskId={}", task.getTaskId());
-                    workerInstance.completeWork();
-                    workerRepository.save(workerInstance);
-                    return TaskExecutionOutcome.FAILED;
-                } else if (shouldWaitReply) {
-                    log.info("[WorkerLoop] Task paused waiting for inbox reply: taskId={}", task.getTaskId());
-                    workerInstance.startWaitingReply(task.getTaskId());
-                    workerRepository.save(workerInstance);
-                    return TaskExecutionOutcome.WAITING_FOR_REPLY;
-                } else {
-                    log.warn("[WorkerLoop] Task ended without complete_task and no wait intent, marking failed: taskId={}",
-                            task.getTaskId());
-                    taskBoardService.failTask(workerInstance.getSessionId(), task.getTaskId());
-                    workerInstance.completeWork();
-                    workerRepository.save(workerInstance);
-                    return TaskExecutionOutcome.FAILED;
-                }
+                flushRoundSafely(roundId);
             }
 
         } catch (InterruptedException e) {
@@ -598,6 +612,10 @@ public class WorkerLoop implements Runnable {
                     send_message 的目标为 Lead（workerId=0），回复内容应可直接用于 Lead 决策。
                     完成回复后结束本轮，不要重复调用 send_message。
                     """;
+            String roundId = UUID.randomUUID().toString();
+            if (sessionSandboxManager != null) {
+                sessionSandboxManager.beginRound(workerInstance.getSessionId(), roundId);
+            }
             ReactAgent reactAgent = reactAgentFactory.buildWorkerReactAgent(
                     currentAgentId,
                     instruction,
@@ -608,73 +626,77 @@ public class WorkerLoop implements Runnable {
                     workerInstance.getInstanceId()
             );
 
-            RunnableConfig config = buildWorkerConfig(0);
-            long streamStartTimeMs = System.currentTimeMillis();
-            long[] firstChunkLatencyMs = new long[]{-1L};
-            AtomicBoolean firstChunkObserved = new AtomicBoolean(false);
-            AtomicInteger streamedChunkCount = new AtomicInteger(0);
-            int inputChars = instructionMessage == null ? 0 : instructionMessage.length();
-            log.info("[WorkerLoop] LLM direct stream started: instanceId={}, inputChars={}",
-                    workerInstance.getInstanceId(), inputChars);
-            TokenUsageStreamTracker usageTracker = new TokenUsageStreamTracker(
-                    tokenUsageService,
-                    workerInstance.getSessionId(),
-                    currentAgentId
-            );
-            Disposable disposable = reactAgent.stream(instructionMessage, config)
-                    .doOnNext(nodeOutput -> {
-                        usageTracker.accept(nodeOutput);
-                        if (nodeOutput instanceof StreamingOutput streamingOutput) {
-                            String chunk = streamingOutput.chunk();
-                            if (chunk != null && !chunk.isEmpty()) {
-                                if (firstChunkObserved.compareAndSet(false, true)) {
-                                    firstChunkLatencyMs[0] = System.currentTimeMillis() - streamStartTimeMs;
-                                    log.info("[WorkerLoop] LLM direct first token: instanceId={}, latencyMs={}",
-                                            workerInstance.getInstanceId(), firstChunkLatencyMs[0]);
-                                }
-                                streamedChunkCount.incrementAndGet();
-                                try {
-                                    WorkerOutputEvent event = new WorkerOutputEvent(
-                                            workerInstance.getSessionId(),
-                                            workerInstance.getInstanceId(),
-                                            0,
-                                            chunk
-                                    );
-                                    eventBus.publishToWorker(
-                                            workerInstance.getSessionId(),
-                                            workerInstance.getInstanceId(),
-                                            event
-                                    );
-                                } catch (Exception e) {
-                                    log.warn("[WorkerLoop] Failed to publish direct-instruction output event", e);
+            try {
+                RunnableConfig config = buildWorkerConfig(0, roundId);
+                long streamStartTimeMs = System.currentTimeMillis();
+                long[] firstChunkLatencyMs = new long[]{-1L};
+                AtomicBoolean firstChunkObserved = new AtomicBoolean(false);
+                AtomicInteger streamedChunkCount = new AtomicInteger(0);
+                int inputChars = instructionMessage == null ? 0 : instructionMessage.length();
+                log.info("[WorkerLoop] LLM direct stream started: instanceId={}, inputChars={}",
+                        workerInstance.getInstanceId(), inputChars);
+                TokenUsageStreamTracker usageTracker = new TokenUsageStreamTracker(
+                        tokenUsageService,
+                        workerInstance.getSessionId(),
+                        currentAgentId
+                );
+                Disposable disposable = reactAgent.stream(instructionMessage, config)
+                        .doOnNext(nodeOutput -> {
+                            usageTracker.accept(nodeOutput);
+                            if (nodeOutput instanceof StreamingOutput streamingOutput) {
+                                String chunk = streamingOutput.chunk();
+                                if (chunk != null && !chunk.isEmpty()) {
+                                    if (firstChunkObserved.compareAndSet(false, true)) {
+                                        firstChunkLatencyMs[0] = System.currentTimeMillis() - streamStartTimeMs;
+                                        log.info("[WorkerLoop] LLM direct first token: instanceId={}, latencyMs={}",
+                                                workerInstance.getInstanceId(), firstChunkLatencyMs[0]);
+                                    }
+                                    streamedChunkCount.incrementAndGet();
+                                    try {
+                                        WorkerOutputEvent event = new WorkerOutputEvent(
+                                                workerInstance.getSessionId(),
+                                                workerInstance.getInstanceId(),
+                                                0,
+                                                chunk
+                                        );
+                                        eventBus.publishToWorker(
+                                                workerInstance.getSessionId(),
+                                                workerInstance.getInstanceId(),
+                                                event
+                                        );
+                                    } catch (Exception e) {
+                                        log.warn("[WorkerLoop] Failed to publish direct-instruction output event", e);
+                                    }
                                 }
                             }
-                        }
-                    })
-                    .doOnComplete(() -> {
-                        long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
-                        log.info("[WorkerLoop] Direct instruction execution completed: instanceId={}, totalMs={}, firstTokenMs={}, chunkCount={}",
-                                workerInstance.getInstanceId(), totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get());
-                    })
-                    .doOnError(e -> log.error(
-                            "[WorkerLoop] Direct instruction execution error: instanceId={}, elapsedMs={}, firstTokenMs={}, chunkCount={}",
-                            workerInstance.getInstanceId(),
-                            System.currentTimeMillis() - streamStartTimeMs,
-                            firstChunkLatencyMs[0],
-                            streamedChunkCount.get(),
-                            e
-                    ))
-                    .subscribe();
+                        })
+                        .doOnComplete(() -> {
+                            long totalStreamMs = System.currentTimeMillis() - streamStartTimeMs;
+                            log.info("[WorkerLoop] Direct instruction execution completed: instanceId={}, totalMs={}, firstTokenMs={}, chunkCount={}",
+                                    workerInstance.getInstanceId(), totalStreamMs, firstChunkLatencyMs[0], streamedChunkCount.get());
+                        })
+                        .doOnError(e -> log.error(
+                                "[WorkerLoop] Direct instruction execution error: instanceId={}, elapsedMs={}, firstTokenMs={}, chunkCount={}",
+                                workerInstance.getInstanceId(),
+                                System.currentTimeMillis() - streamStartTimeMs,
+                                firstChunkLatencyMs[0],
+                                streamedChunkCount.get(),
+                                e
+                        ))
+                        .subscribe();
 
-            executionTracker.registerDisposable(workerInstance.getSessionId(), disposable);
-            workerRoundControlService.register(workerInstance.getInstanceId(), disposable);
+                executionTracker.registerDisposable(workerInstance.getSessionId(), disposable);
+                workerRoundControlService.register(workerInstance.getInstanceId(), disposable);
 
-            try {
-                while (!disposable.isDisposed() && !shutdown.get()) {
-                    Thread.sleep(100);
+                try {
+                    while (!disposable.isDisposed() && !shutdown.get()) {
+                        Thread.sleep(100);
+                    }
+                } finally {
+                    workerRoundControlService.clear(workerInstance.getInstanceId(), disposable);
                 }
             } finally {
-                workerRoundControlService.clear(workerInstance.getInstanceId(), disposable);
+                flushRoundSafely(roundId);
             }
 
             if (shutdown.get()) {
@@ -707,12 +729,13 @@ public class WorkerLoop implements Runnable {
         }
     }
 
-    private RunnableConfig buildWorkerConfig(int currentTaskId) {
+    private RunnableConfig buildWorkerConfig(int currentTaskId, String roundId) {
         return RunnableConfig.builder()
                 .threadId(CheckpointThreadIds.workerThreadId(workerInstance.getInstanceId()))
                 .addMetadata("sessionId", workerInstance.getSessionId())
                 .addMetadata("instanceId", workerInstance.getInstanceId())
                 .addMetadata("currentTaskId", currentTaskId)
+                .addMetadata("roundId", roundId)
                 .build();
     }
 
@@ -806,6 +829,21 @@ public class WorkerLoop implements Runnable {
             log.debug("[WorkerLoop] No checkpoint found to release: threadId={}", threadId);
         } catch (Exception e) {
             log.warn("[WorkerLoop] Failed to release checkpoint: threadId={}", threadId, e);
+        }
+    }
+
+    private void flushRoundSafely(String roundId) {
+        if (roundId == null || roundId.isBlank()) {
+            return;
+        }
+        if (sessionSandboxManager == null) {
+            return;
+        }
+        boolean synced = sessionSandboxManager.flushRound(workerInstance.getSessionId(), roundId);
+        if (!synced) {
+            throw new IllegalStateException("Round flush failed: sessionId=" + workerInstance.getSessionId()
+                    + ", instanceId=" + workerInstance.getInstanceId()
+                    + ", roundId=" + roundId);
         }
     }
 

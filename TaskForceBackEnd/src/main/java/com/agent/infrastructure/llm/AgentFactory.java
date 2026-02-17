@@ -1,6 +1,5 @@
 package com.agent.infrastructure.llm;
 
-import com.agent.common.dto.ToolInfo;
 import com.agent.infrastructure.mcp.RemoteMcpClient;
 import com.agent.service.AgentToolService;
 import com.agent.infrastructure.persistence.entity.Agent;
@@ -11,6 +10,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -35,18 +35,23 @@ public class AgentFactory {
     private final AgentMapper agentMapper;
     private final LLMProviderMapper providerMapper;
     private final AgentToolService agentToolService; // Agent工具服务
+    private final List<ToolCallback> sandboxTools;
 
     public AgentFactory(
             RemoteMcpClient remoteMcpClient,
             ChatModelFactory chatModelFactory,
             AgentMapper agentMapper,
             LLMProviderMapper providerMapper,
-            AgentToolService agentToolService) {
+            AgentToolService agentToolService,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            @Qualifier("sandboxTools")
+            List<ToolCallback> sandboxTools) {
         this.remoteMcpClient = remoteMcpClient;
         this.chatModelFactory = chatModelFactory;
         this.agentMapper = agentMapper;
         this.providerMapper = providerMapper;
         this.agentToolService = agentToolService;
+        this.sandboxTools = sandboxTools == null ? List.of() : sandboxTools;
     }
 
 
@@ -104,32 +109,21 @@ public class AgentFactory {
         // 8.1 添加远程 MCP 工具（从 mcp-server 获取）
         List<String> enabledToolIds = new ArrayList<>(agentToolService.getEnabledToolIds(agentId));
 
-        // 8.1.1 自动添加所有 native 工具（所有 Agent 默认拥有）
-        try {
-            List<ToolInfo> allAvailableTools = remoteMcpClient.listTools();
-            List<String> nativeToolIds = allAvailableTools.stream()
-                    .filter(tool -> tool.getId() != null && tool.getId().startsWith("native::"))
-                    .map(ToolInfo::getId)
-                    .toList();
-
-            if (!nativeToolIds.isEmpty()) {
-                enabledToolIds.addAll(nativeToolIds);
-                log.info("  Auto-added {} native tools to agent {}", nativeToolIds.size(), agent.getName());
-            }
-        } catch (Exception e) {
-            log.warn("  Failed to fetch native tools: {}", e.getMessage());
-        }
-
         if (!enabledToolIds.isEmpty()) {
             ToolCallback[] remoteTools = remoteMcpClient.getToolCallbacks(enabledToolIds);
             if (remoteTools.length > 0) {
                 for (ToolCallback callback : remoteTools) {
-                    allTools.add(callback);
+                    addIfAbsent(allTools, callback);
                 }
                 log.info("  Attached {} MCP tools", remoteTools.length);
             } else {
                 log.warn("  No valid MCP tools found");
             }
+        }
+
+        if (!sandboxTools.isEmpty()) {
+            sandboxTools.forEach(tool -> addIfAbsent(allTools, tool));
+            log.info("  Attached {} sandbox tools", sandboxTools.size());
         }
 
         // 8.2 注册到 ChatClient
@@ -141,5 +135,19 @@ public class AgentFactory {
         }
 
         return builder.build();
+    }
+
+    private void addIfAbsent(List<ToolCallback> tools, ToolCallback candidate) {
+        if (candidate == null || candidate.getToolDefinition() == null) {
+            return;
+        }
+        String name = candidate.getToolDefinition().name();
+        boolean exists = tools.stream()
+                .anyMatch(existing -> existing != null
+                        && existing.getToolDefinition() != null
+                        && name.equals(existing.getToolDefinition().name()));
+        if (!exists) {
+            tools.add(candidate);
+        }
     }
 }

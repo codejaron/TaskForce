@@ -103,10 +103,7 @@ management:
     health:
       show-details: always
 
-# ========== 上下文系统配置 ==========
-context:
-  workspace:
-    base-path: /Users/jaron/Downloads/test  # 工作空间根路径（MCP filesystem 路径）
+
 
 # ========== 本地工具配置 ==========
 workspace:

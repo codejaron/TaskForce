@@ -11,10 +11,12 @@ import com.agent.domain.worker.repository.WorkerInstanceRepository;
 import com.agent.infrastructure.agent.ReactAgentFactory;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.WorkerSpawnedEvent;
+import com.agent.infrastructure.sandbox.SessionSandboxManager;
 import com.agent.service.SessionExecutionTracker;
 import com.agent.service.TokenUsageService;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
@@ -46,6 +48,7 @@ public class WorkerInstanceManager {
     private final AgentExecutionStateService executionStateService;
     private final ExecutionWaitIntentService waitIntentService;
     private final WorkerRoundControlService workerRoundControlService;
+    private final SessionSandboxManager sessionSandboxManager;
     private final TokenUsageService tokenUsageService;
 
     public WorkerInstanceManager(
@@ -60,6 +63,7 @@ public class WorkerInstanceManager {
             AgentExecutionStateService executionStateService,
             ExecutionWaitIntentService waitIntentService,
             WorkerRoundControlService workerRoundControlService,
+            @Autowired(required = false) SessionSandboxManager sessionSandboxManager,
             TokenUsageService tokenUsageService) {
         this.workerRepository = workerRepository;
         this.taskBoardService = taskBoardService;
@@ -72,6 +76,7 @@ public class WorkerInstanceManager {
         this.executionStateService = executionStateService;
         this.waitIntentService = waitIntentService;
         this.workerRoundControlService = workerRoundControlService;
+        this.sessionSandboxManager = sessionSandboxManager;
         this.tokenUsageService = tokenUsageService;
     }
 
@@ -373,6 +378,7 @@ public class WorkerInstanceManager {
                 executionStateService,
                 waitIntentService,
                 workerRoundControlService,
+                sessionSandboxManager,
                 tokenUsageService,
                 startupResumeInput,
                 () -> runningLoops.remove(instance.getInstanceId(), holder[0])

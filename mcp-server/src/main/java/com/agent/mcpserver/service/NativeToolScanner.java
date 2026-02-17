@@ -31,6 +31,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class NativeToolScanner {
 
     private static final String NATIVE_PREFIX = "native";
+    private static final Set<String> DISABLED_NATIVE_TOOLS = Set.of(
+            "read", "write", "edit", "glob", "grep", "bash"
+    );
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     private final ApplicationContext applicationContext;
@@ -111,6 +114,10 @@ public class NativeToolScanner {
                 }
 
                 String toolName = annotation != null ? annotation.name() : mcpTool.name();
+                if (toolName != null && DISABLED_NATIVE_TOOLS.contains(toolName)) {
+                    log.info("[NativeToolScanner] Skip disabled native tool: {}", toolName);
+                    continue;
+                }
                 String globalId = NATIVE_PREFIX + "::" + toolName;
                 String description = resolveDescription(annotation, mcpTool);
 

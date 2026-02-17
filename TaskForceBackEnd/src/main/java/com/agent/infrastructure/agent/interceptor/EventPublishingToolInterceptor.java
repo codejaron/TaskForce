@@ -3,6 +3,7 @@ package com.agent.infrastructure.agent.interceptor;
 import com.agent.infrastructure.event.EventBus;
 import com.agent.infrastructure.event.events.ToolCallCompleteEvent;
 import com.agent.infrastructure.event.events.ToolCallStartEvent;
+import com.agent.infrastructure.sandbox.SessionSandboxManager;
 import com.agent.service.ToolCallService;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallHandler;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallRequest;
@@ -10,8 +11,10 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.ToolCallResponse;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ToolInterceptor;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -29,6 +32,8 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
     private final ToolCallService toolCallService;
     private final AtomicInteger sequenceCounter;
     private final String instanceId;
+    private final SessionSandboxManager sessionSandboxManager;
+    private final Set<String> workspaceToolNames;
 
     public EventPublishingToolInterceptor(
             String sessionId,
@@ -38,7 +43,9 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
             EventBus eventBus,
             ToolCallService toolCallService,
             AtomicInteger sequenceCounter,
-            String instanceId) {
+            String instanceId,
+            SessionSandboxManager sessionSandboxManager,
+            Set<String> workspaceToolNames) {
         this.sessionId = sessionId;
         this.stepId = stepId;
         this.stepIndex = stepIndex;
@@ -47,6 +54,10 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
         this.toolCallService = toolCallService;
         this.sequenceCounter = sequenceCounter;
         this.instanceId = instanceId;
+        this.sessionSandboxManager = sessionSandboxManager;
+        this.workspaceToolNames = workspaceToolNames == null
+                ? Collections.emptySet()
+                : Set.copyOf(workspaceToolNames);
     }
 
     @Override
@@ -55,6 +66,7 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
         String toolInput = request.getArguments();
         String toolCallId = UUID.randomUUID().toString();
         int sequence = sequenceCounter.getAndIncrement();
+        String roundId = extractRoundId(request.getContext());
 
         // 从工具名称中提取服务器名称（格式：{providerName}::{toolName}）
         String serverName = extractProviderName(toolName);
@@ -79,7 +91,8 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
         if (toolCallService != null && sessionId != null) {
             try {
                 toolCallService.createToolCall(
-                        sessionId, stepId, agentId, toolCallId, toolName, serverName, instanceId, toolInput, sequence
+                        sessionId, stepId, agentId, toolCallId, toolName, serverName, instanceId,
+                        roundId, toolInput, sequence
                 );
             } catch (Exception e) {
                 log.warn("Failed to persist tool call start: {}", e.getMessage());
@@ -111,7 +124,12 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
 
         try {
             // 4. Execute the tool with enriched request
-            ToolCallResponse response = handler.call(enrichedRequest);
+            ToolCallResponse response;
+            if (shouldUseWorkspaceReadLock(toolName)) {
+                response = sessionSandboxManager.withWorkspaceReadLock(sessionId, () -> handler.call(enrichedRequest));
+            } else {
+                response = handler.call(enrichedRequest);
+            }
             result = response.getResult();
             return response;
 
@@ -164,5 +182,37 @@ public class EventPublishingToolInterceptor extends ToolInterceptor {
             return toolId.substring(0, toolId.indexOf("::"));
         }
         return "unknown";
+    }
+
+    private String extractRoundId(Map<String, Object> context) {
+        if (context == null) {
+            return null;
+        }
+        Object raw = context.get("roundId");
+        if (raw == null) {
+            return null;
+        }
+        String value = String.valueOf(raw);
+        return value.isBlank() ? null : value;
+    }
+
+    private boolean shouldUseWorkspaceReadLock(String toolName) {
+        if (sessionSandboxManager == null || sessionId == null || sessionId.isBlank() || toolName == null) {
+            return false;
+        }
+        if (workspaceToolNames.contains(toolName)) {
+            return true;
+        }
+        String normalized = toolName.toLowerCase();
+        return normalized.contains("read_file")
+                || normalized.contains("write_file")
+                || normalized.contains("edit_file")
+                || normalized.contains("search_files")
+                || normalized.contains("list_directory")
+                || normalized.contains("directory_tree")
+                || normalized.contains("move_file")
+                || normalized.contains("create_directory")
+                || normalized.contains("run_shell_command")
+                || normalized.contains("run_python_code");
     }
 }

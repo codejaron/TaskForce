@@ -361,6 +361,11 @@ export default {
     selectAgentLabel: '选择 Agent',
     selectAgentPlaceholder: '选择一个 Agent...',
     chatType: '单聊',
+    uploadFiles: '上传文件',
+    uploadFolder: '上传文件夹',
+    uploadSuccess: '上传成功：{{count}} 个文件',
+    uploadFailed: '上传失败',
+    uploading: '上传中...',
   },
   skills: {
     title: 'Skills 管理',
