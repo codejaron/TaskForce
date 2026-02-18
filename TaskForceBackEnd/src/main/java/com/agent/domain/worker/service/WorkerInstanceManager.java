@@ -18,6 +18,8 @@ import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
@@ -50,6 +52,9 @@ public class WorkerInstanceManager {
     private final WorkerRoundControlService workerRoundControlService;
     private final SessionSandboxManager sessionSandboxManager;
     private final TokenUsageService tokenUsageService;
+    private final StringRedisTemplate redisTemplate;
+
+    private static final String WORKER_SEQ_KEY_PREFIX = "worker:seq:";
 
     public WorkerInstanceManager(
             WorkerInstanceRepository workerRepository,
@@ -64,7 +69,8 @@ public class WorkerInstanceManager {
             ExecutionWaitIntentService waitIntentService,
             WorkerRoundControlService workerRoundControlService,
             @Autowired(required = false) SessionSandboxManager sessionSandboxManager,
-            TokenUsageService tokenUsageService) {
+            TokenUsageService tokenUsageService,
+            StringRedisTemplate redisTemplate) {
         this.workerRepository = workerRepository;
         this.taskBoardService = taskBoardService;
         this.reactAgentFactory = reactAgentFactory;
@@ -78,6 +84,7 @@ public class WorkerInstanceManager {
         this.workerRoundControlService = workerRoundControlService;
         this.sessionSandboxManager = sessionSandboxManager;
         this.tokenUsageService = tokenUsageService;
+        this.redisTemplate = redisTemplate;
     }
 
     // 线程池：用于运行 WorkerLoop
@@ -333,7 +340,16 @@ public class WorkerInstanceManager {
      * @return 是否运行中
      */
     public boolean isRunning(String instanceId) {
-        return runningLoops.containsKey(instanceId);
+        if (instanceId == null || instanceId.isBlank()) {
+            return false;
+        }
+        if (runningLoops.containsKey(instanceId)) {
+            return true;
+        }
+        AgentExecutionStatus status = executionStateService.getStatus(instanceId);
+        return status != null
+                && status != AgentExecutionStatus.COMPLETED
+                && status != AgentExecutionStatus.FAILED;
     }
 
     /**
@@ -389,10 +405,23 @@ public class WorkerInstanceManager {
     }
 
     private int nextWorkerId(String sessionId) {
-        return workerRepository.findBySessionId(sessionId).stream()
+        int currentMax = workerRepository.findBySessionId(sessionId).stream()
                 .mapToInt(this::resolveWorkerId)
                 .max()
-                .orElse(0) + 1;
+                .orElse(0);
+        String seqKey = WORKER_SEQ_KEY_PREFIX + sessionId;
+
+        String luaScript = """
+                local key = KEYS[1]
+                local seed = tonumber(ARGV[1]) or 0
+                if redis.call('EXISTS', key) == 0 then
+                  redis.call('SET', key, seed)
+                end
+                return redis.call('INCR', key)
+                """;
+        RedisScript<Long> script = RedisScript.of(luaScript, Long.class);
+        Long value = redisTemplate.execute(script, List.of(seqKey), String.valueOf(currentMax));
+        return value == null ? currentMax + 1 : value.intValue();
     }
 
     private String buildInstanceId(String sessionId, int workerId) {
@@ -407,5 +436,12 @@ public class WorkerInstanceManager {
             return worker.getAssignedTaskId();
         }
         return worker.getCurrentTaskId();
+    }
+
+    public void clearWorkerSequence(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        redisTemplate.delete(WORKER_SEQ_KEY_PREFIX + sessionId);
     }
 }

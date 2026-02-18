@@ -16,6 +16,7 @@ import reactor.core.publisher.Sinks;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 @Slf4j
 @Component
@@ -33,8 +34,8 @@ public class RedisStreamEventBus implements EventBus {
     private static final Duration STREAM_TTL = Duration.ofHours(1);
     private static final long STREAM_MAX_LEN = 10000;
 
-    private final Map<String, SubscriptionContext> subscriptions = new ConcurrentHashMap<>();
-    private final Map<String, SubscriptionContext> workerSubscriptions = new ConcurrentHashMap<>();
+    private final Map<String, SubscriptionGroup> subscriptions = new ConcurrentHashMap<>();
+    private final Map<String, SubscriptionGroup> workerSubscriptions = new ConcurrentHashMap<>();
 
     public RedisStreamEventBus(StringRedisTemplate redisTemplate,
                                RedisMessageListenerContainer listenerContainer,
@@ -86,79 +87,120 @@ public class RedisStreamEventBus implements EventBus {
         String streamKey = STREAM_KEY_PREFIX + sessionId;
         String channel = CHANNEL_PREFIX + sessionId;
 
-        // 关闭旧的订阅
-        SubscriptionContext oldCtx = subscriptions.get(sessionId);
-        if (oldCtx != null) {
-            cleanup(sessionId, oldCtx);
-        }
-
-        // 创建新的订阅上下文
-        SubscriptionContext ctx = new SubscriptionContext();
-        ctx.lastReadId = (lastEventId != null && !lastEventId.isEmpty()) ? lastEventId : "0";
-        ctx.channel = channel;
-        subscriptions.put(sessionId, ctx);
-
-        // 1. 读取历史消息（断点续传）
-        readAndEmit(streamKey, ctx);
-
-        // 2. 创建 MessageListener 并保存引用
-        MessageListener listener = (message, pattern) -> {
-           //log.debug("[RedisStreamEventBus] Pub/Sub notification: sessionId={}", sessionId);
-            readAndEmit(streamKey, ctx);
-        };
-        ctx.listener = listener;
-
-        // 3. 订阅 Pub/Sub
-        listenerContainer.addMessageListener(listener, new ChannelTopic(channel));
+        SubscriptionGroup group = subscriptions.computeIfAbsent(
+                sessionId,
+                id -> createSubscriptionGroup(streamKey, channel)
+        );
+        SubscriptionContext ctx = new SubscriptionContext(lastEventId);
+        group.contexts.add(ctx);
 
         log.info("[RedisStreamEventBus] Subscribed: sessionId={}, lastEventId={}", sessionId, lastEventId);
 
         return ctx.sink.asFlux()
-                .doOnCancel(() -> {
-                    log.info("[RedisStreamEventBus] SSE cancelled: sessionId={}", sessionId);
-                    cleanup(sessionId, ctx);
+                .doOnSubscribe(s -> readAndEmit(streamKey, ctx))
+                .doFinally(signalType -> {
+                    log.info("[RedisStreamEventBus] SSE finished: sessionId={}, signal={}", sessionId, signalType);
+                    removeSessionContext(sessionId, group, ctx);
                 })
-                .doOnTerminate(() -> {
-                    log.info("[RedisStreamEventBus] SSE terminated: sessionId={}", sessionId);
-                });
+                .doOnCancel(() -> log.info("[RedisStreamEventBus] SSE cancelled: sessionId={}", sessionId));
     }
 
     /**
      * 读取消息并发送，同时更新 lastReadId
      */
     private void readAndEmit(String streamKey, SubscriptionContext ctx) {
-        try {
-            // 读取 lastReadId 之后的所有消息
-            List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream()
-                    .range(streamKey, Range.rightOpen(ctx.lastReadId, "+"));
+        synchronized (ctx) {
+            try {
+                // 读取 lastReadId 之后的所有消息
+                List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream()
+                        .range(streamKey, Range.rightOpen(ctx.lastReadId, "+"));
 
-            if (records != null && !records.isEmpty()) {
-                for (MapRecord<String, Object, Object> record : records) {
-                    String recordId = record.getId().getValue();
+                if (records != null && !records.isEmpty()) {
+                    for (MapRecord<String, Object, Object> record : records) {
+                        String recordId = record.getId().getValue();
 
-                    // 跳过已读的（Range.rightOpen 应该已经排除了，但保险起见）
-                    if (recordId.compareTo(ctx.lastReadId) <= 0) {
-                        continue;
-                    }
-
-                    OrchestrationEvent event = parseEvent(record);
-                    if (event != null) {
-                        Sinks.EmitResult result = ctx.sink.tryEmitNext(event);
-                        if (result.isFailure()) {
-                            log.warn("[RedisStreamEventBus] Emit failed: result={}", result);
-                            break;
+                        // 跳过已读的（Range.rightOpen 应该已经排除了，但保险起见）
+                        if (recordId.compareTo(ctx.lastReadId) <= 0) {
+                            continue;
                         }
-                    }
 
-                    // 更新 lastReadId
-                    ctx.lastReadId = recordId;
+                        OrchestrationEvent event = parseEvent(record);
+                        if (event != null) {
+                            Sinks.EmitResult result = ctx.sink.tryEmitNext(event);
+                            if (result.isFailure()) {
+                                log.warn("[RedisStreamEventBus] Emit failed: result={}", result);
+                                break;
+                            }
+                        }
+
+                        // 更新 lastReadId
+                        ctx.lastReadId = recordId;
+                    }
                 }
-//                log.debug("[RedisStreamEventBus] Emitted {} events, lastReadId={}",
-//                        records.size(), ctx.lastReadId);
+            } catch (Exception e) {
+                log.error("[RedisStreamEventBus] Read and emit failed: streamKey={}", streamKey, e);
             }
-        } catch (Exception e) {
-            log.error("[RedisStreamEventBus] Read and emit failed: streamKey={}", streamKey, e);
         }
+    }
+
+    private void readAndEmitToGroup(SubscriptionGroup group) {
+        if (group == null || group.contexts.isEmpty()) {
+            return;
+        }
+        for (SubscriptionContext ctx : group.contexts) {
+            readAndEmit(group.streamKey, ctx);
+        }
+    }
+
+    private SubscriptionGroup createSubscriptionGroup(String streamKey, String channel) {
+        SubscriptionGroup group = new SubscriptionGroup(streamKey, channel);
+        MessageListener listener = (message, pattern) -> readAndEmitToGroup(group);
+        group.listener = listener;
+        listenerContainer.addMessageListener(listener, new ChannelTopic(channel));
+        return group;
+    }
+
+    private void removeSessionContext(String sessionId, SubscriptionGroup group, SubscriptionContext ctx) {
+        if (group == null) {
+            return;
+        }
+        ctx.close();
+        group.contexts.remove(ctx);
+        if (!group.contexts.isEmpty()) {
+            return;
+        }
+        boolean removed = subscriptions.remove(sessionId, group);
+        if (removed) {
+            cleanupGroup(group);
+            log.info("[RedisStreamEventBus] Cleaned up: sessionId={}", sessionId);
+        }
+    }
+
+    private void removeWorkerContext(String workerKey, SubscriptionGroup group, SubscriptionContext ctx) {
+        if (group == null) {
+            return;
+        }
+        ctx.close();
+        group.contexts.remove(ctx);
+        if (!group.contexts.isEmpty()) {
+            return;
+        }
+        boolean removed = workerSubscriptions.remove(workerKey, group);
+        if (removed) {
+            cleanupGroup(group);
+            log.info("[RedisStreamEventBus] Cleaned up worker subscription: workerKey={}", workerKey);
+        }
+    }
+
+    private void cleanupGroup(SubscriptionGroup group) {
+        if (group.listener != null && group.channel != null) {
+            listenerContainer.removeMessageListener(group.listener, new ChannelTopic(group.channel));
+            group.listener = null;
+        }
+        for (SubscriptionContext context : group.contexts) {
+            context.close();
+        }
+        group.contexts.clear();
     }
 
     private OrchestrationEvent parseEvent(MapRecord<String, Object, Object> record) {
@@ -180,28 +222,27 @@ public class RedisStreamEventBus implements EventBus {
         }
     }
 
-    private void cleanup(String sessionId, SubscriptionContext ctx) {
-        // 移除 MessageListener
-        if (ctx.listener != null && ctx.channel != null) {
-            listenerContainer.removeMessageListener(ctx.listener, new ChannelTopic(ctx.channel));
-        }
-        ctx.close();
-        subscriptions.remove(sessionId, ctx);  // 只移除匹配的
-        log.info("[RedisStreamEventBus] Cleaned up: sessionId={}", sessionId);
-    }
-
     @Override
     public void unsubscribe(String sessionId) {
-        SubscriptionContext ctx = subscriptions.remove(sessionId);
-        if (ctx != null) {
-            cleanup(sessionId, ctx);
+        SubscriptionGroup group = subscriptions.remove(sessionId);
+        if (group != null) {
+            cleanupGroup(group);
+            log.info("[RedisStreamEventBus] Unsubscribed: sessionId={}", sessionId);
         }
     }
 
     @Override
     public boolean hasSubscribers(String sessionId) {
-        SubscriptionContext ctx = subscriptions.get(sessionId);
-        return ctx != null && ctx.sink.currentSubscriberCount() > 0;
+        SubscriptionGroup group = subscriptions.get(sessionId);
+        if (group == null) {
+            return false;
+        }
+        for (SubscriptionContext context : group.contexts) {
+            if (context.sink.currentSubscriberCount() > 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -214,43 +255,25 @@ public class RedisStreamEventBus implements EventBus {
         String streamKey = WORKER_STREAM_KEY_PREFIX + workerKey;
         String channel = WORKER_CHANNEL_PREFIX + workerKey;
 
-        // 关闭旧的订阅
-        SubscriptionContext oldCtx = workerSubscriptions.get(workerKey);
-        if (oldCtx != null) {
-            cleanupWorker(workerKey, oldCtx);
-        }
-
-        // 创建新的订阅上下文
-        SubscriptionContext ctx = new SubscriptionContext();
-        ctx.lastReadId = (lastEventId != null && !lastEventId.isEmpty()) ? lastEventId : "0";
-        ctx.channel = channel;
-        workerSubscriptions.put(workerKey, ctx);
-
-        // 1. 读取历史消息
-        readAndEmit(streamKey, ctx);
-
-        // 2. 创建 MessageListener
-        MessageListener listener = (message, pattern) -> {
-            readAndEmit(streamKey, ctx);
-        };
-        ctx.listener = listener;
-
-        // 3. 订阅 Pub/Sub
-        listenerContainer.addMessageListener(listener, new ChannelTopic(channel));
+        SubscriptionGroup group = workerSubscriptions.computeIfAbsent(
+                workerKey,
+                id -> createSubscriptionGroup(streamKey, channel)
+        );
+        SubscriptionContext ctx = new SubscriptionContext(lastEventId);
+        group.contexts.add(ctx);
 
         log.info("[RedisStreamEventBus] Subscribed to worker: sessionId={}, instanceId={}, lastEventId={}",
                 sessionId, instanceId, lastEventId);
 
         return ctx.sink.asFlux()
-                .doOnCancel(() -> {
-                    log.info("[RedisStreamEventBus] Worker SSE cancelled: sessionId={}, instanceId={}",
-                            sessionId, instanceId);
-                    cleanupWorker(workerKey, ctx);
+                .doOnSubscribe(s -> readAndEmit(streamKey, ctx))
+                .doFinally(signalType -> {
+                    log.info("[RedisStreamEventBus] Worker SSE finished: sessionId={}, instanceId={}, signal={}",
+                            sessionId, instanceId, signalType);
+                    removeWorkerContext(workerKey, group, ctx);
                 })
-                .doOnTerminate(() -> {
-                    log.info("[RedisStreamEventBus] Worker SSE terminated: sessionId={}, instanceId={}",
-                            sessionId, instanceId);
-                });
+                .doOnCancel(() -> log.info("[RedisStreamEventBus] Worker SSE cancelled: sessionId={}, instanceId={}",
+                        sessionId, instanceId));
     }
 
     @Override
@@ -276,28 +299,31 @@ public class RedisStreamEventBus implements EventBus {
 
 //            log.debug("[RedisStreamEventBus] Published to worker: sessionId={}, instanceId={}, type={}",
 //                    sessionId, instanceId, event.getEventType());
-
         } catch (Exception e) {
             log.error("[RedisStreamEventBus] Publish to worker failed: sessionId={}, instanceId={}",
                     sessionId, instanceId, e);
         }
     }
 
-    private void cleanupWorker(String workerKey, SubscriptionContext ctx) {
-        // 移除 MessageListener
-        if (ctx.listener != null && ctx.channel != null) {
-            listenerContainer.removeMessageListener(ctx.listener, new ChannelTopic(ctx.channel));
+    private static class SubscriptionGroup {
+        final String streamKey;
+        final String channel;
+        final CopyOnWriteArrayList<SubscriptionContext> contexts = new CopyOnWriteArrayList<>();
+        volatile MessageListener listener;
+
+        SubscriptionGroup(String streamKey, String channel) {
+            this.streamKey = streamKey;
+            this.channel = channel;
         }
-        ctx.close();
-        workerSubscriptions.remove(workerKey, ctx);
-        log.info("[RedisStreamEventBus] Cleaned up worker subscription: workerKey={}", workerKey);
     }
 
     private static class SubscriptionContext {
         final Sinks.Many<OrchestrationEvent> sink = Sinks.many().multicast().onBackpressureBuffer(1024);
         volatile String lastReadId = "0";
-        volatile String channel;
-        volatile MessageListener listener;
+
+        SubscriptionContext(String lastEventId) {
+            this.lastReadId = (lastEventId != null && !lastEventId.isEmpty()) ? lastEventId : "0";
+        }
 
         void close() {
             sink.tryEmitComplete();

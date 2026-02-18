@@ -6,12 +6,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 @Slf4j
 @Service
@@ -24,7 +23,45 @@ public class AgentExecutionStateService {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
 
-    private final ConcurrentMap<String, Object> locks = new ConcurrentHashMap<>();
+    private static final String LUA_SET_STATUS = """
+            local key = KEYS[1]
+            local target = ARGV[1]
+            local detail = ARGV[2]
+            local now = ARGV[3]
+            local instanceId = ARGV[4]
+            local currentJson = redis.call('GET', key)
+            local state = {}
+            if currentJson and currentJson ~= '' then
+              state = cjson.decode(currentJson)
+            end
+            state.instanceId = instanceId
+            state.status = target
+            state.detail = detail
+            state.updatedAt = now
+            redis.call('SET', key, cjson.encode(state), 'EX', 43200)
+            return 1
+            """;
+
+    private static final String LUA_TRANSITION_IF = """
+            local key = KEYS[1]
+            local expected = ARGV[1]
+            local target = ARGV[2]
+            local detail = ARGV[3]
+            local now = ARGV[4]
+            local json = redis.call('GET', key)
+            if not json or json == '' then
+              return 0
+            end
+            local state = cjson.decode(json)
+            if state.status ~= expected then
+              return 0
+            end
+            state.status = target
+            state.detail = detail
+            state.updatedAt = now
+            redis.call('SET', key, cjson.encode(state), 'EX', 43200)
+            return 1
+            """;
 
     public AgentExecutionStatus getStatus(String instanceId) {
         AgentExecutionState state = getState(instanceId);
@@ -45,22 +82,25 @@ public class AgentExecutionStateService {
     }
 
     public void setStatus(String instanceId, AgentExecutionStatus status, String detail) {
-        Object lock = locks.computeIfAbsent(instanceId, key -> new Object());
-        synchronized (lock) {
-            AgentExecutionState current = getState(instanceId);
-            AgentExecutionStatus fromStatus = current == null ? null : current.getStatus();
+        AgentExecutionState current = getState(instanceId);
+        AgentExecutionStatus fromStatus = current == null ? null : current.getStatus();
 
-            AgentExecutionState state = AgentExecutionState.builder()
-                    .instanceId(instanceId)
-                    .status(status)
-                    .detail(detail)
-                    .updatedAt(LocalDateTime.now())
-                    .build();
-            writeState(instanceId, state);
+        try {
+            redisTemplate.execute(
+                    RedisScript.of(LUA_SET_STATUS, Long.class),
+                    java.util.List.of(buildKey(instanceId)),
+                    status.name(),
+                    detail == null ? "" : detail,
+                    LocalDateTime.now().toString(),
+                    instanceId
+            );
             log.info(
                     "[AgentExecutionStateService] Transition applied: instanceId={}, from={}, to={}, trigger=setStatus, detail={}, result=APPLIED",
                     instanceId, fromStatus, status, detail
             );
+        } catch (Exception e) {
+            log.error("[AgentExecutionStateService] Failed to set status: instanceId={}, to={}, detail={}",
+                    instanceId, status, detail, e);
         }
     }
 
@@ -68,41 +108,37 @@ public class AgentExecutionStateService {
                                 AgentExecutionStatus expectedStatus,
                                 AgentExecutionStatus targetStatus,
                                 String detail) {
-        Object lock = locks.computeIfAbsent(instanceId, key -> new Object());
-        synchronized (lock) {
-            AgentExecutionState current = getState(instanceId);
-            AgentExecutionStatus currentStatus = current == null ? null : current.getStatus();
+        AgentExecutionState current = getState(instanceId);
+        AgentExecutionStatus currentStatus = current == null ? null : current.getStatus();
 
-            if (currentStatus != expectedStatus) {
+        try {
+            Long result = redisTemplate.execute(
+                    RedisScript.of(LUA_TRANSITION_IF, Long.class),
+                    java.util.List.of(buildKey(instanceId)),
+                    expectedStatus == null ? "" : expectedStatus.name(),
+                    targetStatus.name(),
+                    detail == null ? "" : detail,
+                    LocalDateTime.now().toString()
+            );
+            boolean applied = result != null && result == 1L;
+            if (!applied) {
                 log.info(
                         "[AgentExecutionStateService] Transition rejected: instanceId={}, from={}, expected={}, to={}, trigger=transitionIf, detail={}, result=REJECTED",
                         instanceId, currentStatus, expectedStatus, targetStatus, detail
                 );
                 return false;
             }
-
-            AgentExecutionState target = AgentExecutionState.builder()
-                    .instanceId(instanceId)
-                    .status(targetStatus)
-                    .detail(detail)
-                    .updatedAt(LocalDateTime.now())
-                    .build();
-            writeState(instanceId, target);
             log.info(
                     "[AgentExecutionStateService] Transition applied: instanceId={}, from={}, to={}, expected={}, trigger=transitionIf, detail={}, result=APPLIED",
                     instanceId, currentStatus, targetStatus, expectedStatus, detail
             );
             return true;
-        }
-    }
-
-    private void writeState(String instanceId, AgentExecutionState state) {
-        try {
-            String key = buildKey(instanceId);
-            String json = objectMapper.writeValueAsString(state);
-            redisTemplate.opsForValue().set(key, json, STATE_TTL);
         } catch (Exception e) {
-            log.error("[AgentExecutionStateService] Failed to write state: instanceId={}", instanceId, e);
+            log.error(
+                    "[AgentExecutionStateService] Transition failed: instanceId={}, from={}, expected={}, to={}, detail={}",
+                    instanceId, currentStatus, expectedStatus, targetStatus, detail, e
+            );
+            return false;
         }
     }
 

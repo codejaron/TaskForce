@@ -1,7 +1,6 @@
 package com.agent.infrastructure.persistence.redis;
 
 import com.agent.domain.worker.model.WorkerInstance;
-import com.agent.domain.worker.model.WorkerStatus;
 import com.agent.domain.worker.repository.WorkerInstanceRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,7 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -46,14 +44,11 @@ public class RedisWorkerInstanceRepository implements WorkerInstanceRepository {
 
     @Override
     public Optional<WorkerInstance> findById(String instanceId) {
+        String key = keyFromInstanceId(instanceId);
+        if (key == null) {
+            return Optional.empty();
+        }
         try {
-            // 需要扫描所有 worker:* 键来查找
-            Set<String> keys = redisTemplate.keys(KEY_PREFIX + "*:" + instanceId);
-            if (keys == null || keys.isEmpty()) {
-                return Optional.empty();
-            }
-
-            String key = keys.iterator().next();
             String json = redisTemplate.opsForValue().get(key);
             if (json == null) {
                 return Optional.empty();
@@ -95,10 +90,13 @@ public class RedisWorkerInstanceRepository implements WorkerInstanceRepository {
 
     @Override
     public void delete(String instanceId) {
+        String key = keyFromInstanceId(instanceId);
+        if (key == null) {
+            return;
+        }
         try {
-            Set<String> keys = redisTemplate.keys(KEY_PREFIX + "*:" + instanceId);
-            if (keys != null && !keys.isEmpty()) {
-                redisTemplate.delete(keys);
+            Boolean deleted = redisTemplate.delete(key);
+            if (Boolean.TRUE.equals(deleted)) {
                 log.debug("Deleted worker instance: {}", instanceId);
             }
         } catch (Exception e) {
@@ -124,9 +122,12 @@ public class RedisWorkerInstanceRepository implements WorkerInstanceRepository {
 
     @Override
     public boolean existsById(String instanceId) {
+        String key = keyFromInstanceId(instanceId);
+        if (key == null) {
+            return false;
+        }
         try {
-            Set<String> keys = redisTemplate.keys(KEY_PREFIX + "*:" + instanceId);
-            return keys != null && !keys.isEmpty();
+            return Boolean.TRUE.equals(redisTemplate.hasKey(key));
         } catch (Exception e) {
             log.error("Failed to check existence of WorkerInstance: {}", instanceId, e);
             return false;
@@ -138,5 +139,20 @@ public class RedisWorkerInstanceRepository implements WorkerInstanceRepository {
      */
     private String buildKey(String sessionId, String instanceId) {
         return KEY_PREFIX + sessionId + ":" + instanceId;
+    }
+
+    /**
+     * 通过 instanceId 解析 sessionId（格式: {sessionId}_w{workerId}）并拼出 Redis key。
+     */
+    private String keyFromInstanceId(String instanceId) {
+        if (instanceId == null || instanceId.isBlank()) {
+            return null;
+        }
+        int suffixIndex = instanceId.lastIndexOf("_w");
+        if (suffixIndex <= 0) {
+            return null;
+        }
+        String sessionId = instanceId.substring(0, suffixIndex);
+        return buildKey(sessionId, instanceId);
     }
 }

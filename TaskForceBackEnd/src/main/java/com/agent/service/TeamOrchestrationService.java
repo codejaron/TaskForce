@@ -23,6 +23,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
@@ -30,6 +33,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Team Orchestration Service
@@ -53,6 +57,8 @@ public class TeamOrchestrationService {
     private final SessionExecutionTracker executionTracker;
     private final ObjectMapper objectMapper;
     private final AgentExecutionStateService executionStateService;
+    @Autowired(required = false)
+    private RedissonClient redissonClient;
 
     private final Map<String, LeadRuntimeContext> leadRuntimeContexts = new ConcurrentHashMap<>();
 
@@ -67,7 +73,19 @@ public class TeamOrchestrationService {
         log.info("[TeamOrchestrationService] Starting team session: sessionId={}, goal={}",
                 sessionId, userGoal);
 
+        RLock startLock = null;
         try {
+            if (redissonClient != null) {
+                startLock = redissonClient.getLock("team:start:" + sessionId);
+                boolean locked = startLock.tryLock(5, TimeUnit.SECONDS);
+                if (!locked) {
+                    String msg = "Session start lock is held by another request";
+                    log.warn("[TeamOrchestrationService] {}", msg);
+                    eventBus.publish(sessionId, new ErrorEvent(sessionId, msg));
+                    return;
+                }
+            }
+
             // 1. 获取 Lead Agent 配置
             Agent leadAgent = getLeadAgent();
             if (leadAgent == null) {
@@ -135,6 +153,16 @@ public class TeamOrchestrationService {
             log.error("[TeamOrchestrationService] Failed to start team session: sessionId={}", sessionId, e);
             leadRuntimeContexts.remove(sessionId);
             eventBus.publish(sessionId, new ErrorEvent(sessionId, e.getMessage()));
+        } finally {
+            if (startLock != null) {
+                try {
+                    if (startLock.isHeldByCurrentThread()) {
+                        startLock.unlock();
+                    }
+                } catch (Exception e) {
+                    log.warn("[TeamOrchestrationService] Failed to unlock start lock: sessionId={}", sessionId, e);
+                }
+            }
         }
     }
 
@@ -168,6 +196,8 @@ public class TeamOrchestrationService {
 
             // 5. 清理任务板（可选：保留任务历史）
             // taskBoardService.deleteAllTasks(sessionId);
+            taskBoardService.clearTaskSequence(sessionId);
+            workerInstanceManager.clearWorkerSequence(sessionId);
 
             // 6. 发布会话完成事件，统一驱动状态与历史落库
             eventBus.publish(sessionId, new SessionCompleteEvent(sessionId, "Session stopped by user"));

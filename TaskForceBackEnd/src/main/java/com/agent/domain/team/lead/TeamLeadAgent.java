@@ -432,14 +432,17 @@ public class TeamLeadAgent {
 
     public boolean isLeadLoopRunning(String sessionId) {
         Disposable disposable = runningLeadLoops.get(sessionId);
-        if (disposable == null) {
-            return false;
+        if (disposable != null && !disposable.isDisposed()) {
+            return true;
         }
-        if (disposable.isDisposed()) {
+        if (disposable != null) {
             runningLeadLoops.remove(sessionId, disposable);
-            return false;
         }
-        return true;
+        String leadInstanceId = sessionId + "_lead";
+        AgentExecutionStatus status = executionStateService.getStatus(leadInstanceId);
+        return status != null
+                && status != AgentExecutionStatus.COMPLETED
+                && status != AgentExecutionStatus.FAILED;
     }
 
     public void clearLeadCheckpoint(String sessionId) {

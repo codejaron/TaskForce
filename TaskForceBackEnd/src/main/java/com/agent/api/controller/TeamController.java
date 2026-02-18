@@ -2,6 +2,7 @@ package com.agent.api.controller;
 
 import com.agent.api.dto.TeamSessionHistoryDTO;
 import com.agent.api.response.ApiResponse;
+import com.agent.domain.execution.service.SessionOwnerService;
 import com.agent.domain.execution.model.AgentExecutionStatus;
 import com.agent.domain.execution.service.AgentExecutionStateService;
 import com.agent.domain.taskboard.model.Task;
@@ -16,11 +17,13 @@ import com.agent.infrastructure.event.OrchestrationEvent;
 import com.agent.infrastructure.event.RedisStreamEventBus;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.agent.service.TeamOwnerForwardService;
 import com.agent.service.TeamOrchestrationService;
 import jakarta.validation.Valid;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
@@ -48,6 +51,8 @@ public class TeamController {
     private final TeamHistoryQueryService teamHistoryQueryService;
     private final TeamLeadAgent teamLeadAgent;
     private final AgentExecutionStateService executionStateService;
+    private final SessionOwnerService sessionOwnerService;
+    private final TeamOwnerForwardService teamOwnerForwardService;
     private final EventBus eventBus;
     private final ObjectMapper objectMapper;
 
@@ -61,6 +66,14 @@ public class TeamController {
                  request.getSessionId(), request.getUserGoal());
 
         try {
+            boolean acquired = sessionOwnerService.tryAcquireOwner(request.getSessionId());
+            if (!acquired) {
+                String owner = sessionOwnerService.getOwnerNode(request.getSessionId()).orElse("unknown");
+                log.info("[TeamController] Start rejected by owner guard: sessionId={}, owner={}",
+                        request.getSessionId(), owner);
+                return ApiResponse.error(409, "会话已在其他节点运行: " + owner);
+            }
+
             teamHistoryPersistenceService.persistUserMessage(request.getSessionId(), request.getUserGoal());
 
             // 异步启动团队会话，事件通过 EventBus 发送到 /session/{sessionId}/events
@@ -91,6 +104,16 @@ public class TeamController {
                  sessionId, request.getMessage());
 
         try {
+            String owner = sessionOwnerService.getOwnerNode(sessionId).orElse(null);
+            if (owner != null && !sessionOwnerService.isCurrentNode(owner)) {
+                return teamOwnerForwardService.forward(
+                        owner,
+                        HttpMethod.POST,
+                        "/api/v2/team/session/" + sessionId + "/lead/message",
+                        request,
+                        Void.class
+                );
+            }
             teamOrchestrationService.sendMessageToLead(sessionId, request.getMessage());
             teamHistoryPersistenceService.persistUserMessage(sessionId, request.getMessage());
             return ApiResponse.success("消息已发送给 Team Lead", null);
@@ -114,6 +137,16 @@ public class TeamController {
                  sessionId, instanceId, request.getMessage());
 
         try {
+            String owner = sessionOwnerService.getOwnerNode(sessionId).orElse(null);
+            if (owner != null && !sessionOwnerService.isCurrentNode(owner)) {
+                return teamOwnerForwardService.forward(
+                        owner,
+                        HttpMethod.POST,
+                        "/api/v2/team/session/" + sessionId + "/worker/" + instanceId + "/message",
+                        request,
+                        Void.class
+                );
+            }
             teamOrchestrationService.sendMessageToWorker(sessionId, instanceId, request.getMessage());
             teamHistoryPersistenceService.persistUserMessageToWorker(sessionId, instanceId, request.getMessage());
             return ApiResponse.success("消息已发送给 Worker", null);
@@ -149,6 +182,16 @@ public class TeamController {
     @GetMapping("/session/{sessionId}/runtime-status")
     public ApiResponse<TeamRuntimeStatusDTO> getRuntimeStatus(@PathVariable String sessionId) {
         try {
+            String owner = sessionOwnerService.getOwnerNode(sessionId).orElse(null);
+            if (owner != null && !sessionOwnerService.isCurrentNode(owner)) {
+                return teamOwnerForwardService.forward(
+                        owner,
+                        HttpMethod.GET,
+                        "/api/v2/team/session/" + sessionId + "/runtime-status",
+                        null,
+                        TeamRuntimeStatusDTO.class
+                );
+            }
             String leadInstanceId = sessionId + "_lead";
             AgentExecutionStatus leadExecutionStatus = executionStateService.getStatus(leadInstanceId);
             boolean leadLoopRunning = teamLeadAgent.isLeadLoopRunning(sessionId);
@@ -285,7 +328,18 @@ public class TeamController {
         log.info("[TeamController] Stopping team session: sessionId={}", sessionId);
 
         try {
+            String owner = sessionOwnerService.getOwnerNode(sessionId).orElse(null);
+            if (owner != null && !sessionOwnerService.isCurrentNode(owner)) {
+                return teamOwnerForwardService.forward(
+                        owner,
+                        HttpMethod.POST,
+                        "/api/v2/team/session/" + sessionId + "/stop",
+                        null,
+                        Void.class
+                );
+            }
             teamOrchestrationService.stopSession(sessionId);
+            sessionOwnerService.releaseOwner(sessionId);
             return ApiResponse.success("团队会话已停止", null);
         } catch (Exception e) {
             log.error("[TeamController] Failed to stop team session", e);

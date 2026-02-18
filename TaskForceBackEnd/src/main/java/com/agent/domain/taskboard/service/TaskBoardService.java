@@ -38,6 +38,7 @@ public class TaskBoardService {
 
     private static final String KEY_PREFIX = "taskboard:";
     private static final String FIELD_PREFIX = "task:";
+    private static final String TASK_SEQ_KEY_PREFIX = "task:seq:";
 
     /**
      * 创建任务
@@ -45,12 +46,25 @@ public class TaskBoardService {
     public Task createTask(String sessionId, String subject, String description, List<Integer> blockedBy) {
         List<Integer> safeBlockedBy = blockedBy == null ? new ArrayList<>() : new ArrayList<>(blockedBy);
 
-        // 分配递增序号：当前 session 最大 taskId + 1
+        // 分配递增序号：Redis INCR，首次使用以现有 max taskId 作为懒初始化种子。
         List<Task> existingTasks = taskBoardRepository.findBySessionId(sessionId);
-        int nextId = existingTasks.stream()
+        int currentMaxId = existingTasks.stream()
                 .mapToInt(Task::getTaskId)
                 .max()
-                .orElse(0) + 1;
+                .orElse(0);
+
+        String seqKey = TASK_SEQ_KEY_PREFIX + sessionId;
+        String seqLuaScript = """
+                local key = KEYS[1]
+                local seed = tonumber(ARGV[1]) or 0
+                if redis.call('EXISTS', key) == 0 then
+                  redis.call('SET', key, seed)
+                end
+                return redis.call('INCR', key)
+                """;
+        RedisScript<Long> seqScript = RedisScript.of(seqLuaScript, Long.class);
+        Long seqValue = redisTemplate.execute(seqScript, List.of(seqKey), String.valueOf(currentMaxId));
+        int nextId = seqValue == null ? currentMaxId + 1 : seqValue.intValue();
 
         Task task = Task.builder()
                 .taskId(nextId)
@@ -492,6 +506,14 @@ public class TaskBoardService {
      */
     public void deleteAllTasks(String sessionId) {
         taskBoardRepository.deleteBySessionId(sessionId);
+        clearTaskSequence(sessionId);
         log.info("Deleted all tasks for session: {}", sessionId);
+    }
+
+    public void clearTaskSequence(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        redisTemplate.delete(TASK_SEQ_KEY_PREFIX + sessionId);
     }
 }
