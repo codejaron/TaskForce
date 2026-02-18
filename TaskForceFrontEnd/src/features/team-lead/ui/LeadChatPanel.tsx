@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTeamStore } from '../../team/model/store';
 import type { LeadMessage } from '../../team/model/store';
-import { Send, Bot, User, Loader2, Users, AlertCircle, StopCircle, Wrench, CheckCircle2, ChevronDown } from 'lucide-react';
+import { Send, Bot, User, Loader2, Users, AlertCircle, StopCircle, Wrench, CheckCircle2, ChevronDown, Plus } from 'lucide-react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -11,17 +11,23 @@ import { parseThinkContent } from '../../team/ui/thinkParser';
 import { useTranslation } from 'react-i18next';
 import { getToolDisplayName } from '../../../shared/utils/toolName';
 import { useIsDarkMode } from '../../../shared/hooks/useIsDarkMode';
+import { api } from '../../../shared/api';
 
 export const LeadChatPanel: React.FC = () => {
   const { t } = useTranslation();
-  const { messages, sendToLead, stopTeam, leadStatus, leadLifecycleStatus, teamPhase, isTeamStarted } = useTeamStore();
+  const { currentSession, messages, sendToLead, stopTeam, leadStatus, leadLifecycleStatus, teamPhase, isTeamStarted } = useTeamStore();
   const [inputMessage, setInputMessage] = useState('');
   const [isStopping, setIsStopping] = useState(false);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const [showUploadMenu, setShowUploadMenu] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef<number>(0);
+  const uploadMenuRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -29,6 +35,22 @@ export const LeadChatPanel: React.FC = () => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, isUserScrolling]);
+
+  useEffect(() => {
+    if (!showUploadMenu) {
+      return;
+    }
+    const onClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (uploadMenuRef.current && target && !uploadMenuRef.current.contains(target)) {
+        setShowUploadMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside);
+    };
+  }, [showUploadMenu]);
 
   // 监听滚动事件，检测用户是否主动向上滚动
   const handleScroll = () => {
@@ -73,6 +95,49 @@ export const LeadChatPanel: React.FC = () => {
     } finally {
       setIsStopping(false);
     }
+  };
+
+  const getRelativePath = (file: File) => {
+    const fileWithRelative = file as File & { webkitRelativePath?: string };
+    if (fileWithRelative.webkitRelativePath && fileWithRelative.webkitRelativePath.trim()) {
+      return fileWithRelative.webkitRelativePath;
+    }
+    return file.name;
+  };
+
+  const uploadSelectedFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0 || !currentSession) {
+      return;
+    }
+    const files = Array.from(fileList);
+    const paths = files.map(getRelativePath);
+    setIsUploading(true);
+    setShowUploadMenu(false);
+    try {
+      const result = await api.sessions.uploadWorkspaceFiles(currentSession.id, files, paths);
+      alert(t('team.uploadSuccess', { count: result.uploadedCount ?? files.length }));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      alert(`${t('team.uploadFailed')}: ${message}`);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      if (folderInputRef.current) {
+        folderInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleChooseFiles = () => {
+    setShowUploadMenu(false);
+    fileInputRef.current?.click();
+  };
+
+  const handleChooseFolder = () => {
+    setShowUploadMenu(false);
+    folderInputRef.current?.click();
   };
 
   const lifecycleLabel = (status: 'RUNNING' | 'STOPPED' | 'DESTROYED') => {
@@ -215,6 +280,49 @@ export const LeadChatPanel: React.FC = () => {
       {/* Input Area */}
       <div className="p-4 border-t border-gray-200 bg-white">
         <div className="flex gap-3">
+          <div className="relative" ref={uploadMenuRef}>
+            <button
+              onClick={() => setShowUploadMenu(v => !v)}
+              disabled={!currentSession || isStopping || isUploading}
+              className="h-full min-h-[50px] px-3 bg-white border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm flex items-center justify-center"
+              title={t('team.uploadFiles')}
+            >
+              {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+            </button>
+            {showUploadMenu && !isUploading && (
+              <div className="absolute bottom-[56px] left-0 z-20 w-40 bg-white border border-gray-200 rounded-lg shadow-lg p-1">
+                <button
+                  onClick={handleChooseFiles}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md cursor-pointer"
+                >
+                  {t('team.uploadFiles')}
+                </button>
+                <button
+                  onClick={handleChooseFolder}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md cursor-pointer"
+                >
+                  {t('team.uploadFolder')}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={e => uploadSelectedFiles(e.target.files)}
+          />
+          <input
+            ref={folderInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={e => uploadSelectedFiles(e.target.files)}
+            {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+          />
+
           <input
             type="text"
             value={inputMessage}
@@ -222,11 +330,12 @@ export const LeadChatPanel: React.FC = () => {
             onKeyDown={handleKeyDown}
             placeholder={t('team.sendToLeadPlaceholder')}
             className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none shadow-sm"
+            disabled={isUploading}
           />
           {showStopButton && (
             <button
               onClick={handleStop}
-              disabled={isStopping}
+              disabled={isStopping || isUploading}
               className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium transition-colors duration-200 flex items-center gap-2 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               title={t('team.stopExecution')}
             >
@@ -236,7 +345,7 @@ export const LeadChatPanel: React.FC = () => {
           )}
           <button
             onClick={handleSend}
-            disabled={!inputMessage.trim() || isStopping}
+            disabled={!inputMessage.trim() || isStopping || isUploading}
             className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-colors duration-200 flex items-center gap-2 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send size={20} />

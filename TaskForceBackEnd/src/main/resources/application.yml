@@ -1,6 +1,10 @@
 server:
   port: 8080
 
+cluster:
+  node-id: ${CLUSTER_NODE_ID:${HOSTNAME:localhost}:${server.port:8080}}
+  forward-timeout-seconds: ${CLUSTER_FORWARD_TIMEOUT_SECONDS:10}
+
 spring:
   application:
     name: mcp-host
@@ -141,7 +145,7 @@ sandbox:
     storage-dir: ${SANDBOX_SYNC_STORAGE_DIR:${java.io.tmpdir}/taskforce-round-sync}
     fail-round-id: ${SANDBOX_SYNC_FAIL_ROUND_ID:}
     minio:
-      enabled: ${SANDBOX_SYNC_MINIO_ENABLED:false}
+      enabled: ${SANDBOX_SYNC_MINIO_ENABLED:true}
       endpoint: ${MINIO_ENDPOINT:}
       access-key: ${MINIO_ACCESS_KEY:}
       secret-key: ${MINIO_SECRET_KEY:}
