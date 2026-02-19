@@ -1,182 +1,98 @@
-# TaskForce
+<div align="center">
+  <h1>TaskForce</h1>
+  <p><strong>面向云端与私有化部署的多 Agent 协作编排平台（Java / Spring）</strong></p>
+  <p>
+    <img src="https://img.shields.io/badge/java-21-6b6b6b?style=flat-square&logo=openjdk&logoColor=white" alt="Java 21" />
+    <img src="https://img.shields.io/badge/spring_boot-3.3.4-6DB33F?style=flat-square&logo=springboot&logoColor=white" alt="Spring Boot 3.3.4" />
+    <img src="https://img.shields.io/badge/spring_ai-1.1.2-0ea5e9?style=flat-square" alt="Spring AI 1.1.2" />
+    <img src="https://img.shields.io/badge/spring_ai_alibaba-1.1.2.0-f97316?style=flat-square" alt="Spring AI Alibaba 1.1.2.0" />
+    <img src="https://img.shields.io/badge/react-19.2.0-2563eb?style=flat-square&logo=react&logoColor=white" alt="React 19.2.0" />
+    <img src="https://img.shields.io/badge/redis-7-dc2626?style=flat-square&logo=redis&logoColor=white" alt="Redis 7" />
+    <img src="https://img.shields.io/badge/license-apache_2.0-16a34a?style=flat-square" alt="Apache 2.0" />
+  </p>
+  <p>
+    <a href="./README.md">中文</a> |
+    <a href="./README_EN.md">English</a> |
+    <a href="./QUICKSTART.md">快速开始</a> |
+    <a href="./mcp-server/README.md">MCP Server 文档</a>
+  </p>
+</div>
 
-[中文 README](./README.md) | [English README](./README_EN.md)
+## 简介
 
-## 项目概览
+TaskForce 是一个面向云端与私有化部署的多智能体协作系统。  
+核心模型是 `Team Lead + Worker`：Lead 负责任务拆解与调度，Worker 负责执行与回报，系统通过事件驱动持续推进，直到会话完成。系统内建分布式会话归属、事件流恢复与对象存储同步能力，适合真实工程场景。
 
-TaskForce 是一个面向本地运行的多智能体协作平台，提供两种核心工作模式：
+## 核心亮点
 
-- `Team`：由 Team Lead 协调多个 Worker 执行任务
-- `Single Chat`：单智能体直接对话
+- **Team 模式（持久化协作）**：Lead/Worker 都是可持续运行的 ReAct 循环，不是“一次请求一次响应”的短链路调用。
+- **TaskBoard DAG 编排**：任务依赖显式建模（`blockedBy` / `blocks`），支持环检测与下游自动解锁。
+- **MCP 工具层工程化**：`mcp-server` 支持 `STDIO`、`REMOTE_SSE`、`STREAMABLE_HTTP`，并支持 Provider 热更新与统一路由。
+- **事件流可恢复**：基于 Redis Stream + Pub/Sub，SSE 支持 `Last-Event-ID` 续传。
+- **Skill 管理**：支持 Skill 导入、启用/禁用与自动加载，便于按场景扩展 Agent 能力。
+- **Sandbox 执行**：支持会话隔离的 Shell/Python/文件工具执行，产物可同步到 MinIO。
 
-平台内置 MCP 工具接入能力、实时事件流和会话级状态管理，适合用于智能体协作流程验证、工具编排实验和本地 AI 应用开发。
+## 架构示意
 
-## 核心能力
+![System Architecture Overview](./public/images/SystemArchitectureOverview.png)
 
-- 多智能体协作：Team Lead 负责拆解任务、调度执行、汇总结果
-- Worker 执行链路：Worker 可独立调用 MCP 工具并持续上报进度
-- 实时可观测：基于 SSE 推送 Team/Worker 事件流
-- 会话状态管理：支持会话过程数据持久化与继续执行
-- MCP 工具生态：支持 STDIO 与远程 SSE 两类 MCP Provider
-- 双模式运行：`Team` 与 `Single Chat` 可按场景切换
+![TaskForce Orchestration Runtime Diagram](./public/images/TaskForceOrchestrationEngineRuntimeDiagram.png)
 
-📖 项目介绍：[blog.jarontech.top](https://blog.jarontech.top)
+## 快速开始
 
----
+### 依赖
 
-## 系统组成
+- Java 21
+- Maven 3.9+
+- Node.js 20+
+- MySQL 8.0
+- Redis 7
 
-- `TaskForceFrontEnd`：React + Vite 前端，提供配置与会话界面
-- `TaskForceBackEnd`：Spring Boot 主服务，负责任务编排与业务 API
-- `mcp-server`：独立 MCP 工具服务，负责工具注册、路由与调用
+### 配置说明（很重要）
 
-## 运行流程
+- 默认配置已在 `application.yml` 提供，可直接用于本地启动。
+- 如果你的 MySQL / Redis 有账号密码、地址端口或其他敏感配置，请在 `TaskForceBackEnd/src/main/resources/application-local.yml` 和 `mcp-server/src/main/resources/application-local.yml` 覆盖。
+- 前端开发默认通过 Vite 代理 `/api -> http://localhost:8080`，如需修改请调整 `TaskForceFrontEnd/vite.config.ts`。
 
-1. 配置 LLM Provider
-2. 创建 Team Lead 与 Worker 智能体
-3. 发起 `TEAM` 或 `CHAT` 会话
-4. 通过前端实时观察执行事件
-5. 查看历史消息与工具调用结果
-
----
-
-## 快速开始（本地）
-
-### 1. 准备依赖服务
-
-请先启动以下服务（默认端口）：
-
-- MySQL 8.0（`3306`）
-- Redis 7（`6379`）
-- Nacos（`8848`，如启用服务发现）
-
-### 2. 启动 MCP Server
+### 启动顺序
 
 ```bash
+# 1) MCP Server (:8082)
 cd mcp-server
 mvn spring-boot:run
-```
 
-### 3. 启动后端
-
-```bash
-cd TaskForceBackEnd
+# 2) Backend (:8080)
+cd ../TaskForceBackEnd
 mvn spring-boot:run
-```
 
-### 4. 启动前端
-
-```bash
-cd TaskForceFrontEnd
+# 3) Frontend (:5173)
+cd ../TaskForceFrontEnd
 npm install
 npm run dev
 ```
 
-常用本地地址：
+打开 [http://localhost:5173](http://localhost:5173) 后，配置 LLM Provider 即可开始使用。
 
-- 前端：`http://localhost:5173`
-- 后端 API：`http://localhost:8080`
-- MCP Server：`http://localhost:8082`
-
-### 5. 首次使用配置
-
-1. 打开前端 `http://localhost:5173`
-2. 在“提供商管理”中添加模型提供商（OpenAI/Azure/Ollama 等）
-3. 在“智能体管理”中创建：
-   - 至少 1 个 Team Lead 智能体
-   - 至少 1 个 Worker 智能体
-4. 为 Worker 绑定 MCP 工具（可选）
-5. 创建 `TEAM` 或 `CHAT` 会话并开始使用
-
----
-
-## 技术栈
-
-### 后端
-
-| 技术 | 版本 | 用途 |
-|---|---|---|
-| Spring Boot | 3.3.4 | 应用框架 |
-| Java | 21 | 编程语言 |
-| Spring AI | 1.1.2 | LLM 集成 |
-| Spring AI Alibaba | 1.1.2.0 | Agent Framework + Sandbox |
-| MyBatis-Plus | 3.5.5 | ORM |
-| MySQL | 8.0 | 关系数据库 |
-| Redis | 7 | 缓存与状态管理 |
-| Redisson | 3.27.0 | 分布式锁 |
-| Nacos | 2023.0.1.0 | 服务发现 |
-
-### 前端
-
-- React
-- TypeScript
-- Vite
-- TailwindCSS
-
-### MCP Server
-
-| 技术 | 版本 | 用途 |
-|---|---|---|
-| Spring Boot | 3.3.4 | 应用框架 |
-| Spring AI | 1.1.2 | AI 能力集成 |
-| MCP SDK | 0.17.0 | MCP 协议实现 |
-| MyBatis-Plus | 3.5.5 | ORM |
-
----
+更多配置、数据库初始化和 FAQ 请看：[`QUICKSTART.md`](./QUICKSTART.md)
 
 ## 项目结构
 
 ```text
 TaskForce/
-├── TaskForceBackEnd/          # 后端主服务
-├── TaskForceFrontEnd/         # 前端应用
-├── mcp-server/                # MCP Server 微服务
-├── .env.example               # 本地环境变量示例
+├── TaskForceBackEnd/          # 后端主服务（编排引擎 + 业务 API）
+├── TaskForceFrontEnd/         # 前端（Web + Electron）
+├── mcp-server/                # MCP 工具服务
+├── public/images/             # 架构图
 ├── QUICKSTART.md              # 中文快速开始
-└── QUICKSTART_EN.md           # English quick start
+└── README_EN.md               # 英文说明
 ```
 
----
+## 技术栈
 
-## 开发说明
-
-### 后端开发
-
-```bash
-cd TaskForceBackEnd
-mvn spring-boot:run
-```
-
-### 前端开发
-
-```bash
-cd TaskForceFrontEnd
-npm install
-npm run dev
-```
-
-### MCP Server 开发
-
-```bash
-cd mcp-server
-mvn spring-boot:run
-```
-
-配置文件位置：
-
-- 后端：`TaskForceBackEnd/src/main/resources/application.yml`
-- MCP Server：`mcp-server/src/main/resources/application.yml`
-- 环境变量示例：`.env.example`
-
----
-
-## 文档
-
-- 快速开始与常见问题：[`QUICKSTART.md`](./QUICKSTART.md)
-- MCP Server 说明：[`mcp-server/README.md`](./mcp-server/README.md)
-
----
+- 后端：Spring Boot 3.3.4、Spring AI、Spring AI Alibaba、MyBatis-Plus、Redis、MySQL
+- 前端：React 19、TypeScript 5、Vite 7、TailwindCSS 4、Zustand
+- MCP：Spring Boot + Spring AI MCP Client
 
 ## License
 
-MIT
+Apache License 2.0，见 [`LICENSE`](./LICENSE)。

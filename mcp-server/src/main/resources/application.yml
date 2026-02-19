@@ -50,7 +50,7 @@ spring:
   # ========== SQL 初始化 ==========
   sql:
     init:
-      mode: always  # 改为never，只在首次部署时手动执行schema.sql
+      mode: always  # 每次启动执行 schema.sql（按当前配置自动初始化）
       schema-locations: classpath:schema.sql
       continue-on-error: true
 

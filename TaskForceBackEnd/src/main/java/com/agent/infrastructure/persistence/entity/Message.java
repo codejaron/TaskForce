@@ -39,18 +39,6 @@ public class Message {
     @TableField("role")
     private String role;  // user/assistant/system
     
-    @TableField("tool_name")
-    private String toolName;
-    
-    @TableField("tool_args")
-    private String toolArgs;  // JSON
-    
-    @TableField("tool_result")
-    private String toolResult;
-    
-    @TableField("sequence")
-    private Integer sequence;
-    
     @TableField("status")
     private String status;  // STREAMING, COMPLETED
     

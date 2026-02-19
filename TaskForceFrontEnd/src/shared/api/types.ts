@@ -76,11 +76,7 @@ export interface Message {
   content: string;
   messageType: string; // text/tool_use/tool_result
   role: string; // user/assistant/system
-  toolName?: string;
-  toolArgs?: string;
-  toolResult?: string;
   stepId?: string;
-  sequence: number;
   status?: 'STREAMING' | 'COMPLETED';  // 消息状态：流式输出中或已完成
   createdAt: string;
 }
