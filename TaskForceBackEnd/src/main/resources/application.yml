@@ -77,7 +77,7 @@ spring:
   # ========== SQL 初始化 ==========
   sql:
     init:
-      mode: never  # 改为never，只在首次部署时手动执行schema.sql
+      mode: always  # 每次启动执行 schema.sql（配合 IF NOT EXISTS/IF EXISTS 语句）
       schema-locations: classpath:db/migration/schema.sql
       continue-on-error: true
 

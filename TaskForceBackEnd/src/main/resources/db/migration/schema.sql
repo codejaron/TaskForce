@@ -1,7 +1,7 @@
 -- ========================================
 -- TaskForce - Complete Database Schema
--- Version: 2.9 (Added step_id to messages table)
--- Date: 2026-02-01
+-- Version: 3.1 (Consolidated V2~V7 changes)
+-- Date: 2026-02-19
 -- ========================================
 
 -- ========================================
@@ -116,24 +116,35 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL COMMENT '消息内容',
     message_type VARCHAR(20) DEFAULT 'text' COMMENT '消息类型: text/tool_use/tool_result',
     role VARCHAR(20) NOT NULL COMMENT '角色: user/assistant/system',
-    tool_name VARCHAR(100) COMMENT '工具名称(如果是工具调用)',
-    tool_args JSON COMMENT '工具参数',
-    tool_result TEXT COMMENT '工具执行结果',
-    sequence INT COMMENT '消息序号',
     status VARCHAR(20) DEFAULT 'COMPLETED' COMMENT '消息状态: STREAMING-流式输出中, COMPLETED-已完成',
     step_id VARCHAR(100) COMMENT '关联的步骤ID，用于关联工具调用',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_session_id (session_id),
     INDEX idx_agent_id (agent_id),
     INDEX idx_created_at (created_at),
-    INDEX idx_session_sequence (session_id, sequence),
     INDEX idx_step_id (step_id),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息表';
 
 -- ========================================
--- 10. Token 使用统计表（计费用）
+-- 8. Skill 管理表
+-- ========================================
+CREATE TABLE IF NOT EXISTS skills (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    skill_id VARCHAR(200) NOT NULL COMMENT 'Skill唯一标识（例如：skill_name）',
+    name VARCHAR(200) NOT NULL COMMENT 'Skill名称',
+    path VARCHAR(500) NOT NULL COMMENT 'Skill文件路径',
+    enabled BOOLEAN DEFAULT TRUE COMMENT '是否启用',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY uk_skill_id (skill_id),
+    INDEX idx_enabled (enabled),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Skill管理表';
+
+-- ========================================
+-- 9. Token 使用统计表（计费用）
 -- ========================================
 CREATE TABLE IF NOT EXISTS token_usage (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -160,7 +171,7 @@ CREATE TABLE IF NOT EXISTS token_usage (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Token使用统计表';
 
 -- ========================================
--- 11. 工具调用记录表
+-- 10. 工具调用记录表
 -- ========================================
 CREATE TABLE IF NOT EXISTS tool_calls (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -194,6 +205,15 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     INDEX idx_file_path (file_path),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具调用记录表';
+
+-- ========================================
+-- 兼容旧版本表结构（V2~V7 迁移合并后清理）
+-- ========================================
+ALTER TABLE messages
+    DROP COLUMN IF EXISTS tool_name,
+    DROP COLUMN IF EXISTS tool_args,
+    DROP COLUMN IF EXISTS tool_result,
+    DROP COLUMN IF EXISTS sequence;
 
 -- ========================================
 -- 系统Agent初始化数据

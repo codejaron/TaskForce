@@ -6,10 +6,9 @@
 
 - [Repository Layout](#repository-layout)
 - [Prerequisites](#prerequisites)
-- [Configuration (Environment Variables)](#configuration-environment-variables)
+- [Configuration (Optional)](#configuration-optional)
 - [Startup Order](#startup-order)
 - [Common Local Commands](#common-local-commands)
-- [FAQ](#faq)
 
 ## Repository Layout
 
@@ -20,7 +19,6 @@ TaskForce/
 ├── mcp-server/                # MCP server microservice
 ├── mcp-config.json            # MCP config (optional)
 ├── mcp-tools/                 # MCP tools directory (optional)
-├── .env.example               # Local environment variable example
 └── QUICKSTART_EN.md           # This document
 ```
 
@@ -34,25 +32,20 @@ TaskForce/
 - Redis 7 (default `6379`)
 - Nacos (default `8848`, if service discovery is enabled)
 
-## Configuration (Environment Variables)
+## Configuration (Optional)
 
-Optional: copy `.env.example` to `.env` as local reference.
+Defaults in `application.yml` are usually enough to start locally.
 
-```bash
-cp .env.example .env
-```
+If your MySQL / Redis requires credentials or non-default host/port, override in:
 
-Common variables:
+- `TaskForceBackEnd/src/main/resources/application-local.yml`
+- `mcp-server/src/main/resources/application-local.yml`
 
-| Variable | Purpose | Example |
-|---|---|---|
-| `SPRING_DATASOURCE_URL` | Backend DB URL | `jdbc:mysql://localhost:3306/ai_platform?...` |
-| `SPRING_DATASOURCE_USERNAME` | DB username | `root` |
-| `SPRING_DATASOURCE_PASSWORD` | DB password | `your_password` |
-| `REDIS_HOST` | Redis host | `localhost` |
-| `REDIS_PORT` | Redis port | `6379` |
-| `NACOS_ADDR` | Nacos address | `localhost:8848` |
-| `VITE_API_BASE_URL` | Frontend API base URL | `http://localhost:8080` |
+Common override keys:
+
+- `spring.datasource.*`
+- `spring.data.redis.*`
+- `sandbox.sync.minio.*` (optional)
 
 ## Startup Order
 
@@ -100,29 +93,3 @@ npm run build
 cd mcp-server
 mvn test
 ```
-
-## FAQ
-
-### Port already in use
-
-Update ports in:
-
-- backend: `TaskForceBackEnd/src/main/resources/application.yml`
-- MCP server: `mcp-server/src/main/resources/application.yml`
-- frontend: `TaskForceFrontEnd/vite.config.ts`
-
-### Frontend points to the wrong backend URL
-
-Set this in `TaskForceFrontEnd/.env.local`:
-
-```env
-VITE_API_BASE_URL=http://localhost:8080
-```
-
-### Missing tables after startup
-
-Check:
-
-- DB service is running and credentials are correct
-- DB URL/database names are correct (`ai_platform` for backend, `mcp_server` for MCP server)
-- SQL init settings are enabled
