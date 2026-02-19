@@ -1,72 +1,98 @@
-# TaskForce
-
-[中文 README](./README.md) | [English README](./README_EN.md)
+<div align="center">
+  <h1>TaskForce</h1>
+  <p><strong>A Multi-Agent Orchestration Platform for Cloud and Private Deployment (Java / Spring)</strong></p>
+  <p>
+    <img src="https://img.shields.io/badge/java-21-6b6b6b?style=flat-square&logo=openjdk&logoColor=white" alt="Java 21" />
+    <img src="https://img.shields.io/badge/spring_boot-3.3.4-6DB33F?style=flat-square&logo=springboot&logoColor=white" alt="Spring Boot 3.3.4" />
+    <img src="https://img.shields.io/badge/spring_ai-1.1.2-0ea5e9?style=flat-square" alt="Spring AI 1.1.2" />
+    <img src="https://img.shields.io/badge/spring_ai_alibaba-1.1.2.0-f97316?style=flat-square" alt="Spring AI Alibaba 1.1.2.0" />
+    <img src="https://img.shields.io/badge/react-19.2.0-2563eb?style=flat-square&logo=react&logoColor=white" alt="React 19.2.0" />
+    <img src="https://img.shields.io/badge/redis-7-dc2626?style=flat-square&logo=redis&logoColor=white" alt="Redis 7" />
+    <img src="https://img.shields.io/badge/license-apache_2.0-16a34a?style=flat-square" alt="Apache 2.0" />
+  </p>
+  <p>
+    <a href="./README.md">中文</a> |
+    <a href="./README_EN.md">English</a> |
+    <a href="./QUICKSTART_EN.md">Quick Start</a> |
+    <a href="./mcp-server/README.md">MCP Server Docs</a>
+  </p>
+</div>
 
 ## Overview
 
-TaskForce is a local-first multi-agent orchestration system built with a pure Java/Spring stack.  
-Its core model is a persistent `Team Lead + Worker` collaboration loop for real task orchestration, tool execution, and observable runtime control.
+TaskForce is a multi-agent collaboration system designed for cloud and private deployment.  
+Its core model is `Team Lead + Worker`: the Lead decomposes and schedules work, Workers execute and report back, and the system keeps progressing through event-driven loops until the session is completed. It includes distributed session ownership, event stream recovery, and object storage sync for real engineering workloads.
 
-## Core Highlights (Code-Based)
+## Core Highlights
 
-### 1. `mcp-server` is production-grade, not a demo bridge
+- **Team mode with persistent collaboration**: both Lead and Worker run as persistent ReAct loops, not one-shot request/response calls.
+- **TaskBoard DAG orchestration**: task dependencies are explicitly modeled (`blockedBy` / `blocks`) with cycle detection and downstream auto-unblock.
+- **Production-grade MCP tool layer**: `mcp-server` supports `STDIO`, `REMOTE_SSE`, `STREAMABLE_HTTP`, with hot provider updates and unified routing.
+- **Recoverable event streaming**: built on Redis Stream + Pub/Sub, with SSE resume support via `Last-Event-ID`.
+- **Skill management**: supports Skill import, enable/disable, and auto-load for scenario-based capability extension.
+- **Sandbox execution**: supports session-isolated Shell/Python/filesystem tools, with artifacts syncable to MinIO.
 
-- Triple provider protocols: `STDIO`, `REMOTE_SSE`, `STREAMABLE_HTTP`
-- Protocol-aware provider connection pools with per-type defaults, max cap, and acquire timeout
-- Unified routing for both native tools (`@Tool`, `@McpTool`) and external MCP providers via `ToolRouter`
-- Hot-plug provider lifecycle (add/delete/reload) with cross-instance sync through Redis Pub/Sub
-- Also exposed as an MCP provider itself via `/mcp` (Streamable HTTP) and `/mcp/sse`
+## Architecture
 
-### 2. Redis Stream-backed SSE event bus with replay support
+![System Architecture Overview](./public/images/SystemArchitectureOverview.png)
 
-- Event infrastructure uses `Redis Stream + Pub/Sub` instead of in-memory SSE broadcasting
-- SSE endpoints accept `Last-Event-ID` for resume/replay
-- Redis stream record IDs are attached to events for precise continuation
-- Supports both Team-level and Worker-level event streams
-
-### 3. Team Lead is a message-driven persistent ReAct loop
-
-- Lead loop is stateful (`EXECUTING / WAITING_REPLY / IDLE / COMPLETED / FAILED`), not a one-shot LLM call
-- Inbox and task-board events can wake waiting lead loops
-- Scheduling decisions evaluate inbox, dispatchable tasks, and in-flight workers before continue/wait
-
-### 4. TaskBoard is DAG orchestration with atomic state transitions
-
-- Task model keeps explicit dependency edges (`blockedBy`, `blocks`)
-- DAG validation includes cycle detection (DFS)
-- Redis Lua scripts perform atomic completion + downstream unblocking
-- Task lifecycle events are emitted through the unified event bus
-
-### 5. Distributed deployment is first-class
-
-- Session owner election via Redis + Redisson lock + owner TTL renewal
-- Non-owner nodes forward Team APIs to the owner node
-- Integration tests cover concurrent owner acquisition, forwarding, and sequence uniqueness
-
-### 6. Native Java/Spring ecosystem advantage
-
-- Pure Spring stack: Spring Boot 3 + Spring AI + Spring AI Alibaba
-- Enterprise-ready integrations: MyBatis-Plus, Redis, Nacos, Druid, Redisson
-- No Python runtime dependency and no Java wrapper over Python internals
+![TaskForce Orchestration Runtime Diagram](./public/images/TaskForceOrchestrationEngineRuntimeDiagram.png)
 
 ## Quick Start
 
-For startup steps, see:
+### Prerequisites
 
-- Chinese: [`QUICKSTART.md`](./QUICKSTART.md)
-- English: [`QUICKSTART_EN.md`](./QUICKSTART_EN.md)
+- Java 21
+- Maven 3.9+
+- Node.js 20+
+- MySQL 8.0
+- Redis 7
 
-## Modules
+### Configuration Notes
 
-- `TaskForceFrontEnd`: React + Vite console
-- `TaskForceBackEnd`: team orchestration, runtime state, event bus, persistence
-- `mcp-server`: MCP tool aggregation layer (Native / STDIO / Remote SSE / Streamable HTTP)
+- Defaults are already provided in `application.yml`, so local startup works out of the box in most cases.
+- If your MySQL / Redis uses custom credentials, host, or port, override in `TaskForceBackEnd/src/main/resources/application-local.yml` and `mcp-server/src/main/resources/application-local.yml`.
+- Frontend dev uses Vite proxy `/api -> http://localhost:8080` by default. If needed, update `TaskForceFrontEnd/vite.config.ts`.
 
-## Documentation
+### Startup Order
 
-- MCP Server docs: [`mcp-server/README.md`](./mcp-server/README.md)
-- Project blog: [blog.jarontech.top](https://blog.jarontech.top)
+```bash
+# 1) MCP Server (:8082)
+cd mcp-server
+mvn spring-boot:run
+
+# 2) Backend (:8080)
+cd ../TaskForceBackEnd
+mvn spring-boot:run
+
+# 3) Frontend (:5173)
+cd ../TaskForceFrontEnd
+npm install
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173), configure an LLM Provider, and start using TaskForce.
+
+For detailed setup and operational notes, see [`QUICKSTART_EN.md`](./QUICKSTART_EN.md).
+
+## Project Structure
+
+```text
+TaskForce/
+├── TaskForceBackEnd/          # Backend service (orchestration engine + business APIs)
+├── TaskForceFrontEnd/         # Frontend (Web + Electron)
+├── mcp-server/                # MCP tool service
+├── public/images/             # Architecture diagrams
+├── QUICKSTART.md              # Chinese quick start
+└── README_EN.md               # This document
+```
+
+## Tech Stack
+
+- Backend: Spring Boot 3.3.4, Spring AI, Spring AI Alibaba, MyBatis-Plus, Redis, MySQL
+- Frontend: React 19, TypeScript 5, Vite 7, TailwindCSS 4, Zustand
+- MCP: Spring Boot + Spring AI MCP Client
 
 ## License
 
-Apache License 2.0 (see [`LICENSE`](./LICENSE))
+Apache License 2.0. See [`LICENSE`](./LICENSE).
