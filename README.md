@@ -48,7 +48,7 @@ TaskForce 是一个面向云端与私有化部署的多智能体协作系统。
 - MySQL 8.0
 - Redis 7
 
-### 配置说明（很重要）
+### 配置说明
 
 - 默认配置已在 `application.yml` 提供，可直接用于本地启动。
 - 如果你的 MySQL / Redis 有账号密码、地址端口或其他敏感配置，请在 `TaskForceBackEnd/src/main/resources/application-local.yml` 和 `mcp-server/src/main/resources/application-local.yml` 覆盖。
